@@ -242,3 +242,68 @@ Look for `name: "Rabobank"` and `name: "Revolut"`. The response also carries `ma
 4. Backfill aggressively at consent time; clamp to ~90d means history is lost if we wait.
 5. Sync must be **polled** (no AIS webhooks). Respect ~4 background fetches/day per ASPSP unless PSU headers are sent.
 6. Design for `EXPIRED_SESSION` re-auth as a normal, expected user flow.
+
+---
+
+## Addendum — Control Panel setup specifics (verified 2026-09-30, bead LifeOS-1)
+
+Verified against Enable Banking's own docs while the user was registering an app.
+
+### ⚠️ The sandbox ASPSP list is a FILTERED list — a negative result proves nothing
+
+This is the single most important consequence. Enable Banking states plainly:
+
+> *"After you register a sandbox application, you will get access to a limited number of ASPSPs'
+> sandboxes… Enable Banking does not aim to provide access to a large number of ASPSPs' sandboxes"*
+> — [docs/api/sandbox](https://enablebanking.com/docs/api/sandbox)
+
+And the ASPSP list carries a **`sandbox` boolean attribute** that the Control Panel widget uses to filter
+the displayed banks ([docs/api/widgets](https://enablebanking.com/docs/api/widgets)).
+
+**Consequence:** *"Revolut is absent from the sandbox ASPSP list"* is **NOT** evidence that Revolut is
+unsupported in production. It only means Revolut has no PSD2 test sandbox on Enable Banking. A false
+negative is entirely possible, and acting on one would wrongly push us to a Revolut CSV importer when an
+API path may exist.
+
+| Environment | Use it for | Authoritative? |
+|---|---|---|
+| **Sandbox** | Learning the mechanics, confirming Rabobank, running the probe for free | **No** — filtered list |
+| **Production (restricted mode)** | The actual Revolut answer | **Yes** |
+
+Restricted mode is free per the ToS and needs no contract — it activates by linking your own accounts.
+**So: if sandbox comes back negative for Revolut, the correct next step is activating production
+restricted mode, not concluding Revolut is unavailable.**
+
+### ✅ Browser-generated keys ARE exported to disk (correction)
+
+I initially flagged that a browser-generated key might be trapped in the page and unusable. **That was
+wrong.** Enable Banking's own quick-start states:
+
+> *"Your web browser will generate a private key for the application and it will be saved into your
+> downloads folder. The file name will be the ID that was assigned to the newly registered application
+> (e.g., `aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.pem`)"*
+> — [docs/api/quick-start](https://enablebanking.com/docs/api/quick-start)
+
+So **whichever route was used, the private key is on disk** and can sign JWTs. The filename is the
+`app_id`, which is a convenient way to recover the app_id if it was not noted elsewhere.
+
+Requirements (documented): RSA, 4096-bit recommended, self-signed X.509 certificate uploaded as PEM.
+**Enable Banking never needs to see the private key** — it is used only to sign JWTs locally.
+
+### ⚠️ Redirect URL matching is UNDOCUMENTED
+
+Enable Banking documents only: *"Enter URLs whitelisted for redirecting of end users after they
+complete authorisation"* ([docs/api/quick-start](https://enablebanking.com/docs/api/quick-start)). It
+publishes **no** matching rules, no wildcard support, and no length limits.
+
+**Documented:** you register redirect URLs in the Control Panel, and the `redirect_url` in `POST /auth`
+must match one of them.
+
+**Inference, not fact:** that matching is exact on scheme + host + port + path, that trailing slashes
+are significant, and that wildcards are unsupported. Standard across Open Banking platforms and the safe
+assumption, but **unverified** — the only way to know is to try a consent flow.
+
+For the `/aspsps` probe the redirect URL is **never used** — no consent flow is involved. Register a
+placeholder and revisit once **LifeOS-3** (deployment topology) is decided. A Tailscale URL
+(`https://<host>/…`) differs from a localhost URL in both scheme and host, so the value **must** change
+when the deployment is chosen.
