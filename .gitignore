@@ -33,3 +33,7 @@ backups/
 .beads-credential-key
 .beads/proxieddb/
 *.gate.lock*
+
+# Enable Banking probe keys (bead LifeOS-1) - never commit
+.eb-keys/
+aspsps-*.json
