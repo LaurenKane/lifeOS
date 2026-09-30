@@ -307,3 +307,60 @@ For the `/aspsps` probe the redirect URL is **never used** — no consent flow i
 placeholder and revisit once **LifeOS-3** (deployment topology) is decided. A Tailscale URL
 (`https://<host>/…`) differs from a localhost URL in both scheme and host, so the value **must** change
 when the deployment is chosen.
+
+---
+
+## PROBE RESULT — executed 2026-09-30 (bead LifeOS-1, CLOSED)
+
+```
+app_id  528ee4b1-cbbe-4116-b552-7e9dd6555fd2   (SANDBOX, Account Information enabled)
+GET     https://api.enablebanking.com/aspsps?country=NL&psu_type=personal
+result  HTTP 200 — 3 ASPSPs
+```
+
+### The full sandbox NL list — only three entries
+
+| Institution | consent validity | auth approach | required PSU headers |
+|---|---|---|---|
+| **Rabobank** | 15,552,000 s (180 d) | `REDIRECT` | `psu-ip-address` |
+| Handelsbanken | 15,552,000 s (180 d) | `REDIRECT` | `psu-ip-address` |
+| Mock ASPSP | 15,552,000 s (180 d) | `REDIRECT` | — |
+
+**That is two real Dutch banks, plus a test fixture.** ING, ABN AMRO, bunq, ASN Bank, Regiobank,
+Triodos, SNS Bank, de Volksbank and **Revolut** are all absent.
+
+### What this settles
+
+| Claim | Status |
+|---|---|
+| Rabobank is reachable via Enable Banking in NL | **CONFIRMED** (was LIKELY) |
+| Rabobank consent validity = 180 days | **CONFIRMED** (15552000 s) |
+| **No credential fallback for Rabobank** | **CONFIRMED** — `approach: REDIRECT` only. The security question from the threat model is answered: we will never see bank credentials. (was LIKELY) |
+| PSU headers are **required** for Rabobank | **CONFIRMED** — `psu-ip-address` is mandatory |
+| Revolut NL support | **STILL UNCERTAIN** — see below |
+
+### ⚠️ Revolut is *not* answered by this probe, and the reason is the point
+
+The sandbox list contains **two real Dutch banks out of the ~15+ that offer PSD2 in the Netherlands.**
+Enable Banking states it "does not aim to provide access to a large number of ASPSPs' sandboxes." A
+list this narrow carries essentially no information about production coverage.
+
+**Absent from sandbox is not a verdict.** Revolut's absence is fully explained by Revolut having no
+PSD2 test sandbox on Enable Banking, and tells us nothing about production.
+
+**To settle it, the next step is production restricted mode** — free per the ToS, no contract, no KYB,
+activated by linking your own accounts. Query the same endpoint there and compare. That is the only
+authoritative answer, and it is a few minutes of work with no cost.
+
+### Design consequences now settled
+
+1. **Account type check:** PSU headers are mandatory for Rabobank, so the "supply all `Psu-*` headers
+   or none" rule is not optional — omitting them is worse than useless.
+2. **Security model is simpler than assumed:** `REDIRECT`-only means no credential path exists to
+   accidentally take. Keep the "refuse credential auth in code" guard anyway, as defence in depth.
+3. **No architecture change.** The provider-agnostic schema absorbs any answer, including "Revolut
+   needs CSV import". Bead **LifeOS-13** (M8) is written to branch on this and remains conditional.
+
+### Evidence
+
+`docs/research/aspsps-NL-sandbox-2026-09-30.json` — the raw response, committed.

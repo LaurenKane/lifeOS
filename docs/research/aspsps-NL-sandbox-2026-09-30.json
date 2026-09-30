@@ -1,0 +1,136 @@
+[
+  {
+    "name": "Handelsbanken",
+    "country": "NL",
+    "logo": "https://enablebanking.com/brands/NL/Handelsbanken/",
+    "psu_types": [
+      "personal"
+    ],
+    "auth_methods": [
+      {
+        "name": "REDIRECT",
+        "title": "Redirect",
+        "psu_type": "personal",
+        "approach": "REDIRECT",
+        "hidden_method": false
+      }
+    ],
+    "maximum_consent_validity": 15552000,
+    "sandbox": {
+      "users": [
+        {
+          "username": "192001029384"
+        }
+      ]
+    },
+    "beta": false,
+    "bic": "HANDNL2A",
+    "required_psu_headers": [
+      "psu-ip-address"
+    ]
+  },
+  {
+    "name": "Rabobank",
+    "country": "NL",
+    "logo": "https://enablebanking.com/brands/NL/Rabobank/",
+    "psu_types": [
+      "personal"
+    ],
+    "auth_methods": [
+      {
+        "psu_type": "personal",
+        "approach": "REDIRECT",
+        "hidden_method": false
+      }
+    ],
+    "maximum_consent_validity": 15552000,
+    "beta": false,
+    "bic": "RABONL2U",
+    "required_psu_headers": [
+      "psu-ip-address"
+    ],
+    "payments": [
+      {
+        "payment_type": "SEPA",
+        "max_transactions": 1,
+        "currencies": [
+          "EUR"
+        ],
+        "debtor_account_required": false,
+        "debtor_account_schemas": [
+          "IBAN"
+        ],
+        "creditor_account_schemas": [
+          "IBAN"
+        ],
+        "creditor_country_required": false,
+        "creditor_name_required": true,
+        "creditor_postal_address_required": false,
+        "remittance_information_required": true,
+        "debtor_currency_required": false,
+        "debtor_contact_email_required": false,
+        "debtor_contact_phone_required": false,
+        "creditor_agent_bic_fi_required": false,
+        "creditor_agent_clearing_system_member_id_required": false,
+        "regulatory_reporting_code_required": false,
+        "reference_number_supported": false,
+        "requested_execution_date_supported": true,
+        "remittance_reference_supported": false,
+        "deferred_submission_supported": false,
+        "final_successful_statuses": [
+          "ACSC"
+        ],
+        "psu_type": "personal"
+      },
+      {
+        "payment_type": "BULK_SEPA",
+        "max_transactions": 500,
+        "currencies": [
+          "EUR"
+        ],
+        "debtor_account_required": false,
+        "debtor_account_schemas": [
+          "IBAN"
+        ],
+        "creditor_account_schemas": [
+          "IBAN"
+        ],
+        "creditor_country_required": false,
+        "creditor_name_required": true,
+        "creditor_postal_address_required": false,
+        "remittance_information_required": true,
+        "debtor_currency_required": false,
+        "debtor_contact_email_required": false,
+        "debtor_contact_phone_required": false,
+        "creditor_agent_bic_fi_required": false,
+        "creditor_agent_clearing_system_member_id_required": false,
+        "regulatory_reporting_code_required": false,
+        "reference_number_supported": false,
+        "requested_execution_date_supported": false,
+        "remittance_reference_supported": false,
+        "deferred_submission_supported": false,
+        "final_successful_statuses": [
+          "ACSC"
+        ],
+        "psu_type": "personal"
+      }
+    ]
+  },
+  {
+    "name": "Mock ASPSP",
+    "country": "NL",
+    "logo": "https://enablebanking.com/brands/NL/Mock%20ASPSP/",
+    "psu_types": [
+      "personal"
+    ],
+    "auth_methods": [
+      {
+        "psu_type": "personal",
+        "approach": "REDIRECT",
+        "hidden_method": false
+      }
+    ],
+    "maximum_consent_validity": 15552000,
+    "beta": false
+  }
+]
