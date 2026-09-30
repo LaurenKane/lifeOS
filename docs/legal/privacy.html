@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Notice — LifeOS</title>
+<style>
+  body { font: 16px/1.6 system-ui, sans-serif; max-width: 44rem; margin: 3rem auto; padding: 0 1.25rem; color: #1a1a1a; }
+  h1 { font-size: 1.6rem; margin-bottom: 0.25rem; }
+  h2 { font-size: 1.15rem; margin-top: 2rem; }
+  .meta { color: #666; font-size: 0.9rem; }
+  code { background: #f4f4f5; padding: 0.1em 0.35em; border-radius: 3px; font-size: 0.9em; }
+</style>
+</head>
+<body>
+
+<h1>Privacy Notice — LifeOS</h1>
+<p class="meta">Personal, self-hosted financial ledger · single user · not a commercial service</p>
+
+<h2>Who is responsible</h2>
+<p>
+  LifeOS is a personal application operated by a single individual for their own use. The
+  individual is the sole data controller. This notice describes what the software does with
+  data; it is not a corporate privacy policy and LifeOS is not a company.
+</p>
+
+<h2>What data is processed</h2>
+<p>Only financial data the account holder has explicitly chosen to import:</p>
+<ul>
+  <li>Bank and credit-card transaction records (date, amount, currency, description, category)</li>
+  <li>The original bank export files from which those records were parsed (CSV, CAMT, PDF)</li>
+  <li>Account metadata (name, type, IBAN or masked card number, institution)</li>
+  <li>User-created labels: categories, merchants, and categorization rules</li>
+</ul>
+<p>
+  LifeOS does not collect, transmit, or hold behavioural data, telemetry, analytics, advertising
+  identifiers, or device identifiers. The software makes no third-party requests except to the
+  bank data provider the account holder explicitly configures.
+</p>
+
+<h2>Where data is stored</h2>
+<p>
+  Entirely on infrastructure chosen and controlled by the account holder — typically a private
+  server, and a private database on it. LifeOS has no central service, no user accounts, and no
+  server-side copy of any kind. There is nothing to be breached on LifeOS's side, because there
+  is no LifeOS side.
+</p>
+<p>
+  The database is not encrypted at the application layer. Protection at rest relies on the
+  storage encryption of the host, which is the account holder's responsibility to configure.
+</p>
+
+<h2>Who else necessarily sees the data</h2>
+<p>
+  Data reaches the account holder's own bank or card issuer, which already holds it. Where a
+  third-party open-banking provider is configured to retrieve account data, that provider
+  processes the data in order to supply it — for example, PSD2 Account Information Service
+  providers operating under European regulatory oversight. Such providers are separate
+  controllers or processors and are subject to their own published terms and data-protection
+  obligations.
+</p>
+<p>
+  Encrypted network transport (TLS) is used wherever data leaves the host. Optional overlay
+  networking software may be used to reach the host privately; such networks encrypt traffic
+  peer-to-peer and relay no data to third parties.
+</p>
+
+<h2>Retention</h2>
+<p>
+  Data is retained indefinitely until the account holder deletes it, because the value of the
+  software depends on a complete historical record. Deletion means deleting the database and
+  the stored import files on the host; encrypted backups the account holder has made are the
+  account holder's responsibility to expire or purge.
+</p>
+
+<h2>Your rights</h2>
+<p>
+  The account holder has direct and complete access to, and control over, all their data. They
+  can read it, export it, correct it, and delete it at any time without asking anyone. There is
+  no separate copy held by anyone else that would need a request, because there is no
+  intermediary.
+</p>
+
+<h2>Security</h2>
+<p>
+  Bank access uses read-only, time-limited, revocable consent (PSD2 / Open Banking). Bank
+  credentials are never requested, transmitted, or stored by this software — the account holder
+  authorises directly with their bank. The long-lived cryptographic key used to authenticate to
+  a bank data provider is stored on the host, never in the application database.
+</p>
+
+<h2>Contact</h2>
+<p>
+  Questions: <a href="mailto:YOUR-EMAIL-HERE">YOUR-EMAIL-HERE</a>. As a single-user personal
+  application, responses are informal and best-effort.
+</p>
+
+<p class="meta">
+  This notice describes the software's actual behaviour. It is not legal advice, and it was not
+  written by a lawyer.
+</p>
+
+</body>
+</html>
