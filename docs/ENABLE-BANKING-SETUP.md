@@ -75,6 +75,8 @@ Files: `docs/legal/{index,privacy,terms}.html` — written, accurate, committed.
 
 **Before publishing:** replace `YOUR-EMAIL-HERE` in `privacy.html` and `terms.html`.
 
+**Option A — GitHub Pages (do this now, cheapest, no dependencies):**
+
 ```bash
 cd docs/legal
 sed -i 's/YOUR-EMAIL-HERE/you@example.com/g' privacy.html terms.html
@@ -88,7 +90,17 @@ Then **Settings → Pages → Source: Deploy from a branch → `main` / `(root)`
 `https://YOURUSERNAME.github.io/lifeos-legal/privacy.html` (and `/terms.html`).
 **Confirm both load before pasting them into the form.**
 
-Any static host works. This is just the cheapest option that gives a real, resolvable URL.
+**Option B — the VPS (later, once provisioned):** deployment is now decided
+(`docs/adr/0001-deployment-topology.md`): Netcup VPS 500 G12, Amsterdam, €5.91/mo, with Tailscale.
+Once it exists, serve the same two files from it — e.g. behind `tailscale funnel`, which gives a
+**public HTTPS URL without opening any inbound port or managing a TLS certificate.** Zero extra cost
+and it keeps the pages on infrastructure you already own.
+
+⚠️ **Option B is not available yet** — the VPS does not exist, and the Enable Banking form wants the
+URL now. Use Option A to unblock the form; you can move the pages to the VPS later. EB does not care
+where a privacy policy is hosted, and moving it afterwards does not invalidate anything.
+
+Any static host works. These are just the two cheapest options that give a real, resolvable URL.
 
 ---
 
