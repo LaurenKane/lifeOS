@@ -52,9 +52,70 @@ except ImportError:
              "or: pip install cryptography")
 
 KEY_DIR = Path(os.environ.get("EB_KEY_DIR", "./.eb-keys"))
+# Explicit path, if the user passed --key. May not exist; that is fine.
 KEY_PATH = Path(os.environ.get("EB_KEY", KEY_DIR / "private.key"))
 CRT_PATH = Path(os.environ.get("EB_CRT", KEY_DIR / "public.crt"))
 APP_ID_PATH = Path(os.environ.get("EB_APP_ID_FILE", KEY_DIR / "app_id"))
+
+# Enable Banking saves browser-generated keys to ~/Downloads as "<app_id>.pem",
+# so look there before making the user pass a path. The filename is also the app_id.
+DOWNLOADS = Path.home() / "Downloads"
+SEARCH_DIRS = (KEY_DIR, DOWNLOADS, Path.home() / ".eb-keys")
+
+
+def discover_key() -> Path | None:
+    """Find the RSA private key without being told where it is."""
+    candidates: list[Path] = []
+    if KEY_PATH.exists():
+        candidates.append(KEY_PATH)
+    for d in SEARCH_DIRS:
+        if not d.is_dir():
+            continue
+        for pat in ("*.pem", "*.key", "private*", "*.crt"):
+            candidates.extend(sorted(d.glob(pat)))
+    for c in candidates:
+        if not c.is_file():
+            continue
+        try:
+            blob = c.read_bytes()
+        except OSError:
+            continue
+        if b"PRIVATE KEY" in blob:   # matches PKCS#1 and PKCS#8 PEM headers
+            return c
+    return None
+
+
+def discover_cert(near: Path | None = None) -> Path | None:
+    """Find the self-signed certificate, preferring one sitting beside the key."""
+    candidates: list[Path] = []
+    if CRT_PATH.exists():
+        candidates.append(CRT_PATH)
+    dirs: list[Path] = [near.parent] if near else []
+    dirs += list(SEARCH_DIRS)
+    for d in dirs:
+        if not d or not d.is_dir():
+            continue
+        for pat in ("*.crt", "*.cer", "*.pem", "certificate*"):
+            candidates.extend(sorted(d.glob(pat)))
+    for c in candidates:
+        if not c.is_file():
+            continue
+        try:
+            blob = c.read_bytes()
+        except OSError:
+            continue
+        if b"BEGIN CERTIFICATE" in blob:
+            return c
+    return None
+
+
+def app_id_from_filename(key: Path) -> str | None:
+    """EB names the downloaded key "<app_id>.pem". Recover the UUID from it."""
+    import re
+    m = re.match(r"^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}"
+                 r"-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})", key.stem)
+    return m.group(1) if m else None
+
 
 API_BASE = "https://api.enablebanking.com"
 
@@ -148,18 +209,46 @@ def build_jwt(app_id: str, key: rsa.RSAPrivateKey, ttl: int = 3600) -> str:
 
 def load_app_id() -> str:
     if APP_ID_PATH.exists():
-        return APP_ID_PATH.read_text().strip()
+        v = APP_ID_PATH.read_text().strip()
+        if v:
+            return v
     env = os.environ.get("EB_APP_ID")
-    if env:
+    if env and env.strip():
         return env.strip()
-    sys.exit(f"No app_id found. Put it in {APP_ID_PATH}, or set EB_APP_ID.")
+    # Last resort: EB names the downloaded key "<app_id>.pem".
+    key = discover_key()
+    if key:
+        guess = app_id_from_filename(key)
+        if guess:
+            print(f"(app_id recovered from key filename: {guess})")
+            return guess
+    sys.exit(
+        "No app_id found.\n"
+        "  Do one of:\n"
+        f"    echo -n 'the-uuid' > {APP_ID_PATH}\n"
+        "    export EB_APP_ID='the-uuid'\n"
+        "    python3 tools/probe_aspsps.py --app-id 'the-uuid' probe\n"
+        "  The uuid is the app id shown in the Control Panel. If you generated the\n"
+        "  key in the browser it is also the filename in ~/Downloads."
+    )
 
 
 def load_key() -> rsa.RSAPrivateKey:
-    if not KEY_PATH.exists():
-        sys.exit(f"No private key at {KEY_PATH}\n"
-                 f"  Point at an existing key with --key PATH or EB_KEY=PATH, or run 'keygen'.")
-    key = serialization.load_pem_private_key(KEY_PATH.read_bytes(), password=None)
+    if KEY_PATH.exists():
+        key = serialization.load_pem_private_key(KEY_PATH.read_bytes(), password=None)
+    else:
+        found = discover_key()
+        if found is None:
+            sys.exit(
+                "No private key found. Looked in:\n"
+                f"  {KEY_PATH}\n"
+                f"  {KEY_DIR}/*.pem, *.key, private*\n"
+                f"  {DOWNLOADS}/*.pem, *.key, private*\n"
+                "\nGenerate one with 'keygen', upload the .crt to your Enable Banking\n"
+                "app, or point at an existing file with --key PATH."
+            )
+        print(f"(using discovered private key: {found})")
+        key = serialization.load_pem_private_key(found.read_bytes(), password=None)
     if not isinstance(key, rsa.RSAPrivateKey):
         sys.exit(f"{KEY_PATH} is not an RSA private key (found {type(key).__name__}).\n"
                  f"  Enable Banking requires RSA. Re-generate with:\n"
@@ -183,25 +272,40 @@ def cmd_verify(_args: argparse.Namespace) -> int:
     """
     ok = True
 
-    print(f"private key : {KEY_PATH}")
-    print(f"certificate : {CRT_PATH}")
-    print(f"app_id      : {APP_ID_PATH if APP_ID_PATH.exists() else os.environ.get('EB_APP_ID') or '(not set)'}")
+    # Resolve by discovery so the common case (browser-downloaded key in
+    # ~/Downloads) needs no arguments at all.
+    found_key = KEY_PATH if KEY_PATH.exists() else discover_key()
+    found_crt = discover_cert(found_key)
+
+    print(f"private key : {found_key or '(not found)'}")
+    print(f"certificate : {found_crt or '(not found)'}")
+    try:
+        shown_app_id = (APP_ID_PATH.read_text().strip() if APP_ID_PATH.exists()
+                        else os.environ.get("EB_APP_ID")
+                        or (app_id_from_filename(found_key) if found_key else None)
+                        or "(not set)")
+    except OSError:
+        shown_app_id = "(not set)"
+    print(f"app_id      : {shown_app_id}")
     print()
 
     key = None
-    if not KEY_PATH.exists():
-        print("FAIL  private key not found")
+    if found_key is None:
+        print("FAIL  private key not found. Looked in:")
+        for d in SEARCH_DIRS:
+            print(f"        {d}/")
+        print("      Generate one with 'keygen', or pass --key PATH.")
         ok = False
     else:
         try:
             key = load_key()
-            mode = oct(KEY_PATH.stat().st_mode & 0o777)
+            mode = oct(found_key.stat().st_mode & 0o777)
             print(f"OK    private key loads, {key.key_size}-bit RSA  (mode {mode})")
             if key.key_size < 2048:
                 print(f"FAIL  key is only {key.key_size} bits; Enable Banking wants 2048 or more")
                 ok = False
             if mode not in ("0o600", "0o400"):
-                print(f"WARN  key mode is {mode}; tighten with: chmod 600 {KEY_PATH}")
+                print(f"WARN  key mode is {mode}; tighten with: chmod 600 {found_key}")
         except SystemExit as e:
             print(f"FAIL  {e}")
             return 1
@@ -209,9 +313,18 @@ def cmd_verify(_args: argparse.Namespace) -> int:
             print(f"FAIL  cannot read private key: {e}")
             return 1
 
-    cert = load_cert()
+    cert = None
+    if found_crt is not None:
+        try:
+            cert = x509.load_pem_x509_certificate(found_crt.read_bytes())
+        except Exception as e:
+            print(f"FAIL  found {found_crt} but cannot parse it as a certificate: {e}")
+            ok = False
+
     if cert is None:
-        print("WARN  no certificate found — you cannot upload an app without one")
+        print("WARN  no certificate found — you cannot create the app without one")
+        print("      For a browser-generated key, Enable Banking saves both the .pem and")
+        print("      the .crt to ~/Downloads. Otherwise generate one with 'keygen'.")
     else:
         subject = cert.subject.rfc4514_string()
         issuer = cert.issuer.rfc4514_string()
@@ -244,10 +357,10 @@ def cmd_verify(_args: argparse.Namespace) -> int:
             print("      Re-upload the certificate that matches this key, or use the other key.")
             ok = False
 
-    if not (APP_ID_PATH.exists() or os.environ.get("EB_APP_ID")):
+    if shown_app_id == "(not set)":
         print()
-        print("NEXT  no app_id yet. Copy it from the Control Panel into:")
-        print(f"      echo -n '<uuid>' > {APP_ID_PATH}")
+        print("NEXT  no app_id yet. Copy it from the Control Panel, then re-run with:")
+        print(f"      python3 tools/probe_aspsps.py --app-id <uuid> probe")
 
     print()
     print("RESULT:", "ready to probe" if ok else "NOT ready - fix the FAILs above")
