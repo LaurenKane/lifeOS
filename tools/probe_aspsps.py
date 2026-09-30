@@ -51,16 +51,33 @@ except ImportError:
     sys.exit("Missing dependency. Install it with:\n    uv pip install cryptography\n"
              "or: pip install cryptography")
 
-KEY_DIR = Path(os.environ.get("EB_KEY_DIR", "./.eb-keys"))
+# ── Credential location ──────────────────────────────────────────────────────
+# Credentials live OUTSIDE the git working tree, on purpose.
+#
+# HISTORY: this used to default to ./.eb-keys/ inside the repo. That was a
+# design error. It put live credentials somewhere any tool or agent could
+# `rm -rf`, and it made them look like disposable build artifacts. On
+# 2026-09-30 that mistake destroyed a real keypair whose certificate had
+# already been uploaded to Enable Banking — unrecoverable, because a private
+# key cannot be regenerated. Never write credentials inside this repository.
+#
+# Override with EB_KEY_DIR only if you know why.
+DEFAULT_KEY_DIR = Path.home() / ".config" / "lifeos" / "eb"
+KEY_DIR = Path(os.environ.get("EB_KEY_DIR", DEFAULT_KEY_DIR))
+
 # Explicit path, if the user passed --key. May not exist; that is fine.
 KEY_PATH = Path(os.environ.get("EB_KEY", KEY_DIR / "private.key"))
 CRT_PATH = Path(os.environ.get("EB_CRT", KEY_DIR / "public.crt"))
 APP_ID_PATH = Path(os.environ.get("EB_APP_ID_FILE", KEY_DIR / "app_id"))
 
 # Enable Banking saves browser-generated keys to ~/Downloads as "<app_id>.pem",
-# so look there before making the user pass a path. The filename is also the app_id.
+# so look there too. The filename is also the app_id.
 DOWNLOADS = Path.home() / "Downloads"
-SEARCH_DIRS = (KEY_DIR, DOWNLOADS, Path.home() / ".eb-keys")
+# Legacy location from the old design. Read-only: we still find keys left there
+# by an earlier version, but nothing is ever written there now.
+LEGACY_REPO_KEY_DIR = Path(__file__).resolve().parent.parent / ".eb-keys"
+SEARCH_DIRS = (KEY_DIR, DOWNLOADS, LEGACY_REPO_KEY_DIR, Path.home() / ".eb-keys")
+
 
 
 def discover_key() -> Path | None:
@@ -129,13 +146,25 @@ INTERESTING = ("name", "country", "maximum_consent_validity", "auth_methods",
 def cmd_keygen(_args: argparse.Namespace) -> int:
     """Generate a 4096-bit RSA key and a self-signed certificate.
 
+    Writes to ~/.config/lifeos/eb/ — OUTSIDE the git working tree. See the
+    comment on DEFAULT_KEY_DIR for why that matters.
+
     Equivalent openssl commands, if you prefer:
         openssl genrsa -out private.key 4096
-        openssl req -new -x509 -days 365 -key private.key -out public.crt
+        openssl req -new -x509 -days 365 -key private.key -out public.crt \
+                -subj "/CN=lifeos-enable-banking"
+    (the -subj avoids an interactive prompt that the plain command triggers)
     """
+    repo = Path(__file__).resolve().parent.parent
+    if KEY_DIR.resolve() == (repo / ".eb-keys").resolve() or repo in KEY_DIR.resolve().parents:
+        sys.exit(f"REFUSING to write credentials inside the repository: {KEY_DIR}\n"
+                 f"  A private key cannot be regenerated. Keep it outside the working tree.\n"
+                 f"  Unset EB_KEY_DIR to use the default: {DEFAULT_KEY_DIR}")
+
     if KEY_PATH.exists():
         print(f"ERROR: {KEY_PATH} already exists. Delete it first if you want to regenerate.")
-        print("       Rotating a key invalidates the previously uploaded certificate.")
+        print("       Rotating a key invalidates the previously uploaded certificate,")
+        print("       which can orphan an Enable Banking app. See SAFETY.md.")
         return 1
 
     KEY_DIR.mkdir(parents=True, exist_ok=True)
@@ -167,19 +196,43 @@ def cmd_keygen(_args: argparse.Namespace) -> int:
     )
     CRT_PATH.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
 
-    print("Generated:")
-    print(f"  private key : {KEY_PATH}   (mode 600, NEVER commit this)")
-    print(f"  certificate : {CRT_PATH}")
+    # Leave a note so a future human (or agent) does not mistake these for junk.
+    (KEY_DIR / "README.txt").write_text(
+        "Enable Banking credentials for LifeOS\n"
+        "=====================================\n\n"
+        f"private.key  RSA {key.key_size}-bit. Signs every JWT sent to the Enable Banking API.\n"
+        "public.crt   self-signed certificate. THIS is what you upload to the\n"
+        "             Enable Banking Control Panel. The private key is never uploaded.\n"
+        "app_id       the UUID Enable Banking assigns when you upload the certificate.\n\n"
+        "DO NOT DELETE THESE FILES. DO NOT COMMIT THEM.\n"
+        "The private key cannot be regenerated. If you lose it, the certificate\n"
+        "already uploaded to Enable Banking becomes useless and that app must be\n"
+        "recreated from scratch. This happened once on 2026-09-30; see SAFETY.md.\n\n"
+        "If Enable Banking's own browser flow generated these for you, they were\n"
+        "also saved to ~/Downloads as <app_id>.pem.\n"
+    )
+    os.chmod(KEY_DIR / "README.txt", 0o600)
+
+    print("Generated in", KEY_DIR)
+    print(f"  private key   {KEY_PATH}   (mode 600)")
+    print(f"  certificate   {CRT_PATH}")
+    print(f"  readme        {KEY_DIR / 'README.txt'}")
     print()
-    print("Next:")
-    print("  1. Upload the .crt to your app in the Enable Banking Control Panel.")
-    print("  2. Copy the app_id (UUID) into " + str(APP_ID_PATH))
-    print("  3. Run:  probe_aspsps.py probe")
+    print("NEXT STEPS — do these in order:")
+    print("  1. Upload public.crt to your app in the Enable Banking Control Panel.")
+    print("  2. Enable Banking assigns an app_id (a UUID). RECORD IT NOW:")
+    print(f"         echo -n 'PASTE_THE_UUID_HERE' > {APP_ID_PATH}")
+    print("     This app_id is the only handle you have on that app. Without it you")
+    print("     cannot find or delete the app in the Control Panel.")
+    print("  3. Confirm:  python3 tools/probe_aspsps.py verify")
+    print("  4. Then:     python3 tools/probe_aspsps.py probe")
     print()
-    print("SECURITY: once this works, move the private key into your OS keyring:")
-    print("     secret-tool store --label='lifeos-eb-key' key pem < private.key")
-    print("and delete the file. .gitignore already excludes *.key and *.pem, but do not rely on that alone.")
+    print("SECURITY: move the private key into your OS keyring once this works:")
+    print(f"     secret-tool store --label='lifeos-eb-key' key pem < {KEY_PATH}")
+    print("Keep a copy of the key OFF this machine. It is the only thing standing")
+    print("between you and having to redo this.")
     return 0
+
 
 
 # ──────────────────────────────── probe ────────────────────────────────
