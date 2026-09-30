@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "LifeOS",
+  "project_id": "4bf34916-d6ef-43e9-9d75-a78a279b5311"
+}
