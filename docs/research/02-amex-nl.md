@@ -1,0 +1,170 @@
+# Research 02 — American Express Netherlands
+
+**Lane:** lib-1 (librarian) · **Completed:** 2026-09-30 · **Status:** reconciled
+**Confidence labels: CONFIRMED / LIKELY / UNCERTAIN / NEEDS USER TESTING**
+
+---
+
+## Executive summary
+
+- **Amex NL is not reachable via PSD2/AIS through ANY major aggregator.** CONFIRMED. Amex itself has stated that EU card accounts outside **UK / France / Sweden / Finland** do not qualify as "payment accounts" under PSD2.
+- Enable Banking **decommissioned Amex in Sweden and Finland (March 2025)**; only France remains in the EU.
+- Amex's own **Account and Transaction API** exists but requires PSD2-certified AISP status, eIDAS certificates, and manual Amex registration — **not available to individuals** — and is restricted to UK/FR/SE/FI anyway.
+- **File import is the only viable path.** Confirmed.
+- **CSV export: YES.** ~6 billing periods of history. **Pending transactions are excluded.** **No stable transaction IDs** (Amex IDs are documented to change).
+- **PDF statements are better than CSV** for this use case: itemized per transaction, up to **7 years**, and they carry **both transaction date and process date** plus FX detail. CSV has one date and a ~6-month window.
+- Consumer portal also offers **OFX/QFX** and **QBO** exports.
+- **Google Wallet Takeout does contain transaction-level JSON** for Amex cards (date, amount, currency, merchant, card last4, status), and includes non-Wallet transactions unless the user opts out of "Non-Device Transactions". Useful supplement, **not** a substitute.
+- **Deduplicating Google Wallet against the Amex export requires fuzzy matching** (date ±1, amount exact, last4). Merchant strings differ between sources. Deterministic matching is not feasible.
+- **Scraping: do not.** Prohibited by Amex ToU, legally risky, no legitimate alternative exists.
+
+---
+
+## 1. API / AIS availability
+
+Amex **does** publish an Account and Transaction API ([developer.americanexpress.com](https://developer.americanexpress.com/products/account-and-transaction-api-public/overview)) that is PSD2-compliant. But:
+
+- It requires **PSD2-certified AISP** status, eIDAS-qualified certificates, manual registration and Amex approval. Not available to an individual or a small personal app.
+- Coverage is **UK, France, Sweden, Finland only — not the Netherlands**, even though the marketing copy mentions "Personal, Small Business and Corporate Cards".
+
+**The decisive primary evidence** — Amex's own statement (via Emma Community, 2021-08-17), still operative given the 2025 decommissioning:
+
+> "access to American Express' PSD2 Account Financials suite of APIs can only be granted to EU-authorised or registered TPPs accessing account information pertaining to American Express customers in the UK, France, Sweden, and Finland. Markets outside of the scope of those listed have been in consultation with American Express, and they have communicated that we are not currently legislated in the TPP OpenBanking of PSD2 according to local definition of a payment account."
+> — [Emma Community](https://community.emma-app.com/t/cant-connect-amex-icc-euro-basic-card/4554)
+
+### Provider-by-provider
+
+| Provider | Amex NL? | Detail |
+|---|---|---|
+| Enable Banking | **NO** | Amex not in the NL institution list; SE/FI decommissioned 2025-03, France only remains in EU |
+| Yapily | **NO** | Has `amex-ob_uk` and `amex-ob_eu` (NO/FR/SE/FI). No NL |
+| TrueLayer | **NO** | UK/FR/SE/FI only. NL coverage is banks, not Amex |
+| GoCardless | **NO** | Amex NL absent from institution list |
+| Plaid | **NO** | Amex in US/CA/UK. NL = ING, Rabobank, ABN AMRO |
+| Salt Edge | **NO** | Claims generic Amex support but absent from its NL coverage page |
+| Tink | **NO** | The 2021 Amex–Tink partnership is **income verification / onboarding** (reading the user's *bank* account), NOT reading Amex card transactions |
+| Emma | **NO** | UK/US/CA only |
+| Rocket Money | **NO** | US only |
+| Spendee | **NO** | Norway only |
+| Saldo / Knack / InstaCash / Dezeen | Unlikely | No evidence of Amex NL support |
+
+**Conclusion: the architecture must not assume Amex API access will ever become available.** The user's prior assumption is **CONFIRMED as correct**.
+
+---
+
+## 2. File export reality
+
+| Format | Available | Contents | History depth | Notes |
+|---|---|---|---|---|
+| **CSV** | **YES** | Date, Description, Card Member, Account # (last4), Amount. With "Include all additional transaction details": + Reference, Category, Address, City/State, Zip, Country | **~6 billing periods** (US CONFIRMED, NL LIKELY) | Charges positive, payments/credits negative. **Pending excluded.** NL date format likely `DD/MM/YYYY` |
+| **XLSX** | **UNCERTAIN** for consumer | Same as CSV | — | Merchant/business portal has XLS. Consumer portal verified as CSV/OFX/QBO; XLSX unverified |
+| **PDF** | **YES** | Account Summary, New Credits, New Charges (transaction date, process date, description, amount, **FX detail**), Fees, Interest | **up to 7 years** | Parseable text layer. **Itemized per transaction, not just a payments ledger** |
+| OFX/QFX | **YES** | Standard OFX | ~CSV | For Quicken/QuickBooks |
+| QBO | **YES** | QuickBooks format | ~CSV | For QuickBooks |
+
+> ### ⚠️ Design-relevant inversion
+> The intuition "CSV is the easy path, PDF is the fallback" is **backwards for Amex**. PDF has a **7-year** window and richer fields (two dates, FX amounts, rates); CSV has a **~6-month** window and one date. PDF parsing is likely the *more* valuable importer, not the emergency option. The user's brief listed `AmexPDFImporter` last — it should be treated as a first-class importer, not a stretch goal.
+
+**CSV gotcha:** the **"Include all additional transaction details" checkbox is OFF by default**. Without it the CSV drops Reference, Category, Address, City, Zip, Country. The importer must detect whether the detail columns are present, and the onboarding UI should tell the user to tick it.
+
+---
+
+## 3. Data characteristics for import/dedup
+
+| Field | Present | Stable | Notes |
+|---|---|---|---|
+| Transaction ID / Reference | Yes (with details checkbox) | **NO** | Amex: "transaction IDs are subject to change" (TrueLayer help, 2024-07) |
+| Transaction date | Yes | Yes | Primary date in CSV |
+| Posting / process date | **PDF only** | Yes | CSV has a single date |
+| Amount | Yes | Yes | Single signed column; charges +, payments − |
+| Currency | No separate column | — | Converted to card currency (EUR); original amount in PDF |
+| Merchant name | Yes (Description) | Yes | Amex-enriched string |
+| Category | Yes (with details) | Yes | e.g. "Fees & Adjustments", "Travel" |
+| Card Member | Yes | Yes | Distinguishes supplementary cards |
+| Account # (last4) | Yes | Yes | |
+| MCC | **No** (consumer CSV) | — | Available in Amex @ Work for business cards |
+| **Pending** | **NO** | — | Only posted transactions in export |
+| Refunds/credits | Yes | Yes | Negative amount + description distinguishes from charges |
+| FX amount/rate | **PDF yes**, CSV partial | — | PDF: original amount + rate + non-sterling fee |
+| Purchase vs statement payment | Yes | Yes | Sign convention + description text |
+
+### Consequence for the dedup design — CRITICAL
+
+> Amex is the **only** account in the system with **no provider ID and no pending state**. Therefore:
+>
+> 1. **Tier-1 (provider ID) dedup is unavailable for Amex.** The *only* mechanism is **Tier-3: a synthesized content fingerprint** plus **occurrence counting** for genuinely identical transactions (two €3.20 coffees the same day).
+> 2. Because the CSV window is **~6 months**, the user must **archive exports regularly** or history is permanently lost. This is a real product requirement, not a nicety: a "reminder to export Amex" affordance, and permanent storage of every uploaded export file so the ledger can be **rebuilt from raw** at any time.
+> 3. **No pending→booked problem for Amex** (pending is excluded). The pending→booked machinery exists only for Rabobank/Revolut via Enable Banking. Good — this narrows what must be correct.
+
+---
+
+## 4. Google Wallet as an Amex-adjacent source
+
+When an Amex card is in Google Wallet, Amex shares recent transaction data with Google — including transactions made **outside** Wallet (tap-to-pay, physical card) unless the user opts out of **"Non-Device Transactions"**.
+
+**Google Takeout** can export Google Pay/Wallet data as JSON with: `transactionTime`, `amount`, `currency`, `merchant`/`counterparty`, `paymentInstrument` (network + last4), `status`, sometimes `location`/`category`.
+
+**What it gives:** genuine transaction-level detail for Amex transactions shared with Google.
+**What it does NOT give:** full history (only recent/shared), no posting date, no FX detail, no category, no reference ID.
+
+**Dedup feasibility:** Google Wallet JSON and the Amex CSV share `date`, `amount`, `last4` — but **merchant strings differ** and dates may differ (transaction date vs posting date). **Deterministic matching is not feasible; fuzzy matching on (date ±1 day, amount exact, last4) is required.**
+
+> **Product caution:** enabling Google Wallet as a source is a *deduplication liability* as much as a data source. It should be ranked **strictly below** the Amex export and treated as optional/last, or excluded from v1.
+
+---
+
+## 5. Scraping: verdict
+
+**Are there any legitimate automated ways to retrieve Amex NL transaction data without browser scraping?** — **No.**
+
+1. Amex's own PSD2 API → AISP-only, and UK/FR/SE/FI only.
+2. Aggregator APIs → none support Amex NL.
+3. Reverse-engineered private APIs / screen scraping → technically possible, **prohibited by Amex's Terms of Use**, legally risky (GDPR, computer-misuse).
+
+**Recommendation: do not scrape.** File import (PDF + CSV) is primary; Google Wallet Takeout is optional supplementary.
+
+---
+
+## Fact confidence
+
+| Claim | Confidence | Source |
+|---|---|---|
+| Amex NL unavailable via PSD2 | **CONFIRMED** | Enable Banking SE docs (2025-03) + Amex statement (2021) |
+| Amex PSD2 only UK/FR/SE/FI | **CONFIRMED** | Amex statement, Emma Community 2021-08-17 |
+| Amex decommissioned SE/FI | **CONFIRMED** | enablebanking.com/docs/markets/se/ (2025-03) |
+| CSV export exists on americanexpress.nl | **CONFIRMED** | BUNNI 2024-09; Yuki 2025-06; StatementBridge |
+| CSV columns (Date, Description, Card Member, Amount + details) | **LIKELY** | US confirmed; NL format may differ |
+| CSV limited to ~6 billing periods | **LIKELY** | US confirmed; **NL unverified** |
+| Pending excluded from CSV | **LIKELY** | US confirmed |
+| **No stable transaction IDs** | **CONFIRMED** | TrueLayer help 2024-07 |
+| PDF itemized per transaction | **CONFIRMED** | FlowParse; QuickBankConvert 2026-02 |
+| PDF available ~7 years | **LIKELY** | QuickBankConvert 2026-02 |
+| Google Takeout has Amex transactions | **LIKELY** | Google ToS; Amex Google Pay ToS; BankXLSX 2025-12 |
+| XLSX for consumer cards | **UNCERTAIN** | Consumer portal offers CSV/OFX/QBO |
+| NL CSV date format DD/MM/YYYY | **LIKELY** | StatementBridge |
+| Dutch budget apps don't support Amex NL | **LIKELY** | Synci feature request 2025-10 |
+
+## Version & freshness
+
+| Item | Value |
+|---|---|
+| Core Amex/PSD2 evidence | Amex statement 2021-08-17, still operative per 2025-03 Enable Banking decommissioning |
+| Newest sources | QuickBankConvert 2026-02; BankXLSX 2026-08; Subgrove 2026-07 |
+| Amex developer portal | developer.americanexpress.com (current) |
+| Enable Banking SE/FI deprecation | 2025-03-17 |
+| Tink–Amex partnership | 2021 (income verification, not card txns) |
+
+---
+
+## What the user must test themselves (NEEDS USER TESTING)
+
+1. **Download the current CSV** — americanexpress.nl → Rekeningoverzicht → Transactiehistorie → Downloaden → CSV. Record exact column headers, date format, sign convention, and whether the "Include all additional transaction details" checkbox exists and what it adds.
+2. **Download a PDF statement** — verify itemization, presence of *both* transaction date and process date, FX original amount + rate, and that the text layer is selectable (not a scan).
+3. **Test the date-range limit** — request CSV for 6 / 12 / 24 months back; note where truncation occurs.
+4. **Pending check** — make a purchase, wait 24h, download CSV. Expect it absent.
+5. **Google Takeout** — export Google Pay data only; inspect JSON for Amex; check fields and whether merchant strings resemble Amex descriptions.
+6. **XLSX availability** on the consumer portal.
+7. **Multi-card** — if supplementary cards exist, confirm a Card Member column and per-card distinguishability.
+8. **Reference field** — is it populated? Stable-looking IDs or sequential numbers?
+9. **FX** — make a foreign-currency purchase; check CSV (EUR only?) vs PDF (original + rate), and whether the FX fee is broken out.
+10. **PDF depth** — try 1, 2, and 5 years back; note the earliest available.
