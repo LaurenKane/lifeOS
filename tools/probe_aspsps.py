@@ -52,9 +52,9 @@ except ImportError:
              "or: pip install cryptography")
 
 KEY_DIR = Path(os.environ.get("EB_KEY_DIR", "./.eb-keys"))
-KEY_PATH = KEY_DIR / "private.key"
-CRT_PATH = KEY_DIR / "public.crt"
-APP_ID_PATH = KEY_DIR / "app_id"
+KEY_PATH = Path(os.environ.get("EB_KEY", KEY_DIR / "private.key"))
+CRT_PATH = Path(os.environ.get("EB_CRT", KEY_DIR / "public.crt"))
+APP_ID_PATH = Path(os.environ.get("EB_APP_ID_FILE", KEY_DIR / "app_id"))
 
 API_BASE = "https://api.enablebanking.com"
 
@@ -157,11 +157,101 @@ def load_app_id() -> str:
 
 def load_key() -> rsa.RSAPrivateKey:
     if not KEY_PATH.exists():
-        sys.exit(f"No private key at {KEY_PATH}. Run 'keygen' first.")
+        sys.exit(f"No private key at {KEY_PATH}\n"
+                 f"  Point at an existing key with --key PATH or EB_KEY=PATH, or run 'keygen'.")
     key = serialization.load_pem_private_key(KEY_PATH.read_bytes(), password=None)
     if not isinstance(key, rsa.RSAPrivateKey):
-        sys.exit("Expected an RSA private key.")
+        sys.exit(f"{KEY_PATH} is not an RSA private key (found {type(key).__name__}).\n"
+                 f"  Enable Banking requires RSA. Re-generate with:\n"
+                 f"    openssl genrsa -out private.key 4096")
     return key
+
+
+def load_cert():
+    if not CRT_PATH.exists():
+        return None
+    return x509.load_pem_x509_certificate(CRT_PATH.read_bytes())
+
+
+# ─────────────────────────────── verify ───────────────────────────────
+
+def cmd_verify(_args: argparse.Namespace) -> int:
+    """Check that the private key and certificate exist, match, and are RSA.
+
+    Run this before 'probe' — a mismatched pair is the most common cause of a
+    401 from Enable Banking, and it is invisible until the API rejects you.
+    """
+    ok = True
+
+    print(f"private key : {KEY_PATH}")
+    print(f"certificate : {CRT_PATH}")
+    print(f"app_id      : {APP_ID_PATH if APP_ID_PATH.exists() else os.environ.get('EB_APP_ID') or '(not set)'}")
+    print()
+
+    key = None
+    if not KEY_PATH.exists():
+        print("FAIL  private key not found")
+        ok = False
+    else:
+        try:
+            key = load_key()
+            mode = oct(KEY_PATH.stat().st_mode & 0o777)
+            print(f"OK    private key loads, {key.key_size}-bit RSA  (mode {mode})")
+            if key.key_size < 2048:
+                print(f"FAIL  key is only {key.key_size} bits; Enable Banking wants 2048 or more")
+                ok = False
+            if mode not in ("0o600", "0o400"):
+                print(f"WARN  key mode is {mode}; tighten with: chmod 600 {KEY_PATH}")
+        except SystemExit as e:
+            print(f"FAIL  {e}")
+            return 1
+        except Exception as e:
+            print(f"FAIL  cannot read private key: {e}")
+            return 1
+
+    cert = load_cert()
+    if cert is None:
+        print("WARN  no certificate found — you cannot upload an app without one")
+    else:
+        subject = cert.subject.rfc4514_string()
+        issuer = cert.issuer.rfc4514_string()
+        self_signed = subject == issuer
+        # cryptography >= 42 exposes *_utc properties; 41 only has naive ones.
+        not_before = getattr(cert, "not_valid_before_utc", None) or cert.not_valid_before.replace(
+            tzinfo=dt.timezone.utc)
+        not_after = getattr(cert, "not_valid_after_utc", None) or cert.not_valid_after.replace(
+            tzinfo=dt.timezone.utc)
+        days_left = (not_after - dt.datetime.now(dt.timezone.utc)).days
+        print(f"OK    certificate parses  subject={subject}")
+        print(f"      self-signed: {self_signed}"
+              f"{'' if self_signed else '   <-- EB expects a self-signed cert'}")
+        print(f"      valid {not_before:%Y-%m-%d} -> {not_after:%Y-%m-%d}  ({days_left} days left)")
+        if days_left < 0:
+            print("FAIL  certificate has EXPIRED — upload a fresh one")
+            ok = False
+        elif days_left < 30:
+            print("WARN  certificate expires soon")
+        if not self_signed:
+            ok = False
+
+    # The decisive check: do key and cert correspond?
+    if key and cert:
+        if key.public_key().public_numbers() == cert.public_key().public_numbers():
+            print("OK    private key matches the certificate (same public key)")
+        else:
+            print("FAIL  private key does NOT match the certificate.")
+            print("      This is the #1 cause of a 401 from Enable Banking.")
+            print("      Re-upload the certificate that matches this key, or use the other key.")
+            ok = False
+
+    if not (APP_ID_PATH.exists() or os.environ.get("EB_APP_ID")):
+        print()
+        print("NEXT  no app_id yet. Copy it from the Control Panel into:")
+        print(f"      echo -n '<uuid>' > {APP_ID_PATH}")
+
+    print()
+    print("RESULT:", "ready to probe" if ok else "NOT ready - fix the FAILs above")
+    return 0 if ok else 1
 
 
 def http_get(url: str, token: str) -> tuple[int, bytes, dict]:
@@ -272,12 +362,27 @@ def cmd_probe(args: argparse.Namespace) -> int:
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--key", help="path to your existing RSA private key")
+    p.add_argument("--crt", help="path to your existing certificate")
+    p.add_argument("--app-id", help="app_id UUID, instead of writing it to a file")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("keygen", help="generate RSA key + self-signed cert").set_defaults(fn=cmd_keygen)
+    sub.add_parser("verify", help="check your key/cert pair before calling the API").set_defaults(fn=cmd_verify)
     probe = sub.add_parser("probe", help="call GET /aspsps and summarize")
     probe.add_argument("--country", default="NL")
     probe.set_defaults(fn=cmd_probe)
+
     args = p.parse_args()
+
+    # These are global flags, so apply them before the subcommand runs.
+    global KEY_PATH, CRT_PATH
+    if args.key:
+        KEY_PATH = Path(args.key)
+    if args.crt:
+        CRT_PATH = Path(args.crt)
+    if args.app_id:
+        os.environ["EB_APP_ID"] = args.app_id
+
     return args.fn(args)
 
 
