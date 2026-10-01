@@ -38,3 +38,6 @@ backups/
 # Enable Banking probe keys (bead LifeOS-1) - never commit
 .eb-keys/
 /aspsps-*.json   # probe output at repo root; curated evidence under docs/research/ IS tracked
+
+# Deepwork session state (per-session working notes, not project content)
+.slim/
