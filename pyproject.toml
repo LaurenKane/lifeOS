@@ -1,0 +1,47 @@
+[build-system]
+requires = ["uv>=0.1.0"]
+build-backend = "hatchling"
+
+[project]
+name = "lifeos"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "pydantic",
+    "pydantic-settings",
+    "sqlalchemy",
+    "alembic",
+    "psycopg",
+    "httpx",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff",
+    "mypy",
+    "pytest",
+    "pytest-cov",
+    "import-linter",
+]
+
+[project.scripts]
+lifeos = "backend.main:app"
+
+[tool.ruff]
+line-length = 88
+select = ["E", "F", "I", "N", "W", "B", "C", "T"]
+
+[tool.mypy]
+strict = true
+disallow_any_explicit = true
+warn_unreachable = true
+ignore_missing_imports = false
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["backend/tests", "tests"]
+pythonpath = ["backend"]
+rootdir = "."
