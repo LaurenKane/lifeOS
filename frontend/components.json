@@ -1,0 +1,6 @@
+{
+  "ui": "radix-ui",
+  "style": "default",
+  "components": [],
+  "iconLibrary": "lucide-react"
+}
