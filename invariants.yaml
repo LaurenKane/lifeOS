@@ -71,4 +71,4 @@ invariants:
     kind: hash
     severity: error
     path: backend/finance/ingestion/fingerprint.py
-    sha256: ""  # filled by --update
+    sha256: "bcc0ae458799c88db5c5d31037c707bcf18d4f8b4df23ad4b1b89b5ca594b469"
