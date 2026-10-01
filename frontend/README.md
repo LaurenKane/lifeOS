@@ -1,32 +1,71 @@
-# React + TypeScript + Vite
+# Life OS — Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+React + TypeScript + Vite frontend for the Life OS personal-finance app.
 
-Currently, two official plugins are available:
+## Commands
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+Run all commands from this directory (`frontend/`). This project uses **npm only**.
 
-## React Compiler
+| Command             | What it does                                                        |
+| ------------------- | ------------------------------------------------------------------- |
+| `npm install`       | Install dependencies.                                               |
+| `npm run dev`       | Vite dev server (default http://localhost:5173).                    |
+| `npm run build`     | `tsc -b` typecheck, then production build into `dist/`.              |
+| `npx tsc -b --noEmit` | The real typecheck. **Use this, not bare `npx tsc --noEmit`.**      |
+| `npm run lint`      | oxlint.                                                              |
+| `npm test`          | Vitest, single run.                                                  |
+| `npm run test:watch`| Vitest in watch mode.                                                |
+| `npm run test:coverage` | Vitest with V8 coverage.                                         |
+| `npm run preview`   | Serve the built `dist/` locally (smoke test).                       |
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+### The `tsc` trap
 
-## Expanding the Oxlint configuration
+`tsconfig.json` is a solution-style config with `files: []` and project
+references. A bare `npx tsc --noEmit` therefore checks **nothing** and
+exits 0 even when the app is broken. The only meaningful signals are:
 
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+npx tsc -b --noEmit   # or: npm run build
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+## Environment
+
+| Variable              | Default | Notes                                                    |
+| --------------------- | ------- | -------------------------------------------------------- |
+| `VITE_API_BASE_URL`   | `/api`  | Root-relative path or absolute URL. No hardcoded host.    |
+
+## Conventions
+
+- Path alias `@/` → `src/`. Mirrored in `vite.config.ts`, `vitest.config.ts`
+  and `tsconfig.app.json`; keep all three in sync.
+- **Money is never a float.** Amounts are signed integer *minor units*
+  (`amountMinor: z.number().int()`) alongside a `currency` code whose
+  decimal count is the authoritative exponent. See `ARCHITECTURE.md` §6.
+- `tsconfig.app.tsbuildinfo` is a build artifact and is not tracked.
+
+## Structure
+
+```
+src/
+  main.tsx                 entry point: createRoot + App
+  routes/                  route table (index.tsx) and root layout
+  features/finance/<name>/ per-feature stub: types / use-* hook / provider / page
+  lib/apiClient.ts         typed fetch wrapper + shared Money schema
+  lib/utils.ts             cn() className helper
+  api/generated/           placeholder for OpenAPI-generated types
+  components/ui/           shadcn components (added via `npx shadcn@latest add`)
+tests/                     Vitest suites
+```
+
+## Adding a shadcn component
+
+`components.json` is configured for the `new-york` style, CSS variables,
+and the `@/` alias:
+
+```bash
+npx shadcn@latest add button
+```
+
+## Testing
+
+Tests need no network and no running backend — `fetch` is stubbed per test.

@@ -1,12 +1,12 @@
-"""finance.background - scheduler + job registry + CLI worker.
+"""finance.background — scheduler, job registry, CLI worker.
 
-Must NOT require a DB connection at import time. All imports are clean.
+Must import cleanly with no database connection and no network. That constraint
+is not stylistic: the worker is the process that must still start to report why
+it cannot work, and an import-time connection attempt turns a diagnosable
+"database is down" into an unstartable process.
+
+Jobs land in M1. What exists now is the registry shape and a health-checkable
+entrypoint.
 """
 
 from __future__ import annotations
-
-# CLI worker entrypoint: python -m finance.background.worker
-# This must import cleanly without DB dependencies
-
-# Job registry and scheduler will be implemented in M1
-# For M0, this module provides the structure and a health-checkable entrypoint

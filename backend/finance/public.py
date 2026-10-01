@@ -1,131 +1,267 @@
-"""finance module public API — the ONLY export surface.
+"""finance's public API — the ONLY export surface.
 
-Protocols + read-only schemas. This is the interface that other modules (including
-frontend) may depend on. Nothing from finance.domain or finance.ingestion should
-be imported by external modules.
+Other modules, including the frontend's generated client, may depend on this
+module and nothing else below it. `finance.domain` is PRIVATE and
+`finance.ingestion` is an implementation detail.
 
-Design rules:
-- Only export protocols (ABCs) and Pydantic read-only schemas
-- No business logic — that lives in finance.domain.services
-- No DB access — that lives in finance.background or finance.api.routes
-- All types are hashable and suitable for use as dict keys or in sets
+What may appear here:
+    - Protocols (interfaces, never implementations)
+    - Read-only Pydantic schemas
+
+What may not:
+    - business logic (that is `finance.domain.services`)
+    - database access (that is `finance.api.routes` / `finance.background`)
+    - re-exports of anything under `finance.domain` or `finance.ingestion`
+
+Every schema is frozen. A consumer cannot mutate a shared response object, and
+cannot accidentally build one and hand it to a writer.
 """
 
 from __future__ import annotations
 
 from datetime import date
-from typing import Optional, Protocol
+from enum import StrEnum
+from typing import Protocol, runtime_checkable
 
-from pydantic import BaseModel
+from core.money import Currency, Money
+from pydantic import BaseModel, ConfigDict
 
-from ...core.money import Money
-
-# ── Read-only schemas (public contract) ────────────────────────────
-
-
-class TransactionSummary(BaseModel):
-    """Read-only schema for a transaction summary — public API contract."""
-
-    id: int
-    account_id: str
-    fingerprint: str
-    raw_description: str
-    raw_amount: int  # minor units, signed
-    raw_currency: str
-    raw_date: date
-    status: str
-    journal_entry_id: Optional[int] = None
-    transfer_match_id: Optional[int] = None
-
-    model_config = {"frozen": True, "str_strict": True}
+__all__ = [
+    "AccountNature",
+    "AccountSummary",
+    "AccountType",
+    "CategoryKind",
+    "CategorySummary",
+    "DedupeOutcome",
+    "FingerprintResult",
+    "ICategoryClassifier",
+    "IDeduplicator",
+    "ITransferMatcher",
+    "MoneyLike",
+    "RawRecord",
+    "TransactionStatus",
+    "TransactionSummary",
+    "TransferLink",
+]
 
 
-class AccountSummary(BaseModel):
-    """Read-only schema for an account summary."""
+# ── Enumerations ────────────────────────────────────────────────────
+# These are StrEnum so they serialise as their own value in OpenAPI and JSON
+# without a custom encoder, and compare equal to the plain string a TS client
+# sends.
+
+
+class AccountType(StrEnum):
+    """The account taxonomy. Asset and liability are separate fields on purpose:
+
+    direction + signed amounts is a self-contradictory encoding (see
+    ARCHITECTURE-PROPOSAL.md section E).
+    """
+
+    CHECKING = "checking"
+    SAVINGS = "savings"
+    CREDIT_CARD = "credit_card"
+    CASH = "cash"
+    INVESTMENT = "investment"
+    LOAN = "loan"
+    MORTGAGE = "mortgage"
+
+
+class AccountNature(StrEnum):
+    """First-class balance sign. Drives the net-worth arithmetic."""
+
+    ASSET = "asset"
+    LIABILITY = "liability"
+    EQUITY = "equity"
+
+
+class TransactionStatus(StrEnum):
+    """Pipeline state, stored on SourceRecord (never on JournalEntry).
+
+    One JournalEntry can be produced by several SourceRecords over time — a
+    pending row, then the booked row that updates it — so the state lives on the
+    raw record and the canonical entry carries none.
+    """
+
+    IMPORTED = "imported"
+    PENDING = "pending"
+    POSTED = "posted"
+    DUPLICATE = "duplicate"
+
+
+class CategoryKind(StrEnum):
+    """What a category is for. Drives sign convention and budget eligibility."""
+
+    EXPENSE = "expense"
+    INCOME = "income"
+    TRANSFER = "transfer"
+    INVESTMENT = "investment"
+
+
+# ── Read-only schemas ───────────────────────────────────────────────
+# ConfigDict(frozen=True) is what makes these genuinely read-only. extra=
+# "forbid" stops a client smuggling unknown fields into a response model.
+
+
+class _ReadOnly(BaseModel):  # type: ignore[explicit-any]
+    """Base for every exported schema: frozen, strict, and closed."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+class AccountSummary(_ReadOnly):  # type: ignore[explicit-any]
+    """An account as other modules see it. No credentials, no provider IDs."""
 
     id: str
     name: str
     currency: str
-    is_active: bool
+    account_type: AccountType
+    account_nature: AccountNature
+    is_active: bool = True
+    is_hidden: bool = False
     sort_order: int = 0
 
-    model_config = {"frozen": True, "str_strict": True}
+
+class TransactionSummary(_ReadOnly):  # type: ignore[explicit-any]
+    """One source record and where it ended up.
+
+    `raw_amount` is signed minor units. `journal_entry_id` is None until the
+    normalizer has run — an imported-but-unprocessed row is queryable on
+    purpose, so a failed batch can be inspected and retried.
+    """
+
+    id: str
+    account_id: str
+    fingerprint: str
+    raw_description: str
+    raw_amount: int
+    raw_currency: str
+    raw_date: date
+    status: TransactionStatus
+    journal_entry_id: int | None = None
+    transfer_match_id: int | None = None
+    category_id: int | None = None
 
 
-class CategorySummary(BaseModel):
-    """Read-only schema for a category."""
+class CategorySummary(_ReadOnly):  # type: ignore[explicit-any]
+    """A category. `is_system` rows are seeded and not user-editable."""
 
     id: int
     name: str
-    kind: str  # expense, income, transfer, investment
+    kind: CategoryKind
     is_system: bool = False
 
-    model_config = {"frozen": True, "str_strict": True}
 
+class FingerprintResult(_ReadOnly):  # type: ignore[explicit-any]
+    """A computed Tier-3 fingerprint.
 
-class FingerprintResult(BaseModel):
-    """Schema for fingerprint computation result — public contract."""
-
-    fingerprint: str  # SHA-256 hex digest
-
-    model_config = {"frozen": True, "str_strict": True}
-
-
-# ── Protocols (interfaces, not implementations) ────────────────────
-
-
-class ICategoryRule(Protocol):
-    """Protocol for a categorization rule.
-
-    This protocol defines the interface that category rules must satisfy.
-    Implementations live in finance.domain.services or the DB layer.
+    Exposed so another module can check a fingerprint it computed elsewhere
+    against ours without importing `finance.ingestion`.
     """
 
-    description_pattern: str
-    category_id: int
+    fingerprint: str
+    occurrence_index: int = 1
+
+
+class DedupeOutcome(_ReadOnly):  # type: ignore[explicit-any]
+    """What the resolver decided about one incoming record.
+
+    `duplicate_of` names the canonical record when `is_duplicate` is True.
+    `needs_review` marks the 0.50-0.85 confidence band: the pipeline creates the
+    transaction AND queues it, rather than guessing a merge.
+    """
+
+    is_duplicate: bool
+    tier: int
+    duplicate_of: str | None = None
+    confidence: float = 0.0
+    needs_review: bool = False
+
+
+class TransferLink(_ReadOnly):  # type: ignore[explicit-any]
+    """A matched pair of journal lines, both sides of the same movement."""
+
+    outbound_entry_id: str
+    inbound_entry_id: str
+    match_method: str
     confidence: float
-    is_learned: bool
 
-    def matches(self, description: str) -> bool:
-        """Check if this rule matches a given description."""
+
+class RawRecord(_ReadOnly):  # type: ignore[explicit-any]
+    """One source row, provider-agnostic.
+
+    Every adapter emits this shape regardless of source: that is the whole
+    point (ARCHITECTURE-PROPOSAL.md section C). Only the IdentityResolver is
+    provider-aware. `raw_data` is the exact row as received and is immutable
+    forever — the `raw_data_immutable` invariant.
+    """
+
+    account_id: str
+    description: str
+    amount_minor: int
+    currency: str
+    booked_date: date
+    value_date: date | None = None
+    provider_txn_id: str | None = None
+    pending: bool = False
+    line_number: int = 0
+    raw_data: dict[str, str | int | float | bool | None] = {}
+
+
+# ── Protocols ───────────────────────────────────────────────────────
+# runtime_checkable so a caller can isinstance-check a duck-typed
+# implementation without importing the class.
+
+
+@runtime_checkable
+class IDeduplicator(Protocol):
+    """Decides whether an incoming record duplicates an existing one.
+
+    Implementations own all three tiers (ARCHITECTURE-PROPOSAL.md section G).
+    """
+
+    def identify(self, record: RawRecord) -> DedupeOutcome:
+        """Classify one incoming record against what is already stored."""
         ...
 
 
+@runtime_checkable
 class ITransferMatcher(Protocol):
-    """Protocol for transfer matching logic."""
+    """Decides whether two journal lines are the two halves of one movement.
 
-    def match(self, line1: dict, line2: dict) -> dict:
-        """Determine if two journal lines are a transfer pair.
+    Implementations must default to "create new + queue for review" over
+    "guess and merge".
+    """
 
-        Returns dict with keys: is_match, match_method, confidence.
-        """
+    def match(self, outbound_id: str, inbound_id: str) -> TransferLink | None:
+        """Return the link if these two lines are a transfer pair, else None."""
         ...
 
 
-class IDeduper(Protocol):
-    """Protocol for deduplication logic."""
+@runtime_checkable
+class ICategoryClassifier(Protocol):
+    """Assigns a category, or says it cannot.
 
-    def check(
-        self,
-        raw_description: str,
-        raw_amount: int,
-        raw_currency: str,
-        raw_date: str,
-        account_id: str,
-        occurrence_index: int = 1,
-    ) -> dict:
-        """Check if a transaction is a duplicate.
+    A `None` category with `needs_review` is a valid, expected answer.
+    """
 
-        Returns dict with keys: is_duplicate, existing_entry_id, occurrence_index.
-        """
+    def classify(self, record: RawRecord) -> CategorySummary | None:
+        """Return the chosen category, or None to queue for manual review."""
         ...
 
 
-# ── Convenience types ──────────────────────────────────────────────
+# ── Convenience types ───────────────────────────────────────────────
+# Money and Currency are shared primitives from `core`, not domain internals, so
+# re-exporting them here leaks nothing. `MoneyLike` is the alias other modules
+# should import rather than reaching past this surface.
+MoneyLike = Money
+CurrencyLike = Currency
 
-MoneyLike = Money  # alias for public API; always Money from core.money
 
+def is_valid_currency_code(code: str) -> bool:
+    """Whether `code` looks like an ISO 4217 alphabetic code.
 
-def is_valid_currency(code: str) -> bool:
-    """Check if a currency code is valid (3 letters)."""
-    return len(code) == 3 and code.isalpha()
+    Shape only. Whether the currency is one we actually hold is a database
+    question, answered against the `currency` table.
+    """
+    return len(code) == 3 and code.isalpha() and code.isupper()

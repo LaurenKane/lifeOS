@@ -1,9 +1,9 @@
 /* Imports page — stub component. */
 import React from "react";
-import { useImports } from "./use-imports";
+import { useImportsContext } from "./use-imports";
 
 export const ImportsPage: React.FC = () => {
-  const [_importBatches, loading] = useImports();
+  const { data, loading } = useImportsContext();
 
   if (loading) {
     return <p>Loading imports…</p>;
@@ -12,7 +12,9 @@ export const ImportsPage: React.FC = () => {
   return (
     <section className="p-4">
       <h2 className="text-xl font-semibold mb-2">Imports</h2>
-      <p className="text-muted-foreground">No import batches.</p>
+      <p className="text-muted-foreground">
+        {data.length === 0 ? "No import batches." : `${data.length} import batches.`}
+      </p>
     </section>
   );
 };

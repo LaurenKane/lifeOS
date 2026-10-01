@@ -1,7 +1,10 @@
 /* ── Transaction types (stub) ─────────────────────────────────────── */
-import { z, type ZodType } from "zod";
+import { z } from "zod";
 
-export const TransactionSchema: ZodType = z.object({
+/* Money is signed integer MINOR units (e.g. cents), never a float.
+ * `currency` is an ISO-4217 code whose decimal count is the
+ * authoritative exponent — see ARCHITECTURE.md §6. */
+export const TransactionSchema = z.object({
   id: z.string(),
   description: z.string(),
   amountMinor: z.number().int(),

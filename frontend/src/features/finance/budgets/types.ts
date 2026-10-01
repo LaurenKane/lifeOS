@@ -1,7 +1,8 @@
 /* Budget types (stub) */
-import { z, type ZodType } from "zod";
+import { z } from "zod";
 
-export const BudgetSchema: ZodType = z.object({
+/* Money is signed integer MINOR units, never a float (ARCHITECTURE.md §6). */
+export const BudgetSchema = z.object({
   id: z.string(),
   name: z.string(),
   amountMinor: z.number().int(),

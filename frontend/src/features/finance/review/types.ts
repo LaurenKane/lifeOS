@@ -1,7 +1,8 @@
 /* Review types (stub) */
-import { z, type ZodType } from "zod";
+import { z } from "zod";
 
-export const ReviewItemSchema: ZodType = z.object({
+/* Money is signed integer MINOR units, never a float (ARCHITECTURE.md §6). */
+export const ReviewItemSchema = z.object({
   id: z.string(),
   description: z.string(),
   amountMinor: z.number().int(),

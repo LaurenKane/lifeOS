@@ -1,35 +1,49 @@
-"""DateRange value object for finance module.
+"""DateRange - an inclusive [start, end] window.
 
-PRIVATE — only finance.public may import from this module.
+PRIVATE - only finance.public may import from this module.
 """
 
 from __future__ import annotations
 
+import datetime as dt
 from dataclasses import dataclass
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, order=True)
 class DateRange:
-    """A range of dates [start, end] inclusive."""
+    """A closed interval of dates. `start == end` is a valid single-day range."""
 
-    start: date
-    end: date
+    start: dt.date
+    end: dt.date
 
     def __post_init__(self) -> None:
         if self.start > self.end:
             msg = f"DateRange start ({self.start}) must not be after end ({self.end})"
             raise ValueError(msg)
 
-    def contains(self, d: date) -> bool:
-        return self.start <= d <= self.end
+    def __contains__(self, value: dt.date) -> bool:
+        return self.start <= value <= self.end
+
+    def contains(self, value: dt.date) -> bool:
+        return self.start <= value <= self.end
+
+    @property
+    def days(self) -> int:
+        """Inclusive day count: a one-day range is 1, not 0."""
+        return (self.end - self.start).days + 1
 
     def intersect(self, other: DateRange) -> DateRange | None:
-        """Return the intersection of two DateRanges, or None if they don't overlap."""
-        new_start = max(self.start, other.start)
-        new_end = min(self.end, other.end)
-        if new_start > new_end:
+        """The overlapping range, or None when the two do not overlap."""
+        start = max(self.start, other.start)
+        end = min(self.end, other.end)
+        if start > end:
             return None
-        return DateRange(start=new_start, end=new_end)
+        return DateRange(start=start, end=end)
+
+    def shift(self, days: int) -> DateRange:
+        """Move both bounds by `days`. Used by the dedup candidate windows."""
+        delta = dt.timedelta(days=days)
+        return DateRange(start=self.start + delta, end=self.end + delta)
 
     def __repr__(self) -> str:
-        return f"DateRange(start={self.start}, end={self.end})"
+        return f"DateRange({self.start}..{self.end})"

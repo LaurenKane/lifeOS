@@ -1,24 +1,67 @@
-"""alembic env.py for core schema (shared primitives)."""
+"""Alembic environment for the core schema.
+
+Executed by Alembic via `exec`, not imported as a package — so the imports below
+are deliberately untyped and this file is excluded from the mypy gate (see
+`[tool.ruff.lint.per-file-ignores]` and the mypy exclude in pyproject.toml).
+
+No migrations are written here. Bead LifeOS-6 (M1) owns the schema, including
+the deferrable balance trigger and the `raw_data_immutable` DB trigger. M0
+provides the scaffolding only.
+"""
 
 from __future__ import annotations
 
 from logging.config import fileConfig
 
-# this is the Alembic Config object, which provides
-# access to the values within the .ini file in use.
-from alembic.config import Config
+from alembic import context
+from sqlalchemy import engine_from_config, pool
 
-config = Config(file_name="alembic.ini")
+# The Alembic Config object, providing the values in the .ini file in use.
+config = context.config
 
-# Interpret the config for this script.
-# This will set up logging etc.
-if config is not None:
+if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# add your model's MetaData object here for 'autogenerate support'
-# from mymodel import Base
-# target_metadata = Base.metadata
+# Populated by M1 once `finance.domain.models.Base` carries tables.
 target_metadata = None
 
-# other values from the config, defined in the .ini file:
-# my_important_option = config.get_main_option("my_important_option")
+
+def run_migrations_offline() -> None:
+    """Emit SQL to stdout without connecting.
+
+    The only way to inspect a migration without a live database, so it has to
+    work.
+    """
+    url = config.get_main_option("sqlalchemy.url")
+    context.configure(
+        url=url,
+        target_metadata=target_metadata,
+        literal_binds=True,
+        dialect_opts={"paramstyle": "named"},
+        version_table_schema="core",
+    )
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+def run_migrations_online() -> None:
+    """Run migrations against a live connection."""
+    connectable = engine_from_config(
+        config.get_section(config.config_ini_section, {}),
+        prefix="sqlalchemy.",
+        poolclass=pool.NullPool,
+    )
+    with connectable.connect() as connection:
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            version_table_schema="core",
+        )
+        with context.begin_transaction():
+            context.run_migrations()
+
+
+if context.is_offline_mode():
+    run_migrations_offline()
+else:
+    run_migrations_online()

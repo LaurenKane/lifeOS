@@ -8,14 +8,22 @@
  */
 import { z } from "zod";
 
-const BaseUrlSchema = z.string().url().default("/api");
+/* The base URL may be a root-relative path ("/api" — the local/dev
+ * default, proxied to the FastAPI backend) or an absolute URL
+ * ("https://api.example.test/v1" in deployed environments). A plain
+ * z.string().url() would reject the relative default, so accept both
+ * and reject anything that is neither. */
+const BaseUrlSchema = z
+  .string()
+  .refine(
+    (value) => value.startsWith("/") || URL.canParse(value),
+    { message: "must be a root-relative path or an absolute URL" },
+  )
+  .default("/api");
 
 type BaseUrl = z.infer<typeof BaseUrlSchema>;
 
-const baseUrl: BaseUrl = BaseUrlSchema.parse(
-  // $FlowFixMe — validated at module init via z.parse, default is safe
-  import.meta.env.VITE_API_BASE_URL
-);
+export const baseUrl: BaseUrl = BaseUrlSchema.parse(import.meta.env.VITE_API_BASE_URL);
 
 // Re-export a small typed fetch wrapper
 export const apiGet = async <T>(path: string, init?: RequestInit): Promise<T> => {
@@ -85,11 +93,14 @@ export const apiDelete = async <R>(path: string, init?: RequestInit): Promise<R>
 // Validation helpers (Zod) for API responses
 // —————————————————————————————————————————————
 
-export const Amount = z.number().int();
-export type Amount = z.infer<typeof Amount>;
+/** Amounts are signed integer MINOR units (e.g. cents) — never floats.
+ * `currency` is an ISO-4217 code whose decimal count is the
+ * authoritative exponent. See ARCHITECTURE.md §6. */
+export const AmountMinor = z.number().int();
+export type AmountMinor = z.infer<typeof AmountMinor>;
 
 export const Money = z.object({
-  amount: Amount,
+  amountMinor: AmountMinor,
   currency: z.string().length(3),
 });
 export type Money = z.infer<typeof Money>;

@@ -13,8 +13,22 @@ export const useTransactions = () => {
   React.useEffect(() => {
     apiGet<Transaction[]>("/finance/transactions")
       .then(setData)
+      .catch(() => setData([]))
       .finally(() => setLoading(false));
   }, []);
 
   return { data, loading };
+};
+
+export type TransactionsState = ReturnType<typeof useTransactions>;
+
+/* The provider owns the single fetch; pages read through this context. */
+export const TransactionsContext = React.createContext<TransactionsState | null>(null);
+
+export const useTransactionsContext = () => {
+  const state = React.useContext(TransactionsContext);
+  if (state === null) {
+    throw new Error("useTransactionsContext must be used within a <TransactionsProvider>");
+  }
+  return state;
 };

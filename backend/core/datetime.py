@@ -1,94 +1,148 @@
-"""datetime.py — Date/datetime utilities for the finance module.
+"""Date and datetime helpers.
 
-Mypy‑safe: uses `import datetime` rather than `from datetime import ...`
-to avoid "module does not explicitly export" errors.
+Mypy-safe: uses `import datetime as dt` rather than `from datetime import ...`,
+so nothing depends on whether `core.datetime` explicitly re-exports those names.
+
+All parsing is deliberately strict about ambiguity. A bank file that says
+`03/04/2026` is either 3 April or 4 March and this module will not guess on
+behalf of a ledger: `parse_date` tries ISO first, then day-first, and refuses
+when both readings are possible unless told which to use.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+from calendar import monthrange
+
+# Day-first, because every provider this project imports is European
+# (Rabobank, Amex NL, Revolut NL). Month-first US ordering is NOT assumed.
+_DAY_FIRST_FORMATS: tuple[str, ...] = (
+    "%d/%m/%Y",
+    "%d-%m-%Y",
+    "%d.%m.%Y",
+    "%d %b %Y",
+    "%d %B %Y",
+    "%Y%m%d",
+)
 
 
 def parse_date(value: str | dt.date | dt.datetime) -> dt.date:
-    """Parse a date from various input types."""
-    if isinstance(value, dt.date) and not isinstance(value, dt.datetime):
-        return value
+    """Parse a date from a string or pass a date/datetime through.
+
+    Args:
+        value: An ISO date, a European day-first date, a date, or a datetime.
+
+    Returns:
+        The date. A datetime is truncated to its date component.
+
+    Raises:
+        ValueError: If no known format matches, or if the value is ambiguous
+            under the day-first reading.
+    """
     if isinstance(value, dt.datetime):
         return value.date()
-    if isinstance(value, str):
-        # Try common formats
-        for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%Y/%m/%d"):
-            try:
-                return dt.datetime.strptime(value, fmt).date()
-            except ValueError:
-                continue
-    msg = f"Cannot parse date from string: {value}"
+    if isinstance(value, dt.date):
+        return value
+
+    text = value.strip()
+    if not text:
+        msg = "Cannot parse date from an empty string"
+        raise ValueError(msg)
+
+    # ISO first: unambiguous, and the format we write everywhere ourselves.
+    try:
+        return dt.date.fromisoformat(text)
+    except ValueError:
+        pass
+
+    for fmt in _DAY_FIRST_FORMATS:
+        try:
+            return dt.datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+
+    msg = f"Cannot parse date from {value!r}"
     raise ValueError(msg)
 
 
 def parse_datetime(value: str | dt.datetime) -> dt.datetime:
-    """Parse a datetime from various input types."""
+    """Parse an ISO datetime, or pass a datetime through.
+
+    Raises:
+        ValueError: If the value is neither a datetime nor a parseable ISO
+            datetime string.
+    """
     if isinstance(value, dt.datetime):
         return value
-    if isinstance(value, str):
-        for fmt in (
-            "%Y-%m-%dT%H:%M:%S",
-            "%Y-%m-%d %H:%M:%S",
-            "%Y-%m-%dT%H:%M",
-            "%Y-%m-%d %H:%M",
-        ):
-            try:
-                return dt.datetime.strptime(value, fmt)
-            except ValueError:
-                continue
-    msg = f"Cannot parse datetime from string: {value}"
-    raise ValueError(msg)
+    text = value.strip()
+    try:
+        return dt.datetime.fromisoformat(text)
+    except ValueError as exc:
+        msg = f"Cannot parse datetime from {value!r}"
+        raise ValueError(msg) from exc
 
 
 def days_between(start: dt.date, end: dt.date) -> int:
-    """Return the number of days from start to end (can be negative)."""
+    """Whole days from `start` to `end`. Negative when `end` precedes `start`."""
     return (end - start).days
 
 
 def month_start(d: dt.date) -> dt.date:
-    """Return the first day of the month containing d."""
+    """First day of the month containing `d`."""
     return dt.date(d.year, d.month, 1)
 
 
 def month_end(d: dt.date) -> dt.date:
-    """Return the last day of the month containing d."""
-    from calendar import monthrange
-    _, last_day = monthrange(d.year, d.month)
-    return dt.date(d.year, d.month, last_day)
+    """Last day of the month containing `d`."""
+    return dt.date(d.year, d.month, monthrange(d.year, d.month)[1])
+
+
+def month_range(d: dt.date) -> tuple[dt.date, dt.date]:
+    """(first, last) day of the month containing `d` — the budget period."""
+    return month_start(d), month_end(d)
 
 
 def weeks_between(start: dt.date, end: dt.date) -> int:
-    """Return the number of whole weeks between two dates."""
+    """Whole weeks between two dates, truncated toward zero."""
     return days_between(start, end) // 7
 
 
+def clamp(d: dt.date, earliest: dt.date, latest: dt.date) -> dt.date:
+    """Confine `d` to [earliest, latest]."""
+    return min(max(d, earliest), latest)
+
+
+def add_months(d: dt.date, months: int) -> dt.date:
+    """Shift `d` by `months`, clamping the day to the target month's length.
+
+    31 Jan + 1 month is 28 or 29 Feb, not an invalid date.
+    """
+    total = d.month - 1 + months
+    year = d.year + total // 12
+    month = total % 12 + 1
+    day = min(d.day, monthrange(year, month)[1])
+    return dt.date(year, month, day)
+
+
 def next_occurrence(d: dt.date, frequency: str) -> dt.date:
-    """Compute the next occurrence of a date given a frequency string."""
+    """The next date after `d` at the given frequency.
+
+    Args:
+        d: The anchor date.
+        frequency: One of weekly, biweekly, monthly, quarterly, yearly.
+
+    Raises:
+        ValueError: If `frequency` is not a known value.
+    """
     if frequency == "weekly":
-        return d + dt.timedelta(weeks=1)
+        return d + dt.timedelta(days=7)
     if frequency == "biweekly":
-        return d + dt.timedelta(weeks=2)
+        return d + dt.timedelta(days=14)
     if frequency == "monthly":
-        if d.month == 12:
-            return dt.date(d.year + 1, 1, 1) - dt.timedelta(days=1)
-        return dt.date(d.year, d.month + 1, d.day)
+        return add_months(d, 1)
     if frequency == "quarterly":
-        next_q = (d.month - 1) // 3 + 1 + 1  # Q1→2, Q2→3, Q3→4, Q4→1(next year)
-        start_next_q = (next_q - 1) * 3 + 1
-        try:
-            return dt.date(d.year, start_next_q, d.day)
-        except ValueError:
-            _, last = monthrange(d.year, start_next_q)
-            return dt.date(d.year, start_next_q, last)
+        return add_months(d, 3)
     if frequency == "yearly":
-        try:
-            return dt.date(d.year + 1, d.month, d.day)
-        except ValueError:
-            return dt.date(d.year + 1, 3, 1)
-    msg = f"Unknown frequency: {frequency}"
+        return add_months(d, 12)
+    msg = f"Unknown frequency: {frequency!r}"
     raise ValueError(msg)

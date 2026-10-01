@@ -1,15 +1,21 @@
-/* Budgets provider — stub */
+/* Budgets provider — stub. Owns the single budgets fetch and exposes
+ * the result to pages via BudgetsContext.
+ */
 import React from "react";
-import { useBudgets } from "./use-budgets";
+import { BudgetsContext, useBudgets } from "./use-budgets";
 
 export const BudgetsProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
-  const { data: budgets, loading } = useBudgets();
+  const state = useBudgets();
 
-  if (loading) {
+  if (state.loading) {
     return <p>Loading budgets…</p>;
   }
 
-  return <div>{children}</div>;
+  return (
+    <BudgetsContext.Provider value={state}>
+      <div>{children}</div>
+    </BudgetsContext.Provider>
+  );
 };

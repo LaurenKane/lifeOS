@@ -1,17 +1,21 @@
-/* Transactions provider — stub. Real implementation will wrap
- * useTransactions and provide the context for the feature.
+/* Transactions provider — stub. Owns the single transactions fetch and
+ * exposes the result to pages via TransactionsContext.
  */
 import React from "react";
-import { useTransactions } from "./use-transactions";
+import { TransactionsContext, useTransactions } from "./use-transactions";
 
 export const TransactionsProvider: React.FC<{
   children: React.ReactNode;
 }> = ({ children }) => {
-  const { data: transactions, loading } = useTransactions();
+  const state = useTransactions();
 
-  if (loading) {
+  if (state.loading) {
     return <p>Loading transactions…</p>;
   }
 
-  return <div>{children}</div>;
+  return (
+    <TransactionsContext.Provider value={state}>
+      <div>{children}</div>
+    </TransactionsContext.Provider>
+  );
 };

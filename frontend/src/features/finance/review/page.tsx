@@ -1,9 +1,9 @@
 /* Review page — stub component. */
 import React from "react";
-import { useReview } from "./use-review";
+import { useReviewContext } from "./use-review";
 
 export const ReviewPage: React.FC = () => {
-  const [_reviewItems, loading] = useReview();
+  const { data, loading } = useReviewContext();
 
   if (loading) {
     return <p>Loading review queue…</p>;
@@ -12,7 +12,11 @@ export const ReviewPage: React.FC = () => {
   return (
     <section className="p-4">
       <h2 className="text-xl font-semibold mb-2">Review Queue</h2>
-      <p className="text-muted-foreground">No items in review queue.</p>
+      <p className="text-muted-foreground">
+        {data.length === 0
+          ? "No items in review queue."
+          : `${data.length} items in review queue.`}
+      </p>
     </section>
   );
 };
