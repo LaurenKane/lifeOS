@@ -1,4 +1,33 @@
 version: 1
+# NOTE ON AN INVARIANT THAT DELIBERATELY IS NOT HERE.
+#
+# The per-account-type statement balance identity:
+#
+#   checking / savings (asset):  prev + credits - debits = closing
+#   credit_card (liability):     Vorig + Debiteringen - Crediteringen = Nieuw saldo
+#                                -- i.e. a charge INCREASES the amount owed
+#
+# No source_record or journal_line column stores a statement balance
+# (P-NO-HISTORIC-BALANCE), so nothing asserts this today -- and it is what caught
+# every parsing bug during real-export verification
+# (docs/research/11-real-export-verification.md section 4).
+#
+# It is NOT an entry here, on purpose:
+#   * scripts/check_invariants.py supports only forbid_regex, hash and manifest.
+#     None of those execute a parse or compare a number; an entry expressed with
+#     them would be decorative. An entry no checker can evaluate always "passes",
+#     which is worse than no entry -- it reads as coverage and is not coverage.
+#   * The right-hand side of the identity lives in the uploaded statement file,
+#     not in this repository. invariants.yaml entries are declared against the
+#     repo; this one is declared against a user-supplied artefact.
+#
+# So it lives where it can actually run: a REQUIRED acceptance test for every
+# adapter -- output must reconcile at delta 0 against the totals the statement
+# prints on its own front page. Account type is the discriminator; there is no
+# generic form, because the two directions are opposites.
+#
+# Decision record, including the rejected alternatives:
+# docs/adr/0003-import-decisions-real-export.md Decision 2.
 invariants:
   # raw_data_immutable — source_record.raw_data and raw_description are never
   # updated or deleted. Highest-priority invariant (ARCHITECTURE-PROPOSAL.md §793,

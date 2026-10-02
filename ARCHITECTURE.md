@@ -32,7 +32,11 @@ life-os/
 │   │   │   ├── value_objects/  # Money, Currency, DateRange
 │   │   │   └── services/       # pure logic: dedupe, transfer_match, categorize, budget
 │   │   ├── ingestion/          # THE COMPLEXITY LIVES HERE
-│   │   │   ├── adapters/       # enable_banking.py, amex_pdf.py, amex_csv.py, revolut_csv.py, manual.py
+│   │   │   ├── adapters/       # enable_banking.py, amex_pdf.py, manual.py
+│   │   │   │                   # + rabobank_pdf.py, revolut_pdf.py — declared providers,
+│   │   │   │                   #   adapters to come (docs/adr/0002-import-provider-enum.md).
+│   │   │   │                   #   amex_csv.py / revolut_csv.py remain for replay but are
+│   │   │   │                   #   unreachable via V1_PROVIDERS.
 │   │   │   │   ├── normalize.py
 │   │   │   │   ├── fingerprint.py  # FROZEN once shipped (invariant)
 │   │   │   │   ├── identity.py     # IdentityResolver — 3 tiers
@@ -96,6 +100,15 @@ life-os/
 | `migrations_immutable` | Applied Alembic revisions ever edited in place | Manifest hash comparison (alembic heads vs recorded) | CI job `check-invariants` |
 | `fingerprint_frozen` | `backend/finance/ingestion/fingerprint.py` SHA-256 hash changed | Hash pinned in `invariants.yaml`; CI fails on drift | CI job `check-invariants` |
 
+**Not among them, deliberately.** The per-account-type balance identity
+(`checking`/`savings`: `prev + credits − debits = closing`; `credit_card`:
+`Vorig + Debiteringen − Crediteringen = Nieuw`) is an arithmetic identity over *parsed rows*, and the
+right-hand side lives in the uploaded statement rather than in this repo. `scripts/check_invariants.py`
+supports only `forbid_regex`, `hash` and `manifest` — none of which execute a parse. It is therefore
+a **required adapter acceptance test**, not an invariant entry; `invariants.yaml` carries a comment
+pointing at it. Rationale and rejected alternatives:
+`docs/adr/0003-import-decisions-real-export.md` Decision 2.
+
 ---
 
 ## 5. M0 / M1 boundary
@@ -129,6 +142,10 @@ The app must run with `--network=none`. This is a deliberate design property, no
 - `docs/ARCHITECTURE-PROPOSAL.md` — the full rationale
 - `docs/RECOMMENDATION.md` — final recommendation, risks, decisions required
 - `docs/adr/0001-deployment-topology.md` — Netcup VPS, Docker Compose, Tailscale
+- `docs/adr/0002-import-provider-enum.md` — the v1 provider list; what is retired, deferred, and
+  declared-but-not-uploadable
+- `docs/adr/0003-import-decisions-real-export.md` — Amex sign flip, per-account-type balance identity
+  and its acceptance test, Rabobank type codes, Revolut Deposit→IBAN hold, advisory `Periode`
 - `docs/ENABLE-BANKING-SETUP.md` — Enable Banking connection guide
 - `SAFETY.md` — rules for touching this repo
 - `invariants.yaml` — machine-checkable invariants
@@ -142,14 +159,20 @@ The app must run with `--network=none`. This is a deliberate design property, no
 | Milestone | Done when | Why this order |
 |---|---|---|
 | **M1** | Schema + manual transactions | Proves double-entry core + balance trigger before ingestion |
-| **M2** | Amex CSV import + fingerprint dedup | Same file twice → 0 new transactions; proves Tier 3 |
+| **M2** | Manual + Amex PDF import + fingerprint dedup | Same statement twice → 0 new transactions; proves Tier 3 |
 | **M3** | Merchant normalization + categorization | 7-layer engine; manual correction creates learned rule |
 | **M4** | Transfer matching + Amex payment | Card payment auto-detect + synthesized leg; spending correct |
 | **M5** | Enable Banking: Rabobank | RS256 client, consent flow, Tier 1 + Tier 2 dedup |
 | **M6** | Rebuild-from-raw | `replay --batch-id` re-runs whole pipeline; fingerprint frozen |
-| **M7** | Amex PDF importer | 7-year itemized import; PDF/CSV overlap non-destructive |
-| **M8** | Revolut | Conditional on `/aspsps?country=NL` gate |
+| **M7** | Rabobank + Revolut PDF importers | Itemized statement import; no provider ID → Tier 3 only; per-account-type balance identity holds at delta 0 |
+| **M8** | Revolut API | Conditional on `/aspsps?country=NL` gate |
 | **M9** | Budgets + recurring detection | Monthly budgets; `recurring_series` nightly job |
 | **M10** | Net worth snapshots | `asset − liability` over time; already correct from M1 |
+
+> Roadmap as of 2026-10-02 (beads `LifeOS-18`, `LifeOS-3pe`). **M2 was Amex CSV and is retired** —
+> the Amex app exports PDF only, so PDF is the Amex path and moved up. M7 was "Amex PDF importer";
+> it now carries the two PDF paths that have no adapter. Provider enum:
+> `enable_banking · amex_pdf · rabobank_pdf · revolut_pdf · manual`
+> (`docs/adr/0002-import-provider-enum.md`).
 
 ---

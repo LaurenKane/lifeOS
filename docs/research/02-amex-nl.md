@@ -56,7 +56,7 @@ Amex **does** publish an Account and Transaction API ([developer.americanexpress
 
 | Format | Available | Contents | History depth | Notes |
 |---|---|---|---|---|
-| **CSV** | **YES** | Date, Description, Card Member, Account # (last4), Amount. With "Include all additional transaction details": + Reference, Category, Address, City/State, Zip, Country | **~6 billing periods** (US CONFIRMED, NL LIKELY) | Charges positive, payments/credits negative. **Pending excluded.** NL date format likely `DD/MM/YYYY` |
+| **CSV** | **YES** | Date, Description, Card Member, Account # (last4), Amount. With "Include all additional transaction details": + Reference, Category, Address, City/State, Zip, Country | **~6 billing periods** (US CONFIRMED, NL LIKELY) | Charges positive, payments/credits negative — **CSV only.** The **PDF carries no sign at all**; see §3a. **Pending excluded.** NL date format likely `DD/MM/YYYY` |
 | **XLSX** | **UNCERTAIN** for consumer | Same as CSV | — | Merchant/business portal has XLS. Consumer portal verified as CSV/OFX/QBO; XLSX unverified |
 | **PDF** | **YES** | Account Summary, New Credits, New Charges (transaction date, process date, description, amount, **FX detail**), Fees, Interest | **up to 7 years** | Parseable text layer. **Itemized per transaction, not just a payments ledger** |
 | OFX/QFX | **YES** | Standard OFX | ~CSV | For Quicken/QuickBooks |
@@ -76,7 +76,7 @@ Amex **does** publish an Account and Transaction API ([developer.americanexpress
 | Transaction ID / Reference | Yes (with details checkbox) | **NO** | Amex: "transaction IDs are subject to change" (TrueLayer help, 2024-07) |
 | Transaction date | Yes | Yes | Primary date in CSV |
 | Posting / process date | **PDF only** | Yes | CSV has a single date |
-| Amount | Yes | Yes | Single signed column; charges +, payments − |
+| Amount | Yes | Yes | **CSV:** single signed column; charges +, payments −. **PDF: no sign in the amount** — direction is a separate `CR` marker line (§3a) |
 | Currency | No separate column | — | Converted to card currency (EUR); original amount in PDF |
 | Merchant name | Yes (Description) | Yes | Amex-enriched string |
 | Category | Yes (with details) | Yes | e.g. "Fees & Adjustments", "Travel" |
@@ -84,7 +84,7 @@ Amex **does** publish an Account and Transaction API ([developer.americanexpress
 | Account # (last4) | Yes | Yes | |
 | MCC | **No** (consumer CSV) | — | Available in Amex @ Work for business cards |
 | **Pending** | **NO** | — | Only posted transactions in export |
-| Refunds/credits | Yes | Yes | Negative amount + description distinguishes from charges |
+| Refunds/credits | Yes | Yes | **CSV:** negative amount + description. **PDF:** the amount is positive like a charge; a `CR` line *beneath* it carries the direction (§3a), and the card payment must be separated by description on top of that |
 | FX amount/rate | **PDF yes**, CSV partial | — | PDF: original amount + rate + non-sterling fee |
 | Purchase vs statement payment | Yes | Yes | Sign convention + description text |
 
@@ -110,6 +110,8 @@ When an Amex card is in Google Wallet, Amex shares recent transaction data with 
 **Dedup feasibility:** Google Wallet JSON and the Amex CSV share `date`, `amount`, `last4` — but **merchant strings differ** and dates may differ (transaction date vs posting date). **Deterministic matching is not feasible; fuzzy matching on (date ±1 day, amount exact, last4) is required.**
 
 > **Product caution:** enabling Google Wallet as a source is a *deduplication liability* as much as a data source. It should be ranked **strictly below** the Amex export and treated as optional/last, or excluded from v1.
+>
+> **Disposition: excluded from v1.** `google_wallet` is not in the provider enum — see `docs/adr/0002-import-provider-enum.md`.
 
 ---
 
@@ -121,7 +123,10 @@ When an Amex card is in Google Wallet, Amex shares recent transaction data with 
 2. Aggregator APIs → none support Amex NL.
 3. Reverse-engineered private APIs / screen scraping → technically possible, **prohibited by Amex's Terms of Use**, legally risky (GDPR, computer-misuse).
 
-**Recommendation: do not scrape.** File import (PDF + CSV) is primary; Google Wallet Takeout is optional supplementary.
+**Recommendation: do not scrape.** File import is the only path — and for Amex, as of 2026-10-01,
+that means **PDF only**: the Amex app offers no CSV, so `amex_csv` is retired and
+`revolut_csv`-style fallbacks do not apply here. See `docs/adr/0002-import-provider-enum.md`.
+Google Wallet Takeout remains optional supplementary material, excluded from the v1 provider enum.
 
 ---
 
@@ -208,17 +213,46 @@ no issue`. Measured against the real statements, the two columns differ on **42 
 `17.06.26`; `10.06.26` processed `12.06.26`. `raw_posting_date` is load-bearing for Amex.
 Tracked as bead `LifeOS-hwv`.
 
+### §3a — the sign flip is explicit, and the PDF has no sign at all
+
+This is a **decision**, recorded in full at
+**`docs/adr/0003-import-decisions-real-export.md` Decision 1**. The short form:
+
+| Where | Convention |
+|---|---|
+| This file, `:59` — Amex **CSV** | charges positive, payments/credits negative |
+| This file, `:59` — Amex **PDF** | **no sign at all.** The amount column is positive for charges *and* credits; a credit is marked by a line containing only `CR` printed **beneath** the amount (doc 11 §3.2) |
+| `docs/ARCHITECTURE-PROPOSAL.md` §E — the ledger | **Debits negative, credits positive** (signed/ISO; no `direction` column) |
+
+**The source→ledger flip was written down nowhere** and `exp-2` flagged it under
+`F-SCHEMA-NO-DIRECTION`. It is real (doc 11 §3.3). **An adapter must flip it explicitly:**
+`CR` present → positive, `CR` absent → negative, emitted as already-signed minor units declared
+`AmountSignConvention.SIGNED` so the normalizer does not flip a second time. The parser does exactly
+that; the docs now match the code.
+
+**And a second inversion hides behind it: `CR` separates credits from *charges*, not card payments
+from *refunds*.** Each statement's credit section mixes the monthly card payment with real refunds,
+so the payment must be separated by description on top of the sign:
+
+| Statement | Card payment | Refunds | `Crediteringen` |
+|---|---|---|---|
+| 2026-06-23 | 721,35 | 1 (70,00 PayPal) | 791,35 |
+| 2026-07-23 | 765,67 | 2 (10,00 Amazon, 144,30 asos) | 919,97 |
+| 2026-08-23 | 332,43 | 3 (2,99 / 6,99 Prime, 39,99 asos) | 382,40 |
+| 2026-09-23 | 272,48 | 0 | 272,48 |
+
+(doc 11 §3.2.) The payment was identified by the literal string
+`HARTELIJK BEDANKT VOOR UW BETALING`, which held for all four statements — one Dutch string, in the
+same position as the brittle Rabobank rule at `docs/ARCHITECTURE-PROPOSAL.md` §H that "learns". **This
+is a second string to learn.**
+
 ### Two other measured facts about the Amex PDF
 
-- **Credits carry no sign.** The amount column holds charges and credits as positive
-  numbers alike; a credit is marked by a line containing only `CR` *beneath* the amount.
-  Each statement's credit section mixes the monthly card payment with genuine refunds
-  (payments 721,35 / 765,67 / 332,43 / 272,48, plus 1–3 refunds), so payment and refund
-  must be separated by **description**, not sign. The payment was identified by the literal
-  string `HARTELIJK BEDANKT VOOR UW BETALING`, which held for all four statements.
-- **The balance identity runs the opposite way to a current account:** `Vorig saldo +
-  Debiteringen − Crediteringen = Nieuw saldo` (a charge *increases* the amount owed), true
-  of all four statements. A generic balance self-check cannot serve both account types.
-- **The printed `Periode` is advisory, not a filter.** Real statements contain
-  transactions dated the day *before* the period opens. Filtering on period bounds would
-  drop genuine spend.
+- **The balance identity runs the opposite way to a current account:**
+  `Vorig saldo + Debiteringen − Crediteringen = Nieuw saldo` (a charge *increases* the amount
+  owed), true of all four statements. A generic balance self-check cannot serve both account
+  types, so the identity is **per-account-type** and is a required adapter acceptance test — see
+  `docs/adr/0003-import-decisions-real-export.md` Decision 2.
+- **The printed `Periode` is advisory, not a filter.** Real statements contain transactions dated
+  the day *before* the period opens. Filtering on period bounds would drop genuine spend; the
+  period is metadata and is never an import predicate.

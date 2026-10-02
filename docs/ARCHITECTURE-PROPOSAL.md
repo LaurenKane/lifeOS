@@ -96,10 +96,15 @@ no import table), and Wealthfolio's `CostBasisMethod{Lifo,Wac}` enum values that
 
 | Source | **Primary** | **Fallback** | Confidence |
 |---|---|---|---|
-| **Rabobank** | Enable Banking AIS | GoCardless Bank Account Data | CONFIRMED (sandbox) / LIKELY (prod) |
-| **Revolut NL** | Enable Banking AIS | GoCardless Bank Account Data | **UNCERTAIN — verify first** |
-| **Amex NL** | **PDF import (7yr)** then CSV (6mo) | Re-export from Amex | **CONFIRMED — no API exists** |
-| **Google Wallet** | **Defer to v2**, or drop | — | LIKELY |
+| **Rabobank** | Enable Banking AIS | GoCardless Bank Account Data · **`rabobank_pdf`** | CONFIRMED (sandbox) / LIKELY (prod) |
+| **Revolut NL** | Enable Banking AIS | GoCardless Bank Account Data · **`revolut_pdf`** | **UNCERTAIN — verify first** |
+| **Amex NL** | **`amex_pdf` (7yr) — the only source** | Re-export from Amex | **CONFIRMED — no API exists** |
+| **Google Wallet** | **Excluded from v1** — not in the provider enum | — | LIKELY |
+
+Provider enum: `enable_banking · amex_pdf · rabobank_pdf · revolut_pdf · manual`
+(`docs/adr/0002-import-provider-enum.md`). `amex_csv` is retired, `revolut_csv` deferred,
+`google_wallet` excluded. `rabobank_pdf` and `revolut_pdf` are **declared but have no adapter yet**:
+listed, not uploadable.
 
 ### Rabobank → Enable Banking
 `POST /auth` → redirect to bank SCA → `POST /sessions` → poll `/accounts/{uid}/transactions`.
@@ -115,24 +120,28 @@ Not in Enable Banking's sandbox list. **Gate the Revolut lane on one call:**
 curl -H "Authorization: Bearer <RS256 JWT>" \
   "https://api.enablebanking.com/aspsps?country=NL&psu_type=personal"
 ```
-If absent → Revolut falls back to **CSV import** (which has a stable `id` column, per ora-1's matrix)
-and nothing in the architecture changes. **The design must not assume Revolut arrives.**
+If absent → Revolut falls back to **`revolut_pdf`** import — a real annual statement the user already
+has, covering 2026-01-01→10-01, the only full-year source in the system against Rabobank's 2026-06
+start (doc 11 §5.1). ⚠️ `revolut_csv` is **deferred**, not available: no Revolut CSV has ever been
+supplied, so the "stable `id` column" that ora-1's matrix assumed is **unverified** (doc 11 §7).
+The design must not assume Revolut arrives.
 
 ### Amex NL → file import, permanently
-No aggregator exposes it. **PDF is the better source, not the fallback** — 7 years, itemized, *both*
-transaction and process date, FX detail. CSV is ~6 months, one date, posted-only, no pending. Consumer
-portal also offers OFX/QFX and QBO. ⚠️ The "Include all additional transaction details" checkbox is
-**off by default** and drops Reference/Category/Address — onboarding must tell the user to tick it.
+No aggregator exposes it. **PDF is the only source, not the better source** — the Amex app exports
+PDF only (bead `LifeOS-18`); M2 (Amex CSV) is retired. 7 years, itemized, *both* transaction and
+process date (they differ on 42 of 121 rows — doc 11 §3.1), FX detail. The web portal also offers
+CSV/OFX/QBO, but the CSV's "Include all additional transaction details" checkbox is **off by
+default** and drops Reference/Category/Address; that matters only if a CSV is ever supplied.
 
-**Operational consequence:** the ~6-month CSV window makes **archived exports the only durable copy**.
-The system must never delete an uploaded file, and "rebuild the ledger from raw" is a first-class
-feature, not a promise. (PDF at 7 years makes this less urgent, but CSV is the fallback path.)
+**Operational consequence:** **archived PDFs are the only durable copy.** The system must never
+delete an uploaded file, and "rebuild the ledger from raw" is a first-class feature, not a promise.
 
-### Google Wallet → defer or drop
+### Google Wallet → excluded from v1
 Amex data reaches Google, including non-Wallet transactions unless the user opts out of
 "Non-Device Transactions". But it offers only recent/shared data, no posting date, no FX, no reference
 ID — and merchant strings differ from Amex's, so dedup is fuzzy-only (date ±1, amount, last4). **It is
-a dedup liability as much as a data source.** Recommend excluding from v1.
+a dedup liability as much as a data source.** Excluded from v1; not in the provider enum
+(`docs/adr/0002-import-provider-enum.md`).
 
 ### Fallback if Enable Banking becomes unusable
 **GoCardless Bank Account Data (ex-Nordigen)** — self-serve, free tier (~25 accounts), strong NL
@@ -143,13 +152,28 @@ ABN AMRO.
 ### Abstraction layer
 ```python
 class SourceAdapter(Protocol):
-    provider: str            # 'enable_banking' | 'amex_pdf' | 'amex_csv' | 'revolut_csv' | 'manual'
+    provider: str            # 'enable_banking' | 'amex_pdf' | 'rabobank_pdf' | 'revolut_pdf' | 'manual'
     def fetch(self, link, since) -> Iterator[RawRecord]: ...
     def parse(self, blob) -> Iterator[RawRecord]: ...
 ```
 Every adapter emits `RawRecord` — the same shape regardless of source. **The provider-agnostic part is
-the schema; only the resolver is provider-aware.** No plugin registry: three classes, and an ABC if a
-fourth appears.
+the schema; only the resolver is provider-aware.** No plugin registry: one adapter per source behind
+an ABC, and another ABC if a sixth source appears.
+
+### Two adapter constraints the real statements impose
+Both are decisions with full rationale in `docs/adr/0003-import-decisions-real-export.md`.
+
+- **`rabobank_pdf` — type codes are an enum, read from the statement, and an unknown code must
+  warn, never guess.** A 24-entry legend is printed on the last page of every statement; 11 codes
+  appear in the four supplied statements (`ba bg bv cb db ei ga id sb tb we`), all legend-defined,
+  with `we` truncated in the source itself. No backend enum module exists yet because M1's schema has
+  not been written (bead `LifeOS-6`) — this is a **recorded definition to be carried into M1, not
+  live code.** Decision 3.
+- **`revolut_pdf` — one file, two products, two own IBANs, and no statement of which is which.**
+  Current (340 rows) and Deposit (11 rows); `NL69REVO…1997` and `LT5032500…9880`, plus 12 counterparty
+  IBANs. The Deposit ownership is **HELD for explicit user confirmation, never inferred** — so one
+  file may produce several batches and no row is written under a guessed `account_id`. Internal
+  transfers do not pair within one account either (34 `To Savings` against 9 `From Savings`). Decision 4.
 
 ---
 
@@ -184,7 +208,7 @@ life-os/
 │   │   │   ├── value_objects/  # Money, Currency, DateRange
 │   │   │   └── services/       # pure logic: dedupe, transfer_match, categorize, budget
 │   │   ├── ingestion/          # THE COMPLEXITY LIVES HERE
-│   │   │   ├── adapters/       # enable_banking.py, amex_pdf.py, amex_csv.py, revolut_csv.py, manual.py
+│   │   │   ├── adapters/       # enable_banking.py, amex_pdf.py, rabobank_pdf.py, revolut_pdf.py, manual.py
 │   │   │   ├── normalize.py
 │   │   │   ├── fingerprint.py  # FROZEN once shipped (invariant)
 │   │   │   ├── identity.py     # IdentityResolver — 3 tiers
@@ -285,8 +309,22 @@ CREATE TABLE import_batch (
   id                BIGSERIAL PRIMARY KEY,
   institution_id    BIGINT REFERENCES institution(id),
   account_id        BIGINT REFERENCES account(id),
+                      -- NULLABLE AND NOT THE ROW'S ACCOUNT. source_record.account_id is
+                      -- authoritative, per row. One file can cover two accounts: a Revolut
+                      -- statement carries Current (340 rows) + Deposit (11 rows) and lists two
+                      -- own IBANs without saying which is which (doc 11 §3.6). One file may
+                      -- therefore produce several batches, same source_checksum, one account
+                      -- each — preferred, since import_batch is a unit of work. Rows whose
+                      -- ownership is ambiguous are HELD for explicit user confirmation and are
+                      -- NOT written under a guessed account_id: see
+                      -- docs/adr/0003-import-decisions-real-export.md Decision 4.
   provider          TEXT NOT NULL CHECK (provider IN
-                      ('enable_banking','amex_csv','amex_pdf','revolut_csv','manual','google_wallet')),
+                      ('enable_banking','amex_pdf','rabobank_pdf','revolut_pdf','manual')),
+                      -- v1 list: docs/adr/0002-import-provider-enum.md. amex_csv RETIRED,
+                      -- revolut_csv DEFERRED (its stable `id` is unverified, doc 11 §7),
+                      -- google_wallet EXCLUDED (a dedup liability, R02 §4).
+                      -- rabobank_pdf / revolut_pdf are declared but have no FileAdapter yet:
+                      -- listed, not uploadable.
   import_method     TEXT NOT NULL CHECK (import_method IN ('api','csv','pdf','manual')),
   status            TEXT NOT NULL DEFAULT 'pending' CHECK (status IN
                       ('pending','processing','completed','failed','partial')),
@@ -302,15 +340,19 @@ CREATE TABLE source_record (
   id                 BIGSERIAL PRIMARY KEY,
   import_batch_id    BIGINT NOT NULL REFERENCES import_batch(id) ON DELETE CASCADE,
   account_id         BIGINT NOT NULL REFERENCES account(id),
-  provider_txn_id    TEXT,                    -- entry_reference / Revolut id; NULL for Amex
+  provider_txn_id    TEXT,                    -- Enable Banking entry_reference; NULL on every v1 PDF path
+                                             -- (Amex IDs change; Rabobank End-to-End ID is unusable,
+                                             -- doc 11 §3.4; Revolut `id` was a CSV claim, unverified §7)
   fingerprint        BYTEA NOT NULL,          -- computed for ALL providers
   occurrence_index   INT  NOT NULL DEFAULT 1, -- distinguishes genuinely identical rows
   raw_data           JSONB NOT NULL,          -- the exact row, immutable forever
   raw_description    TEXT NOT NULL,           -- immutable, user edits NEVER touch this
-  raw_amount         BIGINT NOT NULL,         -- minor units, signed
+  raw_amount         BIGINT NOT NULL,         -- minor units, SIGNED (ledger convention, see §E note)
   raw_currency       CHAR(3) NOT NULL REFERENCES currency(code),
   raw_date           DATE NOT NULL,
-  raw_posting_date   DATE,
+  raw_posting_date   DATE,                    -- Amex PDF: process date. NOT nullable in practice —
+                                             -- differs from raw_date on 42 of 121 rows (35%),
+                                             -- doc 11 §3.1. Map the two PDF date columns separately.
   status             TEXT NOT NULL DEFAULT 'imported'
                        CHECK (status IN ('imported','pending','posted','duplicate')),
   journal_entry_id   BIGINT REFERENCES journal_entry(id),
@@ -364,6 +406,15 @@ CREATE TABLE journal_line (
   sort_order          INT NOT NULL DEFAULT 0
 );
 -- Sign carries direction. Debits negative, credits positive. No `direction` column.
+-- ⚠️ The Amex SOURCE convention is the inverse ("charges positive", R02:59), and the Amex PDF
+-- carries no sign at all — direction is a separate `CR` marker line printed beneath the amount
+-- (doc 11 §3.2). An adapter must flip EXPLICITLY and emit already-signed minor units
+-- (AmountSignConvention.SIGNED), so the normalizer does not flip twice. The flip is a decision,
+-- not an implication: docs/adr/0003-import-decisions-real-export.md Decision 1.
+-- A `CR` line separates credits from CHARGES — not card payments from refunds. Each statement's
+-- credit section mixes the monthly payment with real refunds, so the payment is separated by
+-- DESCRIPTION (`HARTELIJK BEDANKT VOOR UW BETALING`, 4/4 statements) and that string must learn the
+-- way the Rabobank rule at ARCH:626 does.
 CREATE INDEX idx_jl_entry  ON journal_line (journal_entry_id);
 CREATE INDEX idx_jl_acct   ON journal_line (account_id, entry_id_journal()) ;  -- see note
 CREATE INDEX idx_jl_cat    ON journal_line (category_id) WHERE category_id IS NOT NULL;
@@ -748,13 +799,13 @@ Small vertical slices. Each is independently useful and independently testable.
 |---|---|---|---|
 | **M0** | **Project skeleton + invariants** | Repo, Docker Compose (db/api/worker), Alembic, `ARCHITECTURE.md`, `invariants.yaml`, CI with invariant + egress checks | Guardrails before data. Prevents the agent from breaking invariants on day one |
 | **M1** | **Schema + manual transactions** | Migrations applied; `journal_entry`/`journal_line` balance trigger green; CRUD via API; simplest UI | Proves the double-entry core and the balance invariant before any ingestion complexity |
-| **M2** | **Amex CSV import + fingerprint dedup** | Upload CSV → `import_batch` + `source_record` rows → normalized entries. **Import the same file twice → zero new transactions** | File import is the *only* proven-available path. Proves Tier 3, the hardest dedup |
+| **M2** | **Amex PDF import + fingerprint dedup** | Upload PDF → `import_batch` + `source_record` rows → normalized entries. **Import the same statement twice → zero new transactions**, and the statement's own totals reconcile at delta 0 | File import is the *only* proven-available path. Proves Tier 3, the hardest dedup. *(Was "Amex CSV"; retired — the Amex app exports PDF only, `LifeOS-18`.)* |
 | **M3** | **Merchant normalization + categorization** | `merchant_alias` fuzzy matching; 7-layer engine; **manual correction creates a learned rule**; uncategorized review queue | Makes the data usable; layer 5 is our differentiator |
 | **M4** | **Transfer matching + Amex payment** | Card payment auto-detect + synthesized leg; own-account transfers; SEPA-DD vs transfer rule; review queue | The correctness requirement. Once this works, spending totals are trustworthy |
 | **M5** | **Enable Banking: Rabobank** | RS256 client, consent flow, `/aspsps` check, backfill at consent time, polling sync, `EXPIRED_SESSION` re-auth, Tier 1 + Tier 2 dedup | Requires M0–M4; depends on the `/aspsps` gate clearing |
 | **M6** | **Rebuild-from-raw** | `replay --batch-id` re-runs the whole pipeline; fingerprint frozen by hash | Turns raw retention into a safety net. **Do this before any schema churn** |
-| **M7** | **Amex PDF importer** | 7-year itemized import; PDF/CSV overlap produces no duplicates | PDF > CSV in value; needs the fingerprint machinery from M2 |
-| **M8** | **Revolut** | **Conditional on `/aspsps?country=NL`.** If absent → Revolut CSV importer instead | Gated, not assumed |
+| **M7** | **`rabobank_pdf` + `revolut_pdf` importers** | Itemized import of 4 real statements each; statement totals reconcile at delta 0; no provider ID → Tier 3 only; **Revolut Deposit ownership HELD, not inferred** | Both are v1 import paths with no adapter yet (`docs/adr/0002-import-provider-enum.md`). Needs the fingerprint machinery from M2 |
+| **M8** | **Revolut** | **Conditional on `/aspsps?country=NL`.** If absent → `revolut_pdf` importer instead | Gated, not assumed |
 | **M9** | **Budgets + recurring detection** | Monthly budgets; `recurring_series` nightly job, user-confirmed | Needs clean categorized data |
 | **M10** | **Net worth snapshots** | `asset − liability` over time, from the account model | Already correct from M1's `account_nature`; just aggregate |
 
@@ -776,7 +827,8 @@ The unit of correctness is the import. Tests below the line are the ones that ma
 |---|---|
 | Import same CSV twice | Second import: 0 new `journal_entry`, all rows `status='duplicate'` |
 | Import CSV, then overlapping CSV | Only the non-overlapping window creates entries |
-| **Import 7yr PDF, then 6mo CSV** | **0 new entries; every CSV row accounted for** ← the PDF/CSV overlap case |
+| **Import 7yr PDF, then 6mo CSV** | ~~**0 new entries; every CSV row accounted for**~~ **MOOT** — Amex exports PDF only; there is no CSV (`LifeOS-18`, `docs/adr/0002-import-provider-enum.md`). Replaced by: *import the same statement twice, and a later statement whose months overlap → 0 new entries, every row accounted for* |
+| **Import a statement, then a later overlapping statement** | **0 new entries; every row accounted for** — the property the retired CSV test was proving |
 | Two identical €3.20 coffees, same day | **2 entries**, `occurrence_index` 1 and 2 |
 | Same coffee, different days | 2 entries, different fingerprints |
 | Re-import after row reordering | No duplicates; `occurrence_index` stable via `raw_line_number` |
@@ -827,6 +879,23 @@ The unit of correctness is the import. Tests below the line are the ones that ma
 | `import_batch.raw_payload` deleted | Impossible — no code path deletes it |
 | Rebuild from raw after schema change | Entries reproduce exactly |
 
+### Statement balance continuity — **required for every new adapter**
+No `source_record` or `journal_line` column stores a statement balance (`P-NO-HISTORIC-BALANCE`), so
+this identity is asserted nowhere — and it is what caught every parsing bug during real-export
+verification (doc 11 §4). **An adapter is not done until it passes this.** It cannot be an entry in
+`invariants.yaml`: that file's checker supports only `forbid_regex` / `hash` / `manifest`, none of
+which execute a parse, and the right-hand side lives in the uploaded file rather than the repo.
+
+| Test | Assertion |
+|---|---|
+| **Current/asset account** (`checking`, `savings`) | `opening + credits − debits = closing`, delta 0 |
+| **Liability account** (`credit_card`) | `Vorig + Debiteringen − Crediteringen = Nieuw`, delta 0 — a charge **increases** the amount owed (doc 11 §3.3) |
+| Adapter output vs the totals the statement prints on its front page | Delta 0: Amex `Debiteringen`/`Crediteringen`, Rabobank `Total amount debited`/`credited`, Revolut summary table. 4/4, 4/4, 1/1 in doc 11 §1 |
+| Credit/debit classification survives | **No generic identity exists** — the two directions are opposites, so the account type is the discriminator |
+| Rows dated outside the printed `Periode` | **Retained.** The period is advisory metadata, never an import predicate — real statements carry the day before the period opens (doc 11 §5.3) |
+
+Decision record: `docs/adr/0003-import-decisions-real-export.md` Decision 2.
+
 ### Import robustness
 | Test | Assertion |
 |---|---|
@@ -849,26 +918,34 @@ mutates. This is where the real bugs live.
 ## M. Open questions
 
 **Gating — answer before M5:**
-1. **Does Enable Banking support Revolut NL?** One `GET /aspsps?country=NL` call. If no → Revolut CSV
-   importer instead. *Affects roadmap, not architecture.*
+1. **Does Enable Banking support Revolut NL?** One `GET /aspsps?country=NL` call. If no → `revolut_pdf`
+   importer instead (`docs/adr/0002-import-provider-enum.md`). *Affects roadmap, not architecture.*
 2. **Does Rabobank emit `PDNG` pending status at all?** If never → Tier 2 is dead code for you and
    simplification is possible. *Affects M5 scope.*
 
-**Affecting the Amex importers (M2/M7):**
-3. **Exact Amex NL CSV columns, date format, sign convention** — download one and check.
-4. **Is the `Reference` column present and stable-looking?** Amex's own IDs change, but worth seeing.
-5. **Does any NL ASPSP use a non-redirect auth method?** (security posture)
-6. **Amex PDF text layer: selectable, or scanned?** If scanned, PDF import needs OCR — a much larger
-   project than planned.
+**Closed by the real exports (`docs/research/11-real-export-verification.md`, 2026-10-01):**
+- ~~**Amex PDF text layer: selectable, or scanned?**~~ — **selectable**, no OCR needed. **M7 is a go.**
+- ~~**Amex NL CSV columns, date format, sign convention**~~ — moot; **Amex exports PDF only** (`LifeOS-18`).
+- ~~**Does the PDF's CSV date equal the transaction date or the processing date?**~~ — moot, no CSV.
+- **Does the CSV's `Reference` exist?** — untested, and no longer reachable.
+- **Foreign-currency Amex charges** — **unverifiable from this data**: the FX column is empty in all
+  four statements and no non-EUR code appears, so `foreign_amount` / `foreign_currency` above cannot
+  be populated from these exports. `F-AMX-PDF-FX` stays open.
+
+**Still open:**
+3. **Does any NL ASPSP use a non-redirect auth method?** (security posture)
+4. **Does the Amex PDF's 7-year depth actually hold?** — untestable from a 4-month sample.
 
 **Product decisions (yours to make, not mine):**
-7. **Deployment topology** — always-on server + Tailscale, or single machine? Changes exposure, backups,
-   and what "local-first" means. *This is the one genuinely blocking product question.*
-8. **How far back does history matter?** Enable Banking clamps to ~90 days post-consent. If you want
-   years, bank CSVs become a first-class historical source, not just an Amex fallback.
-9. **Is native mobile a hard requirement within 6 months?** If yes, sync architecture must be discussed
+5. **Deployment topology** — always-on server + Tailscale, or single machine? Changes exposure, backups,
+   and what "local-only" means. *The one genuinely blocking product question.* → **decided**, ADR 0001.
+6. **How far back does history matter?** Enable Banking clamps to ~90 days post-consent. **Measured
+   coverage is asymmetric and constrains this** (doc 11 §5.4): Rabobank history starts 2026-06-01,
+   Amex 2026-05-24, Revolut 2026-01-01. Beyond those, history is whatever statement PDFs the user
+   still has — which is why archived files are never deleted.
+7. **Is native mobile a hard requirement within 6 months?** If yes, sync architecture must be discussed
    now. If no, deferring is correct.
-10. **Will this ever be public or open-source?** If yes → all of Life OS must be permissively licensed
-    (which our build-our-own decision already guarantees). If no, forking BankingSync under AGPL
-    becomes a legitimate alternative to the ~2 weeks of ingestion work it would save.
-11. **Savings goals in v1?** The `savings_goal` concept was deliberately deferred; say if you want it.
+8. **Will this ever be public or open-source?** If yes → all of Life OS must be permissively licensed
+   (which our build-our-own decision already guarantees). If no, forking BankingSync under AGPL
+   becomes a legitimate alternative to the ~2 weeks of ingestion work it would save.
+9. **Savings goals in v1?** The `savings_goal` concept was deliberately deferred; say if you want it.

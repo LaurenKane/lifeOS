@@ -44,7 +44,7 @@ _DRIVER = '''\
 import json, sys
 sys.path.insert(0, {backend!r})
 
-from finance.ingestion.adapters import AmexCsvAdapter
+from finance.ingestion.adapters import AmexPdfAdapter
 from finance.ingestion.dedupe import (
     ExistingFingerprint,
     assign_occurrence_indices,
@@ -56,9 +56,23 @@ from finance.ingestion.normalize import normalize_record
 ACCOUNT_ID = "acc-egress-001"
 
 
+def extract_lines(payload):
+    """The injected text-extraction seam. Local, pure, no I/O.
+
+    The real extractor is M7's pdfplumber dependency and is not in the M0
+    dependency set, so the default `extract_pdf_text` is an explicit M0
+    placeholder. Injecting a local pure function keeps the egress claim
+    meaningful -- it *cannot* reach the network, which is the point -- while
+    being honest that this proves the offline path, not PDF text extraction.
+    """
+    return payload.decode("utf-8").splitlines()
+
+
 def ingest(payload):
-    """CSV bytes -> (normalized records, occurrence indices)."""
-    parsed = AmexCsvAdapter().parse(payload, account_id=ACCOUNT_ID)
+    """Statement bytes -> (normalized records, occurrence indices)."""
+    parsed = AmexPdfAdapter(text_extractor=extract_lines).parse(
+        payload, account_id=ACCOUNT_ID
+    )
     records = [
         normalize_record(
             account_id=raw.account_id,
@@ -75,7 +89,7 @@ def ingest(payload):
 
 def main():
     # A local file, read from disk. Nothing is fetched.
-    with open({csv_path!r}, "rb") as fh:
+    with open({statement_path!r}, "rb") as fh:
         payload = fh.read()
 
     records, indices = ingest(payload)
@@ -189,19 +203,37 @@ def _unshare_argv() -> list[str] | None:
     return ["unshare", "-Urn", "--"]
 
 
-def _write_csv(path: Path) -> None:
-    """A small, entirely synthetic Amex export. No real financial data.
+def _write_statement_text(path: Path) -> None:
+    """A small, entirely synthetic Amex statement text extract. No real data.
+
+    Deliberately *not* a real PDF: see the honesty note in the test docstring.
+    What matters here is that these bytes reach the parser, so a regression in
+    the fixture format fails this test instead of quietly yielding zero rows.
+
+    Mirrors `finance.tests.fixtures.synthetic_amex_pdf_text()`, which is the
+    same statement for the adapter unit and pipeline tests. Kept local because
+    the zero-egress proof needs the text *on disk* in a tmp dir, read by a
+    separate untraced-interpreter child process that only has `backend` on its
+    sys.path. Change both together.
+
+    Layout is the verified Dutch Amex NL `pdftotext -layout` format the parser
+    requires: TWO `DD.MM.YY` dates per row (Transactiedatum, then Datum
+    verwerkt), and an unsigned European amount at end of line. A credit would
+    be a bare `CR` line *beneath* the amount; this statement is all debits and
+    the expected amounts_minor below depend on that, so there is no `CR` line.
 
     Two identical EUR 12.34 rows on one day, so the occurrence indices are
     1 and 2 rather than both 1 — the case where a dedup implementation without
     occurrence indexing silently eats a real purchase.
     """
     path.write_text(
-        "Date,Description,Amount\n"
-        "14/03/2026,JUMBO 4321 AMSTERDAMREF:000000123456,8.50\n"
-        "14/03/2026,ALBERT HEIJN 1234REF:000000123456,12.34\n"
-        "14/03/2026,ALBERT HEIJN 1234REF:000000123456,12.34\n"
-        "15/03/2026,NS INTERCITYREF:000000123456,4.10\n",
+        "Card Summary\n"
+        "Transactiedatum Datum verwerkt Omschrijving Bedrag\n"
+        "14.03.26  14.03.26  JUMBO 4321 AMSTERDAM REF:000000123456            8,50\n"
+        "14.03.26  15.03.26  ALBERT HEIJN 1234 REF:000000123456                12,34\n"
+        "14.03.26  14.03.26  ALBERT HEIJN 1234 REF:000000123456                12,34\n"
+        "15.03.26  15.03.26  NS INTERCITY REF:000000123456                       4,10\n"
+        "New Balance                                                          33,18\n",
         encoding="utf-8",
     )
 
@@ -302,20 +334,39 @@ def _any_network_syscall(trace: str) -> list[str]:
 )
 class TestOfflineImportHasNoEgress:
     def test_offline_import_makes_no_connect_calls(self, tmp_path: Path) -> None:
-        """Amex CSV -> records -> occurrence indices -> dedup, with zero connects.
+        """Amex statement -> records -> occurrence indices -> dedup, zero connects.
 
         Also proves the import actually happened, because "zero connects" is
         equally true of a process that crashed on line 1. The driver writes its
         result to a file and the counts are asserted here, so a broken pipeline
         fails this test rather than passing it quietly.
+
+        Scope of the claim, stated plainly
+        ----------------------------------
+        This proves the *offline path is telemetry-free*: parsing, normalising,
+        occurrence indexing and dedup all run with no `connect()` syscall, under
+        strace and in an empty network namespace. That is the property
+        ARCHITECTURE.md §8 asserts, and it is asserted against the driver below
+        rather than assumed.
+
+        It does NOT prove that a real PDF was parsed. Text extraction is
+        injected as a local pure function (`extract_lines` in the driver)
+        because the real extractor is M7's `pdfplumber` seam and pdfplumber is
+        not in the M0 dependency set. So this test says nothing about whether
+        `pdfplumber` itself would egress -- when M7 lands it, the extractor it
+        installs becomes part of this path and the harness will cover it from
+        that point on. Do not read this as "PDF import is proven"; read it as
+        "everything downstream of extraction is offline and non-destructive".
         """
-        csv_path = tmp_path / "statement.csv"
-        _write_csv(csv_path)
+        # Plain text, deliberately: naming it .pdf would imply a real PDF was
+        # parsed here. See the honesty note above.
+        statement_path = tmp_path / "statement.txt"
+        _write_statement_text(statement_path)
         out_path = tmp_path / "result.json"
 
         source = _DRIVER.format(
             backend=str(REPO_ROOT / "backend"),
-            csv_path=str(csv_path),
+            statement_path=str(statement_path),
             out_path=str(out_path),
         )
         returncode, trace, stderr = _run_under_trace(

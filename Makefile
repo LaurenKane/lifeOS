@@ -219,40 +219,30 @@ migrate: ## Apply Alembic migrations for core and finance, inside the api contai
 	  for schema in core finance; do \
 	    echo "==> migrating schema: $$schema"; \
 	    ini=$$(mktemp); \
-	    { \
-	      printf "[loggers]\nkeys = root\n\n[handlers]\nkeys = console\n\n[formatters]\nkeys = generic\n\n"; \
-	      sed "s|^sqlalchemy.url[[:space:]]*=.*|sqlalchemy.url = $$LIFEOS_DATABASE_URL|" \
-	        "$$schema/alembic.ini"; \
-	    } > "$$ini"; \
+	    sed "s|^sqlalchemy.url[[:space:]]*=.*|sqlalchemy.url = $$LIFEOS_DATABASE_URL|" \
+	      "$$schema/alembic.ini" > "$$ini"; \
 	    alembic -c "$$ini" upgrade head; \
 	  done'
 
-# WORKAROUND NOTE, and a real defect to fix in M1.
+# The temporary ini copy below carries exactly one thing: the substituted
+# database URL. env.py reads sqlalchemy.url from the ini and does not consult
+# LIFEOS_DATABASE_URL, so there is nowhere else to inject it.
 #
-# backend/core/alembic.ini and backend/finance/alembic.ini declare
+# It used to carry the [loggers], [handlers] and [formatters] sections too. That
+# was a workaround, and it is gone. As committed, both .ini files declared
 # `formatter = generic` under [handler_console] and `handlers = console` under
-# [logger_root], but they omit the [loggers], [handlers] and [formatters]
-# sections that logging.config.fileConfig() indexes by those literal names.
-# Running `alembic upgrade head` against them as committed dies with
-# `KeyError: 'formatters'` before it ever opens a connection.
-#
-# M0 prepends those three sections to a temporary copy of the ini (in /tmp,
-# never in the repo) so that `make migrate` is a real, working command. The
-# committed .ini files are left untouched: they belong to P1, which is verified
-# green, and rewriting them here would invalidate that. Fix them at the source.
-#
-# The same temporary copy carries the substituted database URL, because env.py
-# reads sqlalchemy.url from the ini and does not consult LIFEOS_DATABASE_URL.
+# [logger_root] but omitted the registries that logging.config.fileConfig()
+# indexes by those literal names, so `alembic upgrade head` died with
+# `KeyError: 'formatters'` before it ever opened a connection. Those three
+# sections are now declared in the committed files, so the committed ini runs
+# as-is (LifeOS-gsy). Do not reintroduce the prepend here.
 .PHONY: migrate-status
 migrate-status: ## Show current Alembic revision for both schemas
 	$(COMPOSE) run --rm -T --workdir /app/backend api /bin/sh -c 'set -eu; \
 	  for schema in core finance; do \
 	    ini=$$(mktemp); \
-	    { \
-	      printf "[loggers]\nkeys = root\n\n[handlers]\nkeys = console\n\n[formatters]\nkeys = generic\n\n"; \
-	      sed "s|^sqlalchemy.url[[:space:]]*=.*|sqlalchemy.url = $$LIFEOS_DATABASE_URL|" \
-	        "$$schema/alembic.ini"; \
-	    } > "$$ini"; \
+	    sed "s|^sqlalchemy.url[[:space:]]*=.*|sqlalchemy.url = $$LIFEOS_DATABASE_URL|" \
+	      "$$schema/alembic.ini" > "$$ini"; \
 	    echo "==> $$schema"; \
 	    alembic -c "$$ini" current; \
 	  done'

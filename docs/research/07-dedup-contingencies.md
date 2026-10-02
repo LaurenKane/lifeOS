@@ -9,12 +9,17 @@ Banking facts — retained because it usefully pins down which parts of the desi
 
 ## Confirmed provider constraint matrix
 
+*Updated for the v1 provider decision (docs/research/11-real-export-verification.md §5).
+The retired/unverified CSV paths and `google_wallet` are no longer live import
+sources; they are kept here only as historical context.*
+
 | Provider | Stable ID (`provider_txn_id`) | Pending status | Import window |
 |---|---|---|---|
 | **Enable Banking** (Rabobank, Revolut) | `entry_reference` — stable pending→booked | **Yes** (`PDNG`) | Unbounded via API (clamped to ~90d post-consent) |
-| **Revolut CSV** | `id` column | No (posted only) | ~6 months |
-| **Amex NL (CSV/PDF)** | **None** | **No — excludes pending** | CSV ~6mo, **PDF 7yr** |
-| **Google Wallet** | None | No | Unknown |
+| **Rabobank PDF** | None (`End-to-End ID` is not stable — doc 11 §3.4) | No (posted only) | Historical statements |
+| **Revolut PDF** | None (one file covers two products — doc 11 §3.6) | No (posted only) | Annual statement |
+| **Amex PDF** | **None** | **No — excludes pending** | **PDF 7yr** |
+| **Amex CSV / Revolut CSV / Google Wallet** | — | — | Retired or deferred (see ADR 0002) |
 
 ---
 
@@ -38,9 +43,23 @@ Banking facts — retained because it usefully pins down which parts of the desi
 | `source_record.status` ∈ {`pending`,`posted`} | Amex never writes `pending` | Enum allows it; value unused |
 | Tier 2 candidate generation | Enable Banking only | Guard `sr.status == 'pending'` |
 | Nightly pending→posted job | Enable Banking only | Filter `import_batch.provider = 'enable_banking'` |
-| `raw_posting_date` vs `raw_date` | Amex: same (posted only) | Nullable, no issue |
+| `raw_posting_date` vs `raw_date` | Amex: **NOT the same** — they differ on **42 of 121 rows (35%)**: 10/32, 10/33, 11/28, 11/28 | Column is load-bearing. Map transaction date → `raw_date`, process date → `raw_posting_date`; never coalesce them |
 
 **Verdict: no schema change. Pending machinery is Enable-Banking-only. Add a provider filter to the job.**
+
+> **Corrected 2026-10-02 against real exports.** This row previously read
+> `Amex: same (posted only) | Nullable, no issue`. That is **false**:
+> `docs/research/11-real-export-verification.md` §3.1 measures the two columns differing on
+> 42 of 121 rows (35%) — 10/32, 10/33, 11/28, 11/28 across the 2026-06-23, 2026-07-23,
+> 2026-08-23 and 2026-09-23 statements. Example: transaction date `16.06.26`, processed
+> `17.06.26`; `10.06.26` processed `12.06.26`.
+>
+> It was a near-miss rather than a schema gap — the row sat in the *"depends on pending status"*
+> table only because "posted only" looked like it implied "one date" — but the column is real,
+> nullable, and load-bearing for the Amex PDF path. The schema does not change; the **mapping
+> does**. `source_record.raw_date` and `source_record.raw_posting_date`
+> (`docs/ARCHITECTURE-PROPOSAL.md` §E, `source_record`) are filled from the PDF's two date columns separately.
+> Tracked as bead `LifeOS-hwv`.
 
 ### 🟢 Works with neither — the Amex path (Tier 3 only)
 
@@ -48,7 +67,7 @@ Banking facts — retained because it usefully pins down which parts of the desi
 |---|---|
 | `fingerprint` = SHA256(canonicalised fields + `occurrence_index`) | **Primary key for Amex.** Must be computed at parse time |
 | `UNIQUE (import_batch_id, fingerprint)` | Prevents intra-batch duplicates — critical for re-importing the same CSV |
-| Cross-batch fingerprint lookup: `EXISTS (… WHERE fingerprint = $1 AND account_id = $2)` | Handles **PDF (7yr) → CSV (6mo) overlap** |
+| Cross-batch fingerprint lookup: `EXISTS (… WHERE fingerprint = $1 AND account_id = $2)` | Handles **PDF (7yr) → CSV (6mo) overlap** — ⚠️ MOOT, see below |
 | `MerchantAlias` learning from `raw_description` | Unchanged |
 | `CategoryRule` matching on normalized description | Unchanged |
 
@@ -74,7 +93,7 @@ For PDF, where there is no reliable line number, use `hash(raw_line) % 10000` as
 | Add `import_batch.import_method` ∈ {`api`,`csv`,`pdf`} | PDF fingerprints are less stable → lower auto-match threshold |
 | Tier 3 confidence must account for import method (`pdf` −0.15, `csv` 0.0, `api` +0.1) | PDF text extraction varies (column alignment, OCR) |
 | `import_batch.chunk_size` + resumable checkpoint | A 7-year Amex PDF import is large; avoid memory blow-up, allow resume |
-| Explicit allowlist to disable Tier 2 for `amex_csv`, `amex_pdf`, `revolut_csv`, `google_wallet` | Clearer than a status check |
+| Explicit allowlist to disable Tier 2 for `amex_pdf`, `rabobank_pdf`, `revolut_pdf` | Clearer than a status check |
 
 ---
 
@@ -84,8 +103,9 @@ For PDF, where there is no reliable line number, use `hash(raw_line) % 10000` as
 def resolve_source_record(self, sr: SourceRecord) -> ResolutionResult:
     provider = sr.import_batch.provider
 
-    # TIER 1: provider stable ID (Enable Banking, Revolut API)
-    if sr.provider_txn_id and provider in ('enable_banking', 'revolut_api'):
+    # TIER 1: provider stable ID (Enable Banking API only)
+    # Revolut PDF has no stable ID; its rows dedupe by fingerprint.
+    if sr.provider_txn_id and provider == 'enable_banking':
         existing = self.repo.find_by_provider_txn_id(sr.account_id, sr.provider_txn_id)
         if existing:
             return ResolutionResult.MATCH_EXISTING(existing, tier=1, confidence=1.0)
@@ -98,10 +118,12 @@ def resolve_source_record(self, sr: SourceRecord) -> ResolutionResult:
         if best.score >= 0.50:
             return ResolutionResult.NEEDS_REVIEW(best, tier=2)
 
-    # TIER 3: content fingerprint (ALL providers; PRIMARY for Amex)
+    # TIER 3: content fingerprint (ALL providers; PRIMARY for file imports)
     base = 0.90
-    if provider in ('amex_pdf', 'google_wallet_pdf'): base -= 0.15
-    elif provider in ('amex_csv', 'revolut_csv'):   base -= 0.05
+    if provider in ('amex_pdf', 'rabobank_pdf', 'revolut_pdf'):
+        base -= 0.15   # PDF extraction is noisier than API or CSV
+    elif provider == 'enable_banking':
+        base += 0.10   # API data is cleanest
 
     existing = self.repo.find_by_fingerprint(sr.fingerprint, sr.account_id)
     if existing:
@@ -112,7 +134,7 @@ def resolve_source_record(self, sr: SourceRecord) -> ResolutionResult:
 **Code changes required (no DDL change):**
 1. `IdentityResolver` branches on `provider` as above.
 2. Background reconciliation job filters `WHERE provider = 'enable_banking'`.
-3. Amex CSV/PDF parser computes `occurrence_index` correctly.
+3. Amex PDF parser computes `occurrence_index` correctly.
 4. Import UI states "Amex: no pending transactions — all imported as posted."
 
 ---
@@ -143,11 +165,19 @@ appropriately for formats whose extraction is inherently noisier.
 
 ## Note on the PDF/CSV overlap
 
-The cross-batch fingerprint lookup keyed on `(fingerprint, account_id)` is what makes **importing a
-7-year Amex PDF and then a 6-month CSV non-destructive** — the CSV rows will already be present from the
-PDF and will fingerprint-match. This is a subtle but important property, and it is worth an explicit
-integration test: *import PDF (7y) → import CSV (6m) → assert no new transactions, and the CSV row
-count is fully accounted for.*
+> ⚠️ **MOOT as of 2026-10-01 (bead `LifeOS-18`).** The Amex app offers **PDF export only** — there
+> is no CSV in the workflow, so there is no second format to be non-destructive against. Amex CSV
+> is **RETIRED**, not deferred: `docs/adr/0002-import-provider-enum.md`. The cross-batch lookup
+> itself is unaffected and still required — re-importing the same PDF, and a later statement
+> covering overlapping months, both depend on it. What is retired is the specific PDF→CSV test.
+
+The cross-batch fingerprint lookup keyed on `(fingerprint, account_id)` was designed to make
+**importing a 7-year Amex PDF and then a 6-month CSV non-destructive** — the CSV rows would already
+be present from the PDF and would fingerprint-match. With Amex CSV retired, the **property survives
+and the test does not**: the integration test that replaces it is *import the same statement twice,
+and import a later statement whose months overlap an earlier one → assert no new transactions and
+every row accounted for*. That test is mandatory for every adapter, together with the per-account-type
+balance identity in `docs/adr/0003-import-decisions-real-export.md` Decision 2.
 
 ## Carried into the synthesis
 

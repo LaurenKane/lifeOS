@@ -57,7 +57,8 @@ taken at transaction time. Reporting converts nothing at query time.
 
 ### Dedup — three tiers
 
-**Tier 1 — provider ID.** `(account, provider_txn_id)`. Enable Banking `entry_reference`, Revolut `id`.
+**Tier 1 — provider ID.** `(account, provider_txn_id)`. Enable Banking `entry_reference`; Revolut `id`
+*(CSV only — unverified, doc 11 §7; Tier 1 is unreachable on every v1 PDF path)*.
 Must be scoped by account — `entry_reference` is **not** globally unique.
 
 **Tier 2 — pending→booked, Enable Banking only.** Candidate window: same account, same currency,
@@ -108,6 +109,33 @@ Persisted on `SourceRecord.status` only: `imported, normalized, pending, posted,
 `matched` and `categorized` are **not** persisted — they are derived from FK predicates
 (`transfer_match_id IS NOT NULL`, `category_id IS NOT NULL`).
 
+### Addenda from the real exports (2026-10-02)
+
+Applied on top of this lane's design. Full rationale in
+`docs/adr/0003-import-decisions-real-export.md`; decisions that change the schema are in
+`docs/adr/0002-import-provider-enum.md`.
+
+- **The sign convention inversion is explicit.** Correction 2 above removed `direction` because the
+  sign is the direction. That makes the source→ledger flip load-bearing and previously unstated: the
+  ledger is *debits negative, credits positive* (`docs/ARCHITECTURE-PROPOSAL.md` §E) and the Amex source
+  is *charges positive* (`R02:59`) — and the Amex **PDF carries no sign at all**, encoding direction
+  in a separate `CR` marker line beneath the amount (doc 11 §3.2, §3.3). An adapter flips explicitly
+  and emits signed minor units (`AmountSignConvention.SIGNED`).
+- **The balance identity is per-account-type, not generic.** `checking`/`savings`:
+  `prev + credits − debits = closing`. `credit_card`:
+  `Vorig + Debiteringen − Crediteringen = Nieuw` — **a charge increases the amount owed** (doc 11 §3.3).
+  No column stores a statement balance, so this is a required **adapter acceptance test**, not an
+  `invariants.yaml` entry; see Decision 2 there for why the static checker cannot express it.
+- **The provider enum is five values:** `enable_banking · amex_pdf · rabobank_pdf · revolut_pdf ·
+  manual`. `amex_csv` retired, `revolut_csv` deferred, `google_wallet` excluded. Tier 1 below is
+  therefore reachable **only** via `enable_banking` — `End-to-End ID` is not a Rabobank PDF key
+  (doc 11 §3.4: three mutually inconsistent shapes across 60 of 106 rows).
+- **`import_batch.account_id` is not the row's account.** One Revolut file covers two products and
+  two own IBANs without saying which is which, so one file may produce several batches and
+  `source_record.account_id` is authoritative per row. Ambiguous ownership is HELD, never inferred.
+- **Rabobank type codes are an enum** sourced from the statement's printed legend (doc 11 §4).
+  Unknown code → **warn, never guess**.
+
 ### Deferred / rejected
 
 Event sourcing, generic rules DSL, importer plugin system, full 5-type GL, materialized views, tag
@@ -119,6 +147,16 @@ attachment/goal tables (reference-only FKs instead).
 `entry_reference` stability across re-auth · Revolut NL stable `id` · Amex CSV columns · Rabobank
 "American Express" description reliably identifying card payments · SEPA creditor ID parseability ·
 ECB daily rates sufficing · single-user forever · PostgreSQL 15+.
+
+**Settled 2026-10-01/02 by the real exports** (`docs/research/11-real-export-verification.md`):
+
+| Assumption | Verdict |
+|---|---|
+| Rabobank "American Express" description identifies card payments | **CONFIRMED** — the string appears in 4 of 4 statements and the amounts match Amex `Te betalen` exactly every month (doc 11 §4) |
+| Revolut NL stable `id` | **STILL UNVERIFIED** — no Revolut CSV was ever supplied (doc 11 §7). `revolut_pdf` is the path instead |
+| Amex CSV columns | **MOOT** — the Amex app exports PDF only (`LifeOS-18`) |
+| `T-OWN-ACCOUNT-TRANSFERS` holds per account | **FALSE for Revolut** — 34 `To Savings` against 9 `From Savings`; counter-legs live in the Deposit section (doc 11 §3.6) |
+| SEPA creditor-ID branch is reachable | **Partly** — Rabobank records do carry `Mandate Identifier / Creditor ID` (36 of 106 rows), but the match to an inbound leg was not tested (doc 11 §7) |
 
 ---
 
