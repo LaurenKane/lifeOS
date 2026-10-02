@@ -42,9 +42,16 @@ __all__ = [
 _WHITESPACE: Final = re.compile(r"[\s ]+")
 
 # Trailing markers a provider appends for its own bookkeeping. These are noise
-# for matching purposes and must not change a fingerprint (fingerprint.py does
-# its own equivalent strip; both must agree, so the pattern lives in one place
-# and fingerprint.py imports it).
+# for matching purposes and must not change a fingerprint.
+#
+# ⚠️ DO NOT assume fingerprint.py uses this pattern. An earlier version of this
+# comment claimed "the pattern lives in one place and fingerprint.py imports it".
+# That was false: fingerprint.py imports only hashlib and re, and defines its own
+# copy. The two HAVE DIVERGED — fingerprint.py also strips the colon-less
+# `#REF 000123` and `*REF0123456` forms (fingerprint.py:53-55), which the
+# pattern below does not. So the same merchant description can normalise
+# differently here than it fingerprints. Tracked as a bead; fix the behaviour
+# there, not by editing this comment.
 _TRAILING_MARKERS: Final = re.compile(
     r"""
     \s*

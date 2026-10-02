@@ -16,9 +16,9 @@ life-os/
 ├── Makefile                   # dev, test, migrate, generate-types, check-invariants
 ├── pyproject.toml             # uv
 ├── docs/
-│   ├── ARCHITECTURE-PROPOSAL.md   # this document
+│   ├── ARCHITECTURE-PROPOSAL.md   # companion: the full design this summarises
 │   ├── RECOMMENDATION.md          # final recommendation, risks, decisions required
-│   ├── research/                  # the 9 research reports
+│   ├── research/                  # the 11 research reports
 │   └── adr/                       # one ADR per consequential decision
 ├── backend/
 │   ├── main.py                 # app factory, mounts routers
@@ -127,7 +127,11 @@ pointing at it. Rationale and rejected alternatives:
 
 ## 7. Type contract
 
-TS types are generated from FastAPI's OpenAPI spec at build time via `scripts/generate_types.py`. **There is no shared-types package** (versioning headache). CI fails if the spec changed without regeneration. The frontend `api/generated/` directory is regenerated-only — hand-editing is forbidden.
+TS types are meant to be generated from FastAPI's OpenAPI spec via `scripts/generate_types.py`. **There is no shared-types package** (versioning headache).
+
+⚠️ **This is not true yet, and nothing enforces it.** As of 2026-10-02 `generate_types.py` writes a 6-line `LifeOSAppConfig` skeleton that says so in its own output, `frontend/src/api/generated/` contains only a README, and no CI job checks for spec drift (9 jobs: lint, typecheck, test, import-linter, invariant-check, invariant-negative, egress-test, frontend, dependency-gate). The frontend `provider` enum in `imports/types.ts` is therefore **hand-maintained**, which is why `backend/tests/test_provider_enum_agreement.py` exists — it asserts the three hand-written copies agree, because nothing else does.
+
+Either land real generation with a drift check, or treat the cross-copy test as the contract. Do not assume a safety net that is not there.
 
 ---
 
