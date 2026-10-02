@@ -168,3 +168,57 @@ When an Amex card is in Google Wallet, Amex shares recent transaction data with 
 8. **Reference field** — is it populated? Stable-looking IDs or sequential numbers?
 9. **FX** — make a foreign-currency purchase; check CSV (EUR only?) vs PDF (original + rate), and whether the FX fee is broken out.
 10. **PDF depth** — try 1, 2, and 5 years back; note the earliest available.
+
+---
+
+## RESOLVED 2026-10-01 by real exports (bead LifeOS-2)
+
+Four real Amex NL statements (dated 23.06, 23.07, 23.08, 23.09.2026, covering periods
+24.05–23.06 through 24.08–23.09) were inspected. Full evidence and method:
+**`docs/research/11-real-export-verification.md`**. Answers to the numbered user tests above:
+
+| # | Item | Result |
+|---|---|---|
+| 2 | **PDF text layer selectable?** | **YES — selectable, not a scan.** No OCR needed. **M7 is a GO**; `RECO:148` risk 3 retired. |
+| 2 | Itemized per transaction? | Yes, 28–33 rows per statement. Not a payments ledger. |
+| 2 | Both transaction and process date? | Yes, and **they differ on 42 of 121 rows (35%)**. See correction below. |
+| 2 | FX original amount + rate? | **Untestable — FX column empty in all 4 statements**, no non-EUR code anywhere. Still open. |
+| 1, 3, 4, 6, 7, 8, 9, 10 | all CSV-specific tests | **Not answerable — the Amex app offers PDF export only.** See decision below. |
+
+### Decision: Amex is PDF-only (bead LifeOS-18, 2026-10-01)
+
+The user will download Amex statements as **PDF from the mobile app**. The web app offers
+CSV/OFX/QBO but is not part of the workflow. Consequences:
+
+- **M2 (Amex CSV, `LifeOS-7`) is retired** — there is no CSV source to import.
+- **M7 (Amex PDF, `LifeOS-12`) is the only Amex path** and is raised to P0.
+- The PDF→CSV fingerprint test at `ARCH:779`, and the question of whether the CSV's single
+  date equals the PDF's transaction date or its processing date, are **moot**. There is no
+  CSV to reconcile against.
+- `ARCH:122` ("PDF is the better source, not the fallback") is now understated: for Amex,
+  PDF is the *only* source.
+- The `ARCH:127` rationale strengthens — archived PDFs are the only durable copy, so
+  retention is load-bearing rather than merely prudent.
+
+### Correction: `07-dedup-contingencies.md:41` is wrong
+
+That file states, for Amex, `raw_posting_date vs raw_date | same (posted only) | Nullable,
+no issue`. Measured against the real statements, the two columns differ on **42 of 121 rows
+(35%)** — 10/32, 10/33, 11/28, 11/28. Example: transaction date `16.06.26`, processed
+`17.06.26`; `10.06.26` processed `12.06.26`. `raw_posting_date` is load-bearing for Amex.
+Tracked as bead `LifeOS-hwv`.
+
+### Two other measured facts about the Amex PDF
+
+- **Credits carry no sign.** The amount column holds charges and credits as positive
+  numbers alike; a credit is marked by a line containing only `CR` *beneath* the amount.
+  Each statement's credit section mixes the monthly card payment with genuine refunds
+  (payments 721,35 / 765,67 / 332,43 / 272,48, plus 1–3 refunds), so payment and refund
+  must be separated by **description**, not sign. The payment was identified by the literal
+  string `HARTELIJK BEDANKT VOOR UW BETALING`, which held for all four statements.
+- **The balance identity runs the opposite way to a current account:** `Vorig saldo +
+  Debiteringen − Crediteringen = Nieuw saldo` (a charge *increases* the amount owed), true
+  of all four statements. A generic balance self-check cannot serve both account types.
+- **The printed `Periode` is advisory, not a filter.** Real statements contain
+  transactions dated the day *before* the period opens. Filtering on period bounds would
+  drop genuine spend.
