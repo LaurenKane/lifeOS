@@ -24,7 +24,10 @@ dependencies = [
     "pydantic-settings",
     "sqlalchemy",
     "alembic",
-    "psycopg",
+    # [binary] bundles libpq, so `uv sync` on a bare host works with no system
+    # libpq. ADR 0004 settles the bare-vs-binary tradeoff; see
+    # docs/adr/0004-psycopg-binary-distribution.md to revert.
+    "psycopg[binary]",
     "httpx",
     # Required by FastAPI for any route taking an UploadFile (multipart forms).
     # The imports router needs it; without it the app fails to start.
