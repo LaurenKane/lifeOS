@@ -14,11 +14,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, ConfigDict
 
 from finance.api.schemas import Provider, ProviderInfo
-from finance.ingestion.adapters import (
-    AmexCsvAdapter,
-    AmexPdfAdapter,
-    RevolutCsvAdapter,
-)
+from finance.ingestion.adapters import AmexPdfAdapter
 from finance.ingestion.adapters.base import ImportResult
 
 router = APIRouter(tags=["finance"], prefix="/imports")
@@ -55,29 +51,53 @@ class ImportSummary(BaseModel):  # type: ignore[explicit-any]
     failures: list[str] = []
 
 
+# Canonical v1 provider list. Source of truth for the backend schema, the
+# `/imports/providers` response, and the frontend `provider` enum.
+# See docs/adr/0002-import-provider-enum.md for the decision record.
+V1_PROVIDERS: tuple[str, ...] = (
+    "enable_banking",
+    "amex_pdf",
+    "rabobank_pdf",
+    "revolut_pdf",
+    "manual",
+)
+
 # provider -> the adapter and the file extension it accepts.
-# `enable_banking` and `manual` are absent on purpose: neither is an upload, so
-# they are not even `FileAdapter`-shaped (their `parse` takes no account).
+# `enable_banking`, `manual`, `rabobank_pdf`, and `revolut_pdf` are absent on
+# purpose: the first two are not uploads, and the PDF adapters for Rabobank and
+# Revolut are not implemented yet (docs/research/11-real-export-verification.md
+# §5). They remain first-class providers so the schema can represent the files
+# the user actually has.
 _FILE_ADAPTERS: dict[str, tuple[type[FileAdapter], str]] = {
-    "amex_csv": (AmexCsvAdapter, ".csv"),
     "amex_pdf": (AmexPdfAdapter, ".pdf"),
-    "revolut_csv": (RevolutCsvAdapter, ".csv"),
 }
 
-# The full provider list, including the two that are not uploadable.
-_PROVIDERS: tuple[Provider, ...] = (
-    Provider(kind="enable_banking", import_method="api", accepts_upload=False),
-    Provider(kind="amex_csv", import_method="csv", accepts_upload=True),
-    Provider(kind="amex_pdf", import_method="pdf", accepts_upload=True),
-    Provider(kind="revolut_csv", import_method="csv", accepts_upload=True),
-    Provider(kind="manual", import_method="manual", accepts_upload=False),
-)
+_IMPORT_METHODS: dict[str, str] = {
+    "enable_banking": "api",
+    "amex_pdf": "pdf",
+    "rabobank_pdf": "pdf",
+    "revolut_pdf": "pdf",
+    "manual": "manual",
+}
+
+
+def _provider_info(kind: str) -> Provider:
+    """Build a Provider entry from the canonical v1 list."""
+    return Provider(
+        kind=kind,
+        import_method=_IMPORT_METHODS[kind],
+        accepts_upload=kind in _FILE_ADAPTERS,
+    )
+
+
+# The full provider list, including providers that are not yet uploadable.
+_PROVIDERS: tuple[Provider, ...] = tuple(_provider_info(kind) for kind in V1_PROVIDERS)
 
 
 @router.post("", summary="Upload a statement for import", response_model=ImportSummary)
 async def upload_import_file(
     file: UploadFile = File(...),
-    provider: str = "amex_csv",
+    provider: str = "amex_pdf",
     account_id: str = "",
 ) -> ImportSummary:
     """Accept a statement file and parse it.
@@ -140,7 +160,7 @@ def list_providers() -> ProviderInfo:
     """The closed provider list, so a client does not hardcode it.
 
     Declared as data rather than derived from `_FILE_ADAPTERS`, because that
-    table says nothing about import methods and omits the one provider that
-    cannot be uploaded at all.
+    table says nothing about import methods and omits providers that are not
+    yet uploadable.
     """
     return ProviderInfo(providers=list(_PROVIDERS))

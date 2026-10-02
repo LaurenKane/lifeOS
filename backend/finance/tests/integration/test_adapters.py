@@ -10,6 +10,8 @@ nothing here should be copied from one.
 
 from __future__ import annotations
 
+import datetime as dt
+
 import pytest
 
 from finance.ingestion.adapters import (
@@ -387,11 +389,11 @@ class TestEnableBanking:
 class TestAmexPdf:
     LINES = [
         "Card Summary",
-        "Date        Description              Amount",
-        "14 Mar 2026 JUMBO 4321 AMSTERDAM     8,50",
-        "14 Mar 2026 ALBERT HEIJN 1234         12,34",
-        "14 Mar 2026 ALBERT HEIJN 1234         12,34",
-        "New Balance                              33,18",
+        "Transactiedatum Datum verwerkt Omschrijving Bedrag",
+        "14.03.26  14.03.26  JUMBO 4321 AMSTERDAM            8,50",
+        "14.03.26  15.03.26  ALBERT HEIJN 1234                12,34",
+        "14.03.26  14.03.26  ALBERT HEIJN 1234                12,34",
+        "New Balance                                              33,18",
     ]
 
     def test_parses_transaction_rows(self) -> None:
@@ -419,6 +421,17 @@ class TestAmexPdf:
         assert len(heijn) == 2
         assert {r.amount_minor for r in heijn} == {-1234}
 
+    def test_two_dates_map_to_booked_and_value_date(self) -> None:
+        """The first date is Transactiedatum; the second is Datum verwerkt."""
+        adapter = AmexPdfAdapter(text_extractor=lambda _payload: self.LINES)
+        result = adapter.parse("\n".join(self.LINES).encode(), account_id=ACCOUNT_ID)
+        heijn = [r for r in result.records if "heijn" in r.description.lower()]
+        # The first Albert Heijn row has differing dates in the fixture.
+        differing = [r for r in heijn if r.booked_date != r.value_date]
+        assert differing
+        assert differing[0].booked_date == dt.date(2026, 3, 14)
+        assert differing[0].value_date == dt.date(2026, 3, 15)
+
     def test_no_extractable_text_is_reported(self) -> None:
         adapter = AmexPdfAdapter(text_extractor=lambda _payload: [])
         result = adapter.parse(b"", account_id=ACCOUNT_ID)
@@ -431,8 +444,8 @@ class TestAmexPdf:
         looser prefix test would silently delete it from the statement.
         """
         lines = [
-            "Date        Description              Amount",
-            "14 Mar 2026 PAYMENT SOLUTIONS BV    120,00",
+            "Transactiedatum Datum verwerkt Omschrijving Bedrag",
+            "14.03.26  14.03.26  PAYMENT SOLUTIONS BV    120,00",
         ]
         adapter = AmexPdfAdapter(text_extractor=lambda _payload: lines)
         result = adapter.parse("\n".join(lines).encode(), account_id=ACCOUNT_ID)
@@ -446,6 +459,89 @@ class TestAmexPdf:
         with a string and keeps M0's dependency set unchanged.
         """
         assert "pdfplumber" not in ImportAdapter.__module__
+
+
+class TestAmexPdfRegression:
+    """Regression tests for the verified Dutch Amex NL pdftotext -layout format.
+
+    These guard against the silent-empty-import, sign, continuation and date
+    defects filed as LifeOS-4fy, LifeOS-3uq and LifeOS-zp7.
+    """
+
+    def test_nonzero_parse_for_real_dutch_layout(self) -> None:
+        """A realistic fixture must not silently return zero records."""
+        lines = [
+            "Transactiedatum Datum verwerkt Omschrijving Bedrag",
+            "24.05.26  25.05.26  JUMBO 4321 AMSTERDAM            8,50",
+            "24.05.26  24.05.26  ALBERT HEIJN 1234                12,34",
+        ]
+        adapter = AmexPdfAdapter(text_extractor=lambda _payload: lines)
+        result = adapter.parse("\n".join(lines).encode(), account_id=ACCOUNT_ID)
+        assert result.record_count == 2
+        assert not result.failed
+
+    def test_bare_cr_line_marks_a_credit_positive(self) -> None:
+        """A card payment and a refund are unsigned positives with only CR to
+        distinguish them. The credit must stay positive, not be forced negative.
+        """
+        lines = [
+            "Transactiedatum Datum verwerkt Omschrijving Bedrag",
+            "23.05.26  24.05.26  HARTELIJK BEDANKT VOOR UW BETALING  721,35",
+            "CR",
+            "24.05.26  25.05.26  JUMBO 4321 AMSTERDAM                  8,50",
+        ]
+        adapter = AmexPdfAdapter(text_extractor=lambda _payload: lines)
+        result = adapter.parse("\n".join(lines).encode(), account_id=ACCOUNT_ID)
+        assert result.record_count == 2
+        by_desc = {r.description: r for r in result.records}
+        payment = by_desc["HARTELIJK BEDANKT VOOR UW BETALING"]
+        purchase = by_desc["JUMBO 4321 AMSTERDAM"]
+        assert payment.amount_minor == 72135
+        assert purchase.amount_minor == -850
+        assert payment.raw_data["is_credit"] is True
+        assert purchase.raw_data["is_credit"] is False
+
+    def test_continuation_lines_append_to_description(self) -> None:
+        """A wrapped description must survive intact, not replace the merchant."""
+        lines = [
+            "Transactiedatum Datum verwerkt Omschrijving Bedrag",
+            "24.05.26  25.05.26  AMAZON EU SARL                   99,99",
+            "ORDER 123-4567890-1234567",
+        ]
+        adapter = AmexPdfAdapter(text_extractor=lambda _payload: lines)
+        result = adapter.parse("\n".join(lines).encode(), account_id=ACCOUNT_ID)
+        assert result.record_count == 1
+        record = result.records[0]
+        assert "AMAZON EU SARL" in record.description
+        assert "ORDER 123-4567890-1234567" in record.description
+
+    def test_out_of_period_rows_are_retained(self) -> None:
+        """The printed Periode is advisory; rows just outside it are genuine."""
+        lines = [
+            "Periode: 22.05.2026 tot 23.06.2026",
+            "Transactiedatum Datum verwerkt Omschrijving Bedrag",
+            "20.05.26  21.05.26  BEFORE PERIOD MERCHANT          15,00",
+            "24.05.26  25.05.26  INSIDE PERIOD MERCHANT          10,00",
+        ]
+        adapter = AmexPdfAdapter(text_extractor=lambda _payload: lines)
+        result = adapter.parse("\n".join(lines).encode(), account_id=ACCOUNT_ID)
+        assert result.record_count == 2
+        descriptions = {r.description for r in result.records}
+        assert "BEFORE PERIOD MERCHANT" in descriptions
+        assert "INSIDE PERIOD MERCHANT" in descriptions
+
+    def test_two_digit_years_expand_row_locally(self) -> None:
+        """DD.MM.YY is expanded using the row's own year, not a global default."""
+        lines = [
+            "Transactiedatum Datum verwerkt Omschrijving Bedrag",
+            "24.05.26  25.05.26  JUMBO 4321 AMSTERDAM            8,50",
+        ]
+        adapter = AmexPdfAdapter(text_extractor=lambda _payload: lines)
+        result = adapter.parse("\n".join(lines).encode(), account_id=ACCOUNT_ID)
+        assert result.record_count == 1
+        record = result.records[0]
+        assert record.booked_date == dt.date(2026, 5, 24)
+        assert record.value_date == dt.date(2026, 5, 25)
 
 
 class TestManual:

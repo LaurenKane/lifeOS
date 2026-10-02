@@ -115,7 +115,9 @@ class ImportRequest(_Write):  # type: ignore[explicit-any]
     """
 
     provider: str = Field(
-        description="One of: enable_banking, amex_csv, amex_pdf, revolut_csv, manual"
+        description=(
+            "One of: enable_banking, amex_pdf, rabobank_pdf, revolut_pdf, manual"
+        )
     )
     import_method: str = Field(description="One of: api, csv, pdf, manual")
     account_id: str | None = None

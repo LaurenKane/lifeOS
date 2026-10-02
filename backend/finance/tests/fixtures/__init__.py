@@ -38,6 +38,7 @@ __all__ = [
     "make_record",
     "make_revolut_csv",
     "synthetic_amex_csv",
+    "synthetic_amex_pdf_text",
 ]
 
 # Invented. No account number is a real one.
@@ -163,6 +164,31 @@ def synthetic_amex_csv() -> bytes:
             ("15/03/2026", f"NS INTERCITY{_REF}", "4.10"),
         ]
     ).encode("utf-8")
+
+
+def synthetic_amex_pdf_text() -> list[str]:
+    """A small, entirely invented Amex PDF pdftotext-layout extract.
+
+    Mirrors the rows in `synthetic_amex_csv()` so the dedup and zero-egress
+    proofs stay comparable while exercising the canonical Amex PDF adapter.
+    Amounts use European formatting (",") because that is what the PDF prints.
+
+    Uses the verified Dutch Amex NL layout: two DD.MM.YY dates per row
+    (Transactiedatum and Datum verwerkt), unsigned amounts, and a bare CR line
+    as the credit marker.
+
+    The text is injected into `AmexPdfAdapter` via its `text_extractor` seam, so
+    no pdfplumber dependency or real statement is needed.
+    """
+    return [
+        "Card Summary",
+        "Transactiedatum Datum verwerkt Omschrijving Bedrag",
+        "14.03.26  14.03.26  JUMBO 4321 AMSTERDAM REF:000000123456            8,50",
+        "14.03.26  15.03.26  ALBERT HEIJN 1234 REF:000000123456                12,34",
+        "14.03.26  14.03.26  ALBERT HEIJN 1234 REF:000000123456                12,34",
+        "15.03.26  15.03.26  NS INTERCITY REF:000000123456                       4,10",
+        "New Balance                                                          33,18",
+    ]
 
 
 def ais_transaction(

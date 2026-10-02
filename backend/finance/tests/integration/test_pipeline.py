@@ -4,7 +4,7 @@ These are the properties the whole design is judged on, stated end to end:
 
 - **Re-importing the same file creates nothing.** The property that makes file
   import safe at all, and the one Firefly and Actual both fail for Amex.
-- **Importing a PDF then a CSV is non-destructive.** The seven-year history case.
+- **Cross-batch overlap is non-destructive.** The seven-year history case.
 - **A pending row and its booked twin become one transaction.** Tier 2.
 - **A duplicate of an un-normalised row is still a duplicate.** The raw record
   already landed, so the row must not be created twice.
@@ -20,7 +20,7 @@ import datetime as dt
 
 import pytest
 
-from finance.ingestion.adapters import AmexCsvAdapter
+from finance.ingestion.adapters import AmexPdfAdapter
 from finance.ingestion.dedupe import (
     ExistingFingerprint,
     assign_occurrence_indices,
@@ -29,14 +29,20 @@ from finance.ingestion.dedupe import (
 from finance.ingestion.fingerprint import compute_fingerprint, normalize_description
 from finance.ingestion.identity import Candidate, IdentityResolver
 from finance.ingestion.normalize import NormalizedRecord, normalize_record
-from finance.tests.fixtures import ACCOUNT_ID, make_record, synthetic_amex_csv
+from finance.tests.fixtures import (
+    ACCOUNT_ID,
+    make_record,
+    synthetic_amex_pdf_text,
+)
 
 
 def _ingest(
-    payload: bytes, account_id: str = ACCOUNT_ID
+    lines: list[str], account_id: str = ACCOUNT_ID
 ) -> tuple[list[NormalizedRecord], list[int]]:
     """Adapter -> RawRecords -> NormalizedRecords -> occurrence indices."""
-    parsed = AmexCsvAdapter().parse(payload, account_id=account_id)
+    parsed = AmexPdfAdapter(text_extractor=lambda _payload: lines).parse(
+        b"", account_id=account_id
+    )
     records = [
         normalize_record(
             account_id=raw.account_id,
@@ -55,7 +61,7 @@ class TestReimportIsANoOp:
     """The property that makes file import safe."""
 
     def test_second_import_of_the_same_file_creates_nothing(self) -> None:
-        records, indices = _ingest(synthetic_amex_csv())
+        records, indices = _ingest(synthetic_amex_pdf_text())
 
         # Simulate the first import landing: store every fingerprint.
         stored = [
@@ -79,7 +85,7 @@ class TestReimportIsANoOp:
         assert len(stored) == 4
 
         # Re-import the same file.
-        _, second_indices = _ingest(synthetic_amex_csv())
+        _, second_indices = _ingest(synthetic_amex_pdf_text())
         assert second_indices == indices
 
         resolver = IdentityResolver()
@@ -105,7 +111,7 @@ class TestReimportIsANoOp:
         fingerprinted identically to the first and swallowed as a duplicate —
         one purchase becomes one, and the user's spending is understated.
         """
-        records, indices = _ingest(synthetic_amex_csv())
+        records, indices = _ingest(synthetic_amex_pdf_text())
         heijn = [
             (record, index)
             for record, index in zip(records, indices, strict=True)
@@ -156,14 +162,16 @@ class TestReimportIsANoOp:
         assert first.is_duplicate
         assert not second.is_duplicate
 
-    def test_csv_export_variation_still_dedupes(self) -> None:
+    def test_re_export_with_different_reference_still_dedupes(self) -> None:
         """A re-export with different reference blocks is the same file.
 
         The provider changes its bookkeeping numbers between exports; the
         fingerprint must ignore them or every re-export duplicates everything.
         """
-        original = synthetic_amex_csv()
-        re_exported = original.replace(b"REF:000000123456", b"REF:000000999999")
+        original = synthetic_amex_pdf_text()
+        re_exported = [
+            line.replace("REF:000000123456", "REF:000000999999") for line in original
+        ]
 
         first_records, first_indices = _ingest(original)
         second_records, second_indices = _ingest(re_exported)
@@ -190,26 +198,27 @@ class TestReimportIsANoOp:
 
     def test_an_empty_reimport_is_still_a_noop(self) -> None:
         """A file the user re-uploads after deleting nothing must not fail."""
-        records, indices = _ingest(synthetic_amex_csv())
+        records, indices = _ingest(synthetic_amex_pdf_text())
         assert records
         assert all(index >= 1 for index in indices)
 
 
-class TestPdfThenCsvOverlap:
-    """Seven-year history, then six months on top. Non-destructive by design."""
+class TestCrossBatchOverlap:
+    """Older import already landed; a later import of the same row is a duplicate."""
 
-    def test_csv_rows_already_present_from_the_pdf_are_not_duplicated(self) -> None:
-        """The stated M7 requirement.
+    def test_rows_already_present_from_an_earlier_import_are_not_duplicated(
+        self,
+    ) -> None:
+        """The stated M7 requirement, repointed for the PDF-only canonical path.
 
-        The PDF holds the older rows; the CSV holds the recent ones plus the
-        overlap. Importing the CSV after the PDF must find the overlap already
-        stored rather than creating it again — which is exactly what the
-        cross-batch `(fingerprint, account_id)` key buys, as opposed to keying on
-        the batch.
+        Amex CSV is retired (LifeOS-18), so the overlap proof now uses a row
+        already stored from a PDF import and the same row arriving again. The
+        cross-batch `(fingerprint, account_id)` key must find it rather than
+        creating it again, as opposed to keying on the batch.
         """
         from finance.ingestion.fingerprint import normalize_description as norm
 
-        pdf_stored = [
+        earlier_stored = [
             ExistingFingerprint(
                 fingerprint=compute_fingerprint(
                     raw_description="ALBERT HEIJN 1234",
@@ -225,7 +234,7 @@ class TestPdfThenCsvOverlap:
             )
         ]
 
-        # The CSV contains that same purchase plus a newer one.
+        # The later import contains that same purchase again.
         decision = IdentityResolver().resolve(
             account_id=ACCOUNT_ID,
             description="ALBERT HEIJN 1234",
@@ -233,7 +242,7 @@ class TestPdfThenCsvOverlap:
             currency="EUR",
             booked_date=dt.date(2026, 3, 14),
             occurrence_index=1,
-            stored_fingerprints=pdf_stored,
+            stored_fingerprints=earlier_stored,
         )
         assert decision.is_duplicate
         assert decision.source_record_id == "from-pdf"
@@ -424,7 +433,7 @@ class TestReplayDeterminism:
     """The property the frozen fingerprint exists to protect."""
 
     def test_the_same_input_produces_the_same_decisions_every_time(self) -> None:
-        records, indices = _ingest(synthetic_amex_csv())
+        records, indices = _ingest(synthetic_amex_pdf_text())
 
         def decisions() -> list[tuple[bool, int]]:
             resolver = IdentityResolver()
@@ -450,7 +459,7 @@ class TestReplayDeterminism:
 
     def test_order_of_processing_does_not_change_the_outcome(self) -> None:
         """Rows may be batched, streamed or reordered; the result must not move."""
-        records, indices = _ingest(synthetic_amex_csv())
+        records, indices = _ingest(synthetic_amex_pdf_text())
         pairs = list(zip(records, indices, strict=True))
 
         resolver = IdentityResolver()
