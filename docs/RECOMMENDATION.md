@@ -1,7 +1,7 @@
 # Life OS — Final Recommendation
 
 **Discovery phase complete · 2026-09-30**
-Companion to `docs/ARCHITECTURE-PROPOSAL.md`. Sources: `docs/research/01`–`09`.
+Companion to `docs/ARCHITECTURE-PROPOSAL.md`. Sources: `docs/research/01`–`11`.
 
 ---
 
@@ -30,8 +30,8 @@ Companion to `docs/ARCHITECTURE-PROPOSAL.md`. Sources: `docs/research/01`–`09`
 │               │      │  RESOLVER        │     │  7 layers       │
 │ enable_banking│      │                 │     │  1 user rules   │
 │ amex_pdf      │─────▶│ T1 provider id  │────▶│  2 merchant xfm │
-│ amex_csv      │ Raw  │ T2 pending→book │ raw │  3 known map    │
-│ revolut_csv   │Record│ T3 fingerprint  │copy │  4 fuzzy        │
+│ rabobank_pdf  │ Raw  │ T2 pending→book │ raw │  3 known map    │
+│ revolut_pdf   │Record│ T3 fingerprint  │copy │  4 fuzzy        │
 │ manual        │      │  + review queue │     │  5 LEARNED      │
 └───────────────┘      └────────┬─────────┘     │  6 LLM (opt-in) │
                                  │               │  7 review       │
@@ -56,6 +56,11 @@ Companion to `docs/ARCHITECTURE-PROPOSAL.md`. Sources: `docs/research/01`–`09`
 
   NEVER DOUBLES:      sign = direction · transfers excluded from spending
                      is_synthesized leg makes the Amex payment correct by construction
+
+  PROVIDERS (v1):     enable_banking · amex_pdf · rabobank_pdf · revolut_pdf · manual
+                     amex_csv retired · revolut_csv deferred · google_wallet excluded
+                     rabobank_pdf / revolut_pdf declared, no adapter yet
+                     → docs/adr/0002-import-provider-enum.md
 ```
 
 ---
@@ -114,7 +119,8 @@ Companion to `docs/ARCHITECTURE-PROPOSAL.md`. Sources: `docs/research/01`–`09`
 4. **The provider-agnostic ingestion layer** — `SourceAdapter` protocol, one adapter per source.
 5. **The 7-layer categorization engine** — with **layer 5, learning from manual corrections**, which no
    reference project implements.
-6. **Amex PDF *and* CSV importers** — PDF first; it is the better source, not the fallback.
+6. **Amex PDF importer** — the **only** Amex path, not a first choice among two. The web portal's CSV
+   is **retired**: the Amex app exports PDF only (ADR 0002, `LifeOS-18`).
 7. **Replay-from-raw** — `replay --batch-id`. Turns raw retention into a safety net.
 8. **The invariant system** — `ARCHITECTURE.md` + `invariants.yaml` + CI. For an AI-vibe-coded project
    this is infrastructure, not bureaucracy.
@@ -127,7 +133,7 @@ Companion to `docs/ARCHITECTURE-PROPOSAL.md`. Sources: `docs/research/01`–`09`
 |---|---|
 | **Investments** (seam is in M1) | When you actually want to track holdings |
 | **Google Wallet** | If you need recent Amex data between exports — and accept fuzzy dedup |
-| **Revolut** | Gated on the `/aspsps?country=NL` answer; CSV fallback exists |
+| **Revolut** | The **API** path is gated on the `/aspsps?country=NL` answer. The **file** path is not deferred work — `revolut_pdf` is a declared v1 import path (ADR 0002) |
 | **Budgets, recurring, net worth** | M9/M10, after categorized data is clean |
 | **LLM categorization** | Optional forever. Core must work without it |
 | **Hungarian one-to-one matching** | Only if the review queue shows real ambiguous clusters |
@@ -143,9 +149,9 @@ Companion to `docs/ARCHITECTURE-PROPOSAL.md`. Sources: `docs/research/01`–`09`
 
 | # | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|---|
-| **1** | **Revolut NL unavailable via Enable Banking** | **~40%** | Low | CSV importer fallback already designed. Run the one `GET /aspsps` call before M5. **Retire this risk first** |
+| **1** | **Revolut NL unavailable via Enable Banking** | **~40%** | Low | **`revolut_pdf` importer fallback** — the user already holds a full-year statement (2026-01-01→10-01). Not a CSV importer: the PDF has no stable ID, so Tier-1 dedup does not apply (doc 11 §3.6, §7; ADR 0003 Decision 4). Run the one `GET /aspsps` call before M5. **Retire this risk first** |
 | **2** | **Rabobank emits no `PDNG` pending status** | Medium | Low | Tier 2 becomes dead code. Simplify. Detect at runtime, don't assume |
-| **3** | **Amex PDF text layer is scanned images, not text** | Medium | **High** — OCR is a different project | Test in the first hour. If scanned, CSV becomes primary and we rely on regular archiving. **M7 is contingent on this** |
+| **3** | ~~**Amex PDF text layer is scanned images, not text**~~ — **RESOLVED 2026-10-01: it is selectable text.** All four statements extract as clean, correctly ordered text, no OCR. **M7 is a go**, and `Bedrag in vreemde valuta` / `Nieuwe transacties voor:` are real parseable fields | ~~Medium~~ **None** | ~~**High**~~ **Low** | No OCR project. The real remaining Amex risk moved: the PDF carries **no sign** (direction is a separate `CR` marker line) and each statement mixes the card payment with real refunds, so payment-vs-refund is description-only. → doc 11 §2, §3.2; `docs/adr/0003-import-decisions-real-export.md` Decisions 1–2 |
 | **4** | **Deduplication produces silent duplicates or over-merges** | **High** | **High** | Occurrence counting, confidence thresholds, mandatory review queue, property/fuzz tests. **Default to "new + review", never "guess + merge"** |
 | **5** | **Card-payment detection misses a phrasing** | Medium | Medium | `confidence=0.95` with user rejection + the pattern **learns** from confirmations |
 | **6** | **Enable Banking goes away / gets expensive / changes ToS** | Low | Medium | ToS permits personal use today. Adapter is ~200 lines. GoCardless Bank Account Data is the fallback with a free tier |
@@ -162,16 +168,31 @@ Companion to `docs/ARCHITECTURE-PROPOSAL.md`. Sources: `docs/research/01`–`09`
 
 **Answer these before M5 (gating):**
 
-1. **Do you want Revolut via API, or is Revolut CSV acceptable?** *(I recommend: check `/aspsps?country=NL` and take whichever works. No architectural impact.)*
+1. ~~**Do you want Revolut via API, or is Revolut CSV acceptable?**~~ — **ANSWERED 2026-10-02.**
+   **Neither: `revolut_pdf` is the v1 import path.** `revolut_csv` is **deferred** — no Revolut CSV has
+   ever been seen and its stable `id` is unverified (doc 11 §7). The PDF has **no stable ID** at all
+   (one file covers two products and two own IBANs), so **Tier-1 dedup is Enable-Banking only**
+   (doc 11 §3.6). Current and Deposit are **separate accounts**, and because the file never states
+   which IBAN the Deposit belongs to, ambiguous ownership is **held for explicit user confirmation,
+   never inferred**. → `docs/adr/0002-import-provider-enum.md`,
+   `docs/adr/0003-import-decisions-real-export.md` Decision 4.
+   *(The `/aspsps?country=NL` gate above still decides whether the **API** path also exists. That
+   question is open; this one is not.)*
 2. **How much history do you actually need?** Enable Banking clamps to ~90 days post-consent. If you
    want years of Rabobank history, **bank CSV export becomes a first-class historical source**, not just
    an Amex fallback. This materially changes the ingestion priority order.
 
 **Answer before M2 (affects the first real code):**
 
-3. **Download one Amex CSV and one Amex PDF and look at them.** The column set, date format, and whether
+3. ~~**Download one Amex CSV and one Amex PDF and look at them.** The column set, date format, and whether
    the PDF text layer is selectable determine M2 and M7. Ten minutes of your time retires Risk #3 and
-   four "NEEDS USER TESTING" items at once.
+   four "NEEDS USER TESTING" items at once.~~ — **DONE 2026-10-01, by the real exports.** Four Amex
+   statements and five Rabobank/Revolut statements were parsed and reconciled to their own printed
+   totals at delta 0. Risk #3 is retired (selectable text, no OCR); there is **no Amex CSV to
+   download**, and no `NEEDS USER TESTING` items remain for Amex. What the statements settled instead:
+   the PDF's two dates differ on **42 of 121 rows (35%)**, and the amount column carries **no sign** —
+   direction is a separate `CR` marker line. → `docs/research/11-real-export-verification.md` §1–§3.2;
+   ADR 0003 Decisions 1–2.
 4. **Deployment topology: always-on server + Tailscale, or everything on one machine?** Changes exposure
    model, backup strategy, and what "local-first" means in practice. **This is the one genuinely
    blocking product question.**
@@ -209,11 +230,13 @@ Companion to `docs/ARCHITECTURE-PROPOSAL.md`. Sources: `docs/research/01`–`09`
 
 **Why this and not the importer first:** the importer is where the risk is, but the invariants are what
 keep an AI-vibe-coded project honest, and M1 proves the double-entry balance invariant before any
-ingestion complexity sits on top of it. **M2 (Amex CSV + fingerprint dedup) is the next block** and is
+ingestion complexity sits on top of it. **M2 (Amex PDF + fingerprint dedup) is the next block** and is
 where the project earns its correctness.
 
-**Your first action, in parallel: download an Amex CSV and a PDF and check the columns.** That single
-retires more unknowns than any further research.
+**Your first action, in parallel: ~~download an Amex CSV and a PDF and check the columns~~ — already
+done 2026-10-01.** Four real Amex statements were parsed and reconciled at delta 0; there is no Amex
+CSV to download (`LifeOS-18`). That exercise retired Risk #3 and produced the per-account-type balance
+identity every adapter must now satisfy. → `docs/research/11-real-export-verification.md` §1.
 
 ---
 
@@ -235,9 +258,9 @@ retires more unknowns than any further research.
 | **Revolut NL support** | **UNCERTAIN** | absent from sandbox list — **verify** |
 | **Amex NL not available via any PSD2 aggregator** | **CONFIRMED** | Amex statement (2021) + EB SE/FI deprecation (2025-03) |
 | Amex exports contain no stable transaction IDs | **CONFIRMED** | TrueLayer help (2024-07) |
-| Amex CSV available, ~6mo, posted-only | **CONFIRMED** (CSV exists) / **LIKELY** (window, pending) | NL accounting services 2024–2026 |
-| Amex PDF itemized, 7yr, both txn + process date, FX detail | **CONFIRMED** / **LIKELY** (7yr) | PDF converters 2026 |
-| Amex consumer formats: CSV, OFX/QFX, QBO (XLSX uncertain) | **CONFIRMED** / **UNCERTAIN** (XLSX) | Amex NL portal |
+| ~~Amex CSV available, ~6mo, posted-only~~ — **RETIRED.** The web portal does offer a CSV (~6mo, posted-only) but the Amex **app** exports PDF only, so no CSV is produced (ADR 0002, `LifeOS-18`) | ~~**CONFIRMED** / **LIKELY**~~ **N/A** | NL accounting services 2024–2026 (portal capability, not our workflow) |
+| Amex PDF itemized, 7yr, both txn + process date, FX detail. **⚠️ The two dates are not interchangeable — they differ on 42 of 121 rows (35%), so `raw_posting_date` is load-bearing.** The FX column was **empty in all four statements** (no non-EUR code), so FX stays unverifiable | **CONFIRMED** / **LIKELY** (7yr) | PDF converters 2026; **measured** — `docs/research/11-real-export-verification.md` §2, §3.1 |
+| Amex **app** export formats: **PDF only.** The *web portal* additionally offers CSV, OFX/QFX and QBO (XLSX uncertain) — none in our workflow | **CONFIRMED** (PDF) / **UNCERTAIN** (XLSX) | Amex NL portal; `LifeOS-18` |
 | Google Takeout carries Amex transaction JSON | **LIKELY** | Google + Amex ToS |
 | BankingSync is AGPL-3.0, Go, own SQLite, 13★, last commit 2026-09-28 | **CONFIRMED** | LICENSE + GitHub API |
 | BankingSync pending→booked is update-in-place via `pending_map` | **CONFIRMED** | `main.go`, `budget/reconcile.go` |
@@ -252,7 +275,7 @@ retires more unknowns than any further research.
 | Wealthfolio is **Rust/Tauri + SQLite (Diesel)**, not NestJS/Postgres | **CONFIRMED** | `Cargo.toml`, `crates/storage-sqlite/` |
 | Wealthfolio `Activity` 14-type enum, `idempotency_key` | **CONFIRMED** | `activities_model.rs`, `idempotency.rs` |
 | Dutch banks support redirect-only PSD2 auth | **LIKELY** | EB NL docs — **verify via `/aspsps`** |
-| Amex CSV exact columns / date format | **LIKELY** | **NEEDS USER TESTING** |
+| ~~Amex CSV exact columns / date format~~ — **MOOT.** No Amex CSV exists in the workflow, so there is nothing to test. The PDF's own format *is* now measured: two dates, `DD.MM.YY`, Dutch amount with dot thousands and comma decimal, and **no sign in the amount** — direction is a separate `CR` marker line. → doc 11 §3.1, §3.2; ADR 0003 Decision 1 | ~~**LIKELY**~~ **MEASURED** | `docs/research/11-real-export-verification.md` §1, §3 |
 
 ## Appendix B — Version, activity, licence
 

@@ -147,9 +147,13 @@ Enable Banking states it "does not aim to provide access to a large number of AS
 no PSD2 test sandbox, and says nothing about production. **Do not read the sandbox result as
 "unsupported"** — that inference is wrong and would send us to build a CSV importer unnecessarily.
 
-Only a production query settles it. Both outcomes are cheap:
+Only a production query settles it. Both outcomes are workable, and neither is on the critical path:
 - Revolut present → API adapter (a few hours)
-- Revolut absent → CSV importer (Revolut's CSV has a stable `id` column, so Tier-1 dedup applies)
+- Revolut absent → **`revolut_pdf` importer** — a real annual statement the user already holds
+  (2026-01-01→10-01, the only full-year source). **Not** a CSV importer: the Revolut *PDF* carries
+  **no stable ID** (one file covers two products and two own IBANs), and the Revolut *CSV* `id` is
+  unverified — no CSV has ever been seen (doc 11 §3.6, §7). Tier-1 dedup by provider ID is
+  **Enable-Banking only**; Revolut rows dedupe by fingerprint. → `docs/adr/0003-import-decisions-real-export.md` Decision 4
 
 **Neither outcome changes the schema.** The ledger is provider-agnostic by design; only the
 IdentityResolver is provider-aware. This is the whole point of that decision.
