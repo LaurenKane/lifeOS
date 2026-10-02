@@ -41,4 +41,3 @@ backups/
 
 # Deepwork session state (per-session working notes, not project content)
 .slim/
-.slim/deepwork/
