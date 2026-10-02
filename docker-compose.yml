@@ -1,0 +1,226 @@
+# Life OS — local stack: db, api, worker, frontend.
+#
+# ISOLATION. This file is namespaced `lifeos` and must stay that way. The same
+# Docker daemon runs unrelated stacks: a Supabase set for the LifeManager
+# project and a compose project named `financeapp`. A bare `docker compose down`
+# or `docker volume prune` here would destroy someone else's database. Every
+# command that touches Docker in this project is scoped with `-p lifeos`
+# (baked into the Makefile), and COMPOSE_PROJECT_NAME below means a hand-typed
+# `docker compose up` in this directory is scoped too.
+#
+# Credentials. Nothing in this file is a secret. Every value below is either a
+# throwaway local development default or a placeholder. Real secrets live in
+# the OS keyring or `~/.config/lifeos/`, outside this working tree — see
+# SAFETY.md and `.env.example`.
+
+name: lifeos
+
+# ---------------------------------------------------------------------------
+# Services
+# ---------------------------------------------------------------------------
+services:
+  db:
+    image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-lifeos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lifeos}
+      POSTGRES_DB: ${POSTGRES_DB:-lifeos}
+      # Deterministic collation. Not cosmetic: ORDER BY on user-supplied
+      # merchant descriptions must not change meaning with the host locale.
+      POSTGRES_INITDB_ARGS: "--locale=C.UTF-8 --encoding=UTF8"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    configs:
+      # pg_trgm and the two module schemas. Required by ARCHITECTURE.md §E and
+      # by the fact that Alembic's own version table lives in a schema.
+      #
+      # Inline via a Compose `configs` entry so this file stays the single
+      # source of truth for the stack — no separate init SQL to forget to copy.
+      # Runs once, on first initialisation of an empty data directory.
+      - source: db_bootstrap
+        target: /docker-entrypoint-initdb.d/10-pg_trgm.sql
+    healthcheck:
+      # -d/-U target the application database and user explicitly: the default
+      # is the maintenance `postgres` database, so a broken POSTGRES_DB would
+      # still report healthy and let api start against nothing.
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    # Not published. Only api and worker need it, and they are on the compose
+    # network. Publishing it would put a Postgres on the host's loopback with a
+    # guessable password for no benefit.
+    expose:
+      - "5432"
+    # NOT `user:`-pinned. The official entrypoint must start as root to chown
+    # the data directory and then drops to the `postgres` uid via gosu, so the
+    # database server itself is always non-root (uid 999). Forcing
+    # `user: "999:999"` instead would break first-run initialisation, because
+    # the volume is created root-owned. This is the documented reason
+    # docker-library/postgres is the one image where pinning the user is wrong.
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Service name `db`, not localhost: inside a container, localhost is the
+      # container itself.
+      LIFEOS_DATABASE_URL: ${LIFEOS_DATABASE_URL:-postgresql://lifeos:lifeos@db:5432/lifeos}
+      LIFEOS_DEBUG: ${LIFEOS_DEBUG:-false}
+      LIFEOS_CORS_ORIGINS: ${LIFEOS_CORS_ORIGINS:-http://localhost:8080,http://127.0.0.1:8080}
+      LIFEOS_APP_ID: ${LIFEOS_APP_ID:-}
+      LIFEOS_ENABLE_BANKING_CLIENT_ID: ${LIFEOS_ENABLE_BANKING_CLIENT_ID:-}
+    ports:
+      # Loopback only. docs/adr/0001-deployment-topology.md puts this stack
+      # behind Tailscale; it is not meant to be reachable from the LAN.
+      - "127.0.0.1:${LIFEOS_API_PORT:-8000}:8000"
+    healthcheck:
+      # stdlib urllib, not curl: python:3.12-slim ships no curl, and adding one
+      # to make a healthcheck work would put a network client in the image.
+      # /health touches nothing, so it cannot fail because Postgres is down —
+      # which is what makes it a liveness probe rather than a readiness one.
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import sys, urllib.request
+          try:
+              urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=3).read()
+          except Exception as exc:
+              print(exc, file=sys.stderr)
+              raise SystemExit(1)
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    # The app writes nothing to disk, so the root filesystem can be read-only.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      LIFEOS_DATABASE_URL: ${LIFEOS_DATABASE_URL:-postgresql://lifeos:lifeos@db:5432/lifeos}
+      LIFEOS_DEBUG: ${LIFEOS_DEBUG:-false}
+      LIFEOS_APP_ID: ${LIFEOS_APP_ID:-}
+      LIFEOS_ENABLE_BANKING_CLIENT_ID: ${LIFEOS_ENABLE_BANKING_CLIENT_ID:-}
+    command:
+      - /bin/sh
+      - -c
+      - |
+        # M0 has an empty job registry — the registry and the tables it
+        # schedules against land in M1 (bead LifeOS-6). So the worker idles on a
+        # health heartbeat instead of pretending to run jobs it does not have.
+        # Each beat is a real set of imports, not a hardcoded "pass".
+        #
+        # Note this never opens a database connection, by design: worker.py is
+        # DB-free at import time on purpose, so a Postgres outage makes the
+        # worker unavailable, not undebuggable.
+        while :; do
+          lifeos-worker health-check >/dev/null || exit 1
+          sleep 30
+        done
+    healthcheck:
+      # The same CLI the worker runs. If an import breaks, the healthcheck is
+      # the first thing that notices.
+      test: ["CMD", "lifeos-worker", "health-check"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Baked into the bundle at BUILD time — see frontend/Dockerfile. Changing
+        # it requires a rebuild, not a restart.
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${LIFEOS_FRONTEND_PORT:-8080}:8080"
+    # The nginx server block (SPA fallback, /api proxy) is baked into the image
+    # by frontend/Dockerfile, not mounted here. A runtime mount would need a
+    # read-write root filesystem, would have to be re-supplied by every deploy,
+    # and would leave `docker build` alone producing an image whose SPA routes
+    # 404.
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+# ---------------------------------------------------------------------------
+# Inline configs
+# ---------------------------------------------------------------------------
+configs:
+  db_bootstrap:
+    content: |
+      -- ARCHITECTURE.md §E: trigram indexes over merchant/payee names.
+      -- Run once by the postgres entrypoint, before any application start.
+      CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+      -- One database, one schema per module. These two are containers for a
+      -- module's tables; nothing here decides what goes inside them — M1
+      -- (bead LifeOS-6) owns the tables, the deferrable balance trigger and the
+      -- raw_data_immutable trigger.
+      --
+      -- Created HERE rather than by an Alembic migration, for one concrete
+      -- reason: Alembic cannot create its own bookkeeping table inside a schema
+      -- that does not exist. Both env.py files set `version_table_schema`, so
+      -- `alembic upgrade head` emits `CREATE TABLE core.alembic_version` and
+      -- fails with InvalidSchemaName before a single revision runs. Left to M1,
+      -- its first migration would be unable to execute at all.
+      --
+      -- IF NOT EXISTS throughout, so this is safe to re-run.
+      CREATE SCHEMA IF NOT EXISTS core;
+      CREATE SCHEMA IF NOT EXISTS finance;
+
+      -- The application role owns its schemas, so M1's migrations can create
+      -- tables in them. This is only the ownership half; `no_cross_schema_fk`
+      -- also wants grants that forbid cross-schema references, and those arrive
+      -- with M1 alongside the tables they protect.
+      GRANT ALL ON SCHEMA core TO lifeos;
+      GRANT ALL ON SCHEMA finance TO lifeos;
+
+# ---------------------------------------------------------------------------
+# Volumes
+# ---------------------------------------------------------------------------
+volumes:
+  # Named, so `docker compose -p lifeos down` leaves the data alone. It becomes
+  # `lifeos_db-data`; only `down -v` removes it, and the Makefile's `clean`
+  # target is the only thing that does that.
+  db-data:
