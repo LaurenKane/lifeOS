@@ -159,6 +159,19 @@ class TestDescription:
             ("Jumbo 4321 *REF:000123", "Jumbo 4321"),
             ("Jumbo 4321 KAASACHTELNR:12345", "Jumbo 4321"),
             ("Jumbo 4321 MNDT 12345", "Jumbo 4321"),
+            # The COLON-LESS forms. This pattern used to require a colon in
+            # every REF alternative, so these three survived normalisation
+            # intact while fingerprint.py's copy stripped them — the same
+            # purchase normalising one way and fingerprinting another, which
+            # defeats Tier-3 dedup silently. `normalize.py` now owns the single
+            # shared pattern and `fingerprint.py` imports it; the identity
+            # assertion lives in `test_fingerprint.py::TestMarkerPatternIsShared`.
+            ("Jumbo 4321 #REF 000123", "Jumbo 4321"),
+            ("Jumbo 4321 *REF0123456", "Jumbo 4321"),
+            ("Jumbo 4321 REF 000123", "Jumbo 4321"),
+            # A REF token inside the payee name is NOT trailing furniture and
+            # must survive, or two different merchants would merge.
+            ("Cafe REFACTOR 1234", "Cafe REFACTOR 1234"),
         ],
     )
     def test_cleans(self, raw: str, expected: str) -> None:

@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import pytest
 
+from finance.ingestion import fingerprint as fingerprint_module
+from finance.ingestion import normalize as normalize_module
 from finance.ingestion.fingerprint import (
     compute_fingerprint,
     fingerprint_source_string,
@@ -109,6 +111,15 @@ class TestTrailingMarkerCollapse:
             "Albert Heijn 1234 * #REF:0123456789",
             "Albert Heijn 1234 CARD:9876",
             "Albert Heijn 1234 KAASACHTELNR:1234567",
+            # The COLON-LESS forms. Amex PDFs print these, and the marker strip
+            # used to differ from normalize.py's on exactly these two: the copy
+            # in normalize.py required a colon in every alternative, so it left
+            # the whole marker attached. A card statement and a bank statement of
+            # one purchase then fingerprinted differently and Tier-3 dedup
+            # failed silently. These two cases are the regression guard.
+            "Albert Heijn 1234 #REF 000123",
+            "Albert Heijn 1234 *REF0123456",
+            "Albert Heijn 1234 REF 000123",
         ],
     )
     def test_variants_collapse_to_the_bare_description(self, variant: str) -> None:
@@ -207,6 +218,51 @@ class TestTypeSafety:
         """bool is an int subclass; True must not become 1 minor unit."""
         with pytest.raises(TypeError, match="int minor units"):
             fp(raw_amount=True)
+
+
+class TestMarkerPatternIsShared:
+    """The marker strip lives in one place, and this is what enforces it.
+
+    Two copies of this regex existed and DIVERGED silently: normalize.py's
+    required a colon in every REF alternative, fingerprint.py's also stripped the
+    colon-less `#REF 000123` and `*REF0123456` forms that Amex PDFs actually
+    print. Nothing failed when they disagreed — a card statement and a bank
+    statement of one purchase simply fingerprinted differently, and Tier-3 dedup
+    produced two journal entries and reported the spending as roughly double,
+    with no error anywhere.
+
+    `test_known_digest_is_stable` could not catch this: its fixture
+    `Albert Heijn 1234` carries no trailing marker, so both patterns produce the
+    recorded digest. The assertions that CAN catch it are the colon-less cases in
+    `TestTrailingMarkerCollapse`; this class is what stops the drift from being
+    reintroduced in the first place.
+    """
+
+    def test_fingerprint_uses_the_normalize_module_pattern(self) -> None:
+        """Identity, not equality.
+
+        Asserting the two patterns behave the same on today's inputs would pass
+        again the moment a new form is added to one and not the other, which is
+        precisely how the original divergence survived. This asserts there is one
+        object, so a second copy fails here rather than in production.
+        """
+        assert (
+            fingerprint_module._TRAILING_MARKERS is normalize_module._TRAILING_MARKERS
+        )
+
+    def test_the_colon_less_forms_actually_reach_the_pattern(self) -> None:
+        """The shared pattern is the fingerprint's, so it strips the wider set.
+
+        Asserted through the public function so the test fails if the pattern is
+        ever replaced by the narrower normalize-side variant, not merely if the
+        two stop being the same object.
+        """
+        assert normalize_description("Albert Heijn 1234 #REF 000123") == (
+            "albert heijn 1234"
+        )
+        assert normalize_description("Albert Heijn 1234 *REF0123456") == (
+            "albert heijn 1234"
+        )
 
 
 class TestNormalizeDescription:

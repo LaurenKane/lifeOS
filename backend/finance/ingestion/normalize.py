@@ -41,29 +41,42 @@ __all__ = [
 # in bank exports. Collapse runs of these to a single space.
 _WHITESPACE: Final = re.compile(r"[\s ]+")
 
-# Trailing markers a provider appends for its own bookkeeping. These are noise
-# for matching purposes and must not change a fingerprint.
+# Trailing provider bookkeeping: a reference block and/or a bare marker
+# character. Deliberately anchored at the end and matched case-insensitively, so
+# a REF number in the middle of a payee name survives.
 #
-# ⚠️ DO NOT assume fingerprint.py uses this pattern. An earlier version of this
-# comment claimed "the pattern lives in one place and fingerprint.py imports it".
-# That was false: fingerprint.py imports only hashlib and re, and defines its own
-# copy. The two HAVE DIVERGED — fingerprint.py also strips the colon-less
-# `#REF 000123` and `*REF0123456` forms (fingerprint.py:53-55), which the
-# pattern below does not. So the same merchant description can normalise
-# differently here than it fingerprints. Tracked as a bead; fix the behaviour
-# there, not by editing this comment.
+# THIS IS THE ONE COPY. `fingerprint.py` imports this pattern rather than
+# defining its own, and that is the whole point: the two used to hold separate
+# copies which silently DIVERGED — this one required a colon in every REF
+# alternative while the fingerprint's also stripped the colon-less `#REF 000123`
+# and `*REF0123456` forms that Amex actually prints. The same merchant
+# description could therefore normalise differently here than it fingerprinted,
+# and a card statement and a bank statement of one purchase could produce
+# different fingerprints — defeating Tier-3 dedup with no error anywhere, which
+# is the exact failure the dedup tiers exist to prevent.
+#
+# If you need to change what counts as a trailing marker, change it HERE and
+# let fingerprint.py pick it up. Do not reintroduce a second copy. The guard
+# against that is an identity assertion in `tests/unit/test_fingerprint.py`, not
+# a comment.
+#
+# Examples, all of which must normalise to "starbucks":
+#   "Starbucks *REF:0123456"
+#   "STARBUCKS  #REF 0123456"
+#   "Starbucks * #REF:0123456"
+#   "Starbucks*" / "Starbucks #"
 _TRAILING_MARKERS: Final = re.compile(
     r"""
     \s*
     (?:
-        \#+\s*REF\s*:\s*\S+          # #REF:000123  /  # REF 123
-      | \*\s*REF\s*:\s*\S+            # *REF:abc123
-      | REF\s*:\s*\S+                 # REF:abc123
-      | \*+$                          # bare trailing asterisk(s)
-      | \#+$                          # bare trailing hash(es)
-      | KAASACHTELNR\s*:?\s*\S+       # ING's customer reference
-      | CARD\s*:\s*\S+
-      | MNDT\s*\d+                    # SEPA mandate reference
+        \#?\s*REF\s*:\s*\S+          # #REF:000123, REF:abc, *REF:abc
+      | \#?\s*REF\s+\S+              # #REF 000123 (colon-less variant)
+      | \*\s*REF\s*\S+               # *REF0123456
+      | KAASACHTELNR\s*:?\s*\S+      # ING customer reference
+      | CARD\s*:\s*\S+               # bank card token
+      | MNDT\s*\d+                   # SEPA mandate reference
+      | \*+                          # bare trailing asterisk
+      | \#+                          # bare trailing hash
     )
     \s*
     """,

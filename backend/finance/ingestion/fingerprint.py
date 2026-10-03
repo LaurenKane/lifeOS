@@ -21,14 +21,27 @@ and one phantom duplicate.
 
 Constraints this file must keep, and why:
 
-- **stdlib only** (hashlib, re). A third-party normaliser would add a version
-  this rule would not capture.
+- **stdlib only** for the algorithm itself (hashlib, re). A third-party
+  normaliser would add a version this rule would not capture.
 - **no clock, no randomness, no dict/set iteration.** Same input, same digest,
   on any machine, in any order, forever.
-- **no imports from the rest of the package.** This file must remain readable
-  and hashable on its own. `normalize.py` has a comparable marker strip; if the
-  two ever disagree, this file is the one that wins, because this file is what
-  already produced every stored fingerprint.
+- **ONE package import, and it is not optional.** This module imports the
+  trailing-marker pattern from `normalize._TRAILING_MARKERS` rather than
+  defining its own. It used to define its own copy, and the two drifted apart:
+  the copy here also stripped the colon-less `#REF 000123` and `*REF0123456`
+  forms that Amex PDFs actually print, which normalize's copy did not. That let
+  one purchase normalise differently than it fingerprinted depending on which
+  path handled it, so a card statement and a bank statement of the same purchase
+  produced different fingerprints and Tier-3 dedup failed SILENTLY — double
+  spending, no error. Sharing the pattern makes that unrepresentable.
+
+  So the old rule here — "no imports from the rest of the package" — is
+  deliberately relaxed at exactly this one point, and the relaxation is load-
+  bearing. `normalize.py` does not import this module, so there is no cycle. The
+  remaining isolation requirement is that the *algorithm* stays in this file:
+  hashing, the component order and the source-string format are unchanged and
+  must not move. `normalize.py` is where the SHARED marker vocabulary lives;
+  this file is still where the fingerprint is decided.
 """
 
 from __future__ import annotations
@@ -36,36 +49,23 @@ from __future__ import annotations
 import hashlib
 import re
 
+from finance.ingestion.normalize import (
+    _TRAILING_MARKERS as _NORMALIZE_TRAILING_MARKERS,
+)
+
 # Any whitespace run, including the non-breaking spaces that appear in bank
 # exports. Collapsed to one space.
 _WHITESPACE = re.compile(r"\s+")
 
-# Trailing provider bookkeeping: a reference block and/or a bare marker
-# character. Deliberately anchored at the end and matched case-insensitively, so
-# a REF number in the middle of a payee name survives.
-#
-# Examples, all of which must normalise to "starbucks":
-#   "Starbucks *REF:0123456"
-#   "STARBUCKS  #REF 0123456"
-#   "Starbucks * #REF:0123456"
-#   "Starbucks*" / "Starbucks #"
-_TRAILING_MARKERS = re.compile(
-    r"""
-    \s*
-    (?:
-        \#?\s*REF\s*:\s*\S+          # #REF:000123, REF:abc, *REF:abc
-      | \#?\s*REF\s+\S+              # #REF 000123 (colon-less variant)
-      | \*\s*REF\s*\S+               # *REF0123456
-      | KAASACHTELNR\s*:?\s*\S+      # ING customer reference
-      | CARD\s*:\s*\S+               # bank card token
-      | MNDT\s*\d+                   # SEPA mandate reference
-      | \*+                          # bare trailing asterisk
-      | \#+                          # bare trailing hash
-    )
-    \s*
-    """,
-    re.VERBOSE | re.IGNORECASE,
-)
+# The trailing-marker strip is NOT defined here. It is imported from
+# `normalize._TRAILING_MARKERS`, and that import is deliberate — see the module
+# docstring. This module used to carry its own copy of the pattern, and the two
+# copies drifted apart: the one here also stripped the colon-less `#REF 000123`
+# and `*REF0123456` forms that Amex PDFs actually print, which the copy in
+# normalize.py did not. A card statement and a bank statement of one purchase
+# could then normalise differently than they fingerprinted, defeating Tier-3
+# dedup silently. One pattern, defined once, imported by both.
+_TRAILING_MARKERS = _NORMALIZE_TRAILING_MARKERS
 
 
 def _collapse_whitespace(text: str) -> str:
