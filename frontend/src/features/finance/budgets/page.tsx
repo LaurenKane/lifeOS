@@ -12,7 +12,6 @@ export const BudgetsPage: React.FC = () => {
   return (
     <AppShell>
       <PageHeader
-        eyebrow="Finance / Budgets"
         title="Budgets"
         description="Planned against actual, per category."
       />

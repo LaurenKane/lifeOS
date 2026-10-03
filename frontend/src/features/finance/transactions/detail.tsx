@@ -118,8 +118,11 @@ export const TransactionDetailPage: React.FC = () => {
         <Skeleton label="Loading transaction" rows={3} />
       ) : (
         <>
+          {/* The record's id is evidence like any other field, so it is read as
+              data in "The record" rather than as a kicker over the heading — a
+              label above the title restated the title, and this one carried an
+              id the reader may need to quote back. */}
           <PageHeader
-            eyebrow={`Transaction ${record.id}`}
             title={record.raw_description}
             description={
               <span className="flex flex-wrap items-center gap-x-4 gap-y-1">
@@ -141,6 +144,9 @@ export const TransactionDetailPage: React.FC = () => {
             <div className="space-y-8">
               <Panel title="The record" description="Evidence, exactly as it was received.">
                 <dl className="grid gap-x-8 gap-y-4 px-5 py-5 sm:grid-cols-2">
+                  <Row term="Transaction">
+                    <span className="font-mono">{record.id}</span>
+                  </Row>
                   <Row term="Amount">
                     <Amount minor={record.raw_amount} currency={record.raw_currency} />
                   </Row>

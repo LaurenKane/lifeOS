@@ -11,7 +11,6 @@ export const ImportsPage: React.FC = () => {
   return (
     <AppShell>
       <PageHeader
-        eyebrow="Finance / Imports"
         title="Imports"
         description="Bank and card statements, brought in as raw evidence."
       />

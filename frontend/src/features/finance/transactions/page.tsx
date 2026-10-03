@@ -51,7 +51,6 @@ export const TransactionsPage: React.FC = () => {
   return (
     <AppShell>
       <PageHeader
-        eyebrow="Finance / Transactions"
         title="Transactions"
         description={
           <>
@@ -175,7 +174,7 @@ const TransactionRow: React.FC<{
   transaction: TransactionSummary;
   style: React.CSSProperties;
 }> = ({ transaction, style }) => (
-  <li className="rise" style={style}>
+  <li className="rise-row" style={style}>
     <Link
       to={`/finance/transactions/${transaction.id}`}
       className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-baseline gap-x-4 gap-y-1 px-5 py-3.5 transition-colors hover:bg-muted/70"

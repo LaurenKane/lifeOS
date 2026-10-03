@@ -1,0 +1,462 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-03T00:00:00Z",
+  "title": "Design System: LifeOS",
+  "extensions": {
+    "colorMeta": {
+      "ledger-ink": {
+        "role": "primary",
+        "displayName": "Ledger Ink",
+        "canonical": "oklch(0.3 0.035 258)",
+        "tonalRamp": [
+          "oklch(0.15 0.03 258)",
+          "oklch(0.28 0.035 258)",
+          "oklch(0.41 0.035 258)",
+          "oklch(0.54 0.032 258)",
+          "oklch(0.67 0.027 258)",
+          "oklch(0.78 0.021 258)",
+          "oklch(0.88 0.014 258)",
+          "oklch(0.95 0.007 258)"
+        ]
+      },
+      "ink-focus": {
+        "role": "primary",
+        "displayName": "Focus Ink",
+        "canonical": "oklch(0.62 0.09 248)",
+        "tonalRamp": [
+          "oklch(0.15 0.06 248)",
+          "oklch(0.28 0.078 248)",
+          "oklch(0.41 0.09 248)",
+          "oklch(0.54 0.09 248)",
+          "oklch(0.67 0.085 248)",
+          "oklch(0.78 0.07 248)",
+          "oklch(0.88 0.045 248)",
+          "oklch(0.95 0.022 248)"
+        ]
+      },
+      "paper": {
+        "role": "neutral",
+        "displayName": "Paper",
+        "canonical": "oklch(0.984 0.006 85)",
+        "tonalRamp": [
+          "oklch(0.15 0.009 85)",
+          "oklch(0.28 0.01 85)",
+          "oklch(0.41 0.011 85)",
+          "oklch(0.54 0.01 85)",
+          "oklch(0.67 0.009 85)",
+          "oklch(0.78 0.008 85)",
+          "oklch(0.88 0.007 85)",
+          "oklch(0.95 0.005 85)"
+        ]
+      },
+      "paper-tint": {
+        "role": "neutral",
+        "displayName": "Paper Tint",
+        "canonical": "oklch(0.955 0.008 88)",
+        "tonalRamp": [
+          "oklch(0.15 0.01 88)",
+          "oklch(0.28 0.011 88)",
+          "oklch(0.41 0.012 88)",
+          "oklch(0.54 0.011 88)",
+          "oklch(0.67 0.01 88)",
+          "oklch(0.78 0.009 88)",
+          "oklch(0.88 0.008 88)",
+          "oklch(0.95 0.006 88)"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "oklch(0.235 0.014 75)",
+        "tonalRamp": [
+          "oklch(0.15 0.012 75)",
+          "oklch(0.28 0.014 75)",
+          "oklch(0.41 0.014 75)",
+          "oklch(0.54 0.013 75)",
+          "oklch(0.67 0.011 75)",
+          "oklch(0.78 0.009 75)",
+          "oklch(0.88 0.007 75)",
+          "oklch(0.95 0.004 75)"
+        ]
+      },
+      "ink-soft": {
+        "role": "neutral",
+        "displayName": "Ink Soft",
+        "canonical": "oklch(0.505 0.016 75)",
+        "tonalRamp": [
+          "oklch(0.15 0.013 75)",
+          "oklch(0.28 0.015 75)",
+          "oklch(0.41 0.016 75)",
+          "oklch(0.54 0.015 75)",
+          "oklch(0.67 0.013 75)",
+          "oklch(0.78 0.011 75)",
+          "oklch(0.88 0.008 75)",
+          "oklch(0.95 0.005 75)"
+        ]
+      },
+      "rule": {
+        "role": "neutral",
+        "displayName": "Rule",
+        "canonical": "oklch(0.893 0.011 85)",
+        "tonalRamp": [
+          "oklch(0.15 0.012 85)",
+          "oklch(0.28 0.013 85)",
+          "oklch(0.41 0.014 85)",
+          "oklch(0.54 0.013 85)",
+          "oklch(0.67 0.012 85)",
+          "oklch(0.78 0.01 85)",
+          "oklch(0.88 0.008 85)",
+          "oklch(0.95 0.006 85)"
+        ]
+      },
+      "rule-strong": {
+        "role": "neutral",
+        "displayName": "Rule Strong",
+        "canonical": "oklch(0.855 0.013 85)",
+        "tonalRamp": [
+          "oklch(0.15 0.014 85)",
+          "oklch(0.28 0.015 85)",
+          "oklch(0.41 0.016 85)",
+          "oklch(0.54 0.015 85)",
+          "oklch(0.67 0.013 85)",
+          "oklch(0.78 0.011 85)",
+          "oklch(0.88 0.009 85)",
+          "oklch(0.95 0.007 85)"
+        ]
+      },
+      "money-out": {
+        "role": "semantic",
+        "displayName": "Money Out",
+        "canonical": "oklch(0.48 0.155 28)",
+        "tonalRamp": [
+          "oklch(0.15 0.075 28)",
+          "oklch(0.28 0.115 28)",
+          "oklch(0.41 0.155 28)",
+          "oklch(0.54 0.15 28)",
+          "oklch(0.67 0.125 28)",
+          "oklch(0.78 0.09 28)",
+          "oklch(0.88 0.05 28)",
+          "oklch(0.95 0.022 28)"
+        ]
+      },
+      "money-in": {
+        "role": "semantic",
+        "displayName": "Money In",
+        "canonical": "oklch(0.42 0.085 158)",
+        "tonalRamp": [
+          "oklch(0.15 0.042 158)",
+          "oklch(0.28 0.065 158)",
+          "oklch(0.41 0.085 158)",
+          "oklch(0.54 0.082 158)",
+          "oklch(0.67 0.068 158)",
+          "oklch(0.78 0.049 158)",
+          "oklch(0.88 0.028 158)",
+          "oklch(0.95 0.013 158)"
+        ]
+      },
+      "alarm": {
+        "role": "semantic",
+        "displayName": "Alarm",
+        "canonical": "oklch(0.51 0.16 27)",
+        "tonalRamp": [
+          "oklch(0.15 0.078 27)",
+          "oklch(0.28 0.118 27)",
+          "oklch(0.41 0.16 27)",
+          "oklch(0.54 0.155 27)",
+          "oklch(0.67 0.129 27)",
+          "oklch(0.78 0.093 27)",
+          "oklch(0.88 0.052 27)",
+          "oklch(0.95 0.023 27)"
+        ]
+      },
+      "accent-wash": {
+        "role": "accent",
+        "displayName": "Accent Wash",
+        "canonical": "oklch(0.94 0.028 248)",
+        "tonalRamp": [
+          "oklch(0.15 0.022 248)",
+          "oklch(0.28 0.026 248)",
+          "oklch(0.41 0.028 248)",
+          "oklch(0.54 0.027 248)",
+          "oklch(0.67 0.024 248)",
+          "oklch(0.78 0.02 248)",
+          "oklch(0.88 0.014 248)",
+          "oklch(0.95 0.007 248)"
+        ]
+      },
+      "selection": {
+        "role": "neutral",
+        "displayName": "Selection",
+        "canonical": "oklch(0.235 0.014 75 / 0.18)",
+        "tonalRamp": [
+          "oklch(0.15 0.012 75 / 0.18)",
+          "oklch(0.28 0.014 75 / 0.18)",
+          "oklch(0.41 0.014 75 / 0.18)",
+          "oklch(0.54 0.013 75 / 0.18)",
+          "oklch(0.67 0.011 75 / 0.18)",
+          "oklch(0.78 0.009 75 / 0.18)",
+          "oklch(0.88 0.007 75 / 0.18)",
+          "oklch(0.95 0.004 75 / 0.18)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "The page title only — one per screen, set in the serif. Names the document."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "A Panel's own heading, in the serif. The second level of naming."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Prose and descriptions at 1.625 leading. Hold the measure to 65-75 characters."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "The eyebrow — section labels, field labels, navigation, status chips. Uppercase, 0.14em tracking, never a decorative kicker above a heading."
+      },
+      "amount": {
+        "displayName": "Amount",
+        "purpose": "Every monetary value, in monospace with tabular figures so a column aligns on the decimal point. Money only — never used as a costume for 'technical'."
+      }
+    },
+    "shadows": [
+      {
+        "name": "paper-edge",
+        "value": "0 1px 0 0 oklch(0 0 0 / 0.02), 0 1px 3px 0 oklch(0.2 0.02 80 / 0.05)",
+        "purpose": "The only shadow in the system. Applied to Panel and nothing else — the cut edge of a sheet catching light, plus a 3px settle. Near-invisible by design; if you can clearly see it, it is too strong."
+      }
+    ],
+    "motion": [
+      {
+        "name": "rise",
+        "value": "520ms cubic-bezier(0.22, 0.61, 0.36, 1), translateY(8px) + fade",
+        "purpose": "The page's own arrival — one element per route, the heading settling onto the sheet. It is the loudest entrance in the system and is allowed exactly one."
+      },
+      {
+        "name": "rise-row",
+        "value": "380ms cubic-bezier(0.22, 0.61, 0.36, 1), translateY(4px) + fade",
+        "purpose": "A list entry. Dozens of them, so each travels half as far and lands sooner. The per-row delay is set from JS (style.animationDelay) and capped there, so a 200-row list does not take four seconds to become readable. Same keyframes and easing as rise — what differs is amplitude, not choreography."
+      },
+      {
+        "name": "control",
+        "value": "150ms cubic-bezier(0.4, 0, 0.2, 1)",
+        "purpose": "Default state transition on buttons, nav links and chips. Colour only — nothing translates or scales on hover."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "none",
+        "purpose": "prefers-reduced-motion: reduce drops the animation entirely rather than shortening it. A reader who asked for no motion gets none."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "container",
+        "value": "1024px"
+      },
+      {
+        "name": "sm",
+        "value": "640px"
+      },
+      {
+        "name": "md",
+        "value": "768px"
+      },
+      {
+        "name": "lg",
+        "value": "1024px"
+      },
+      {
+        "name": "xl",
+        "value": "1280px"
+      }
+    ],
+    "darkMode": {
+      "note": "The palette inverts to a deep ink-blue ground (oklch 0.19 0.014 265) with a warm off-white ink. The roles are identical: Ledger Ink becomes the light value so primary buttons keep their contrast, and Money Out / Money In lift in lightness to stay legible. Token NAMES never change between themes.",
+      "ground": "oklch(0.19 0.014 265)",
+      "ink": "oklch(0.955 0.008 90)",
+      "ledger-ink": "oklch(0.93 0.01 90)",
+      "paper": "oklch(0.19 0.014 265)",
+      "rule": "oklch(0.31 0.018 265)"
+    }
+  },
+  "components": [
+    {
+      "name": "Button Primary",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one action a view exists to perform. Used once per screen.",
+      "html": "<button class=\"ds-btn-primary\">Add transaction</button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; padding: 0.5rem 0.75rem; border: 1px solid transparent; border-radius: var(--radius); background: var(--primary); color: var(--primary-foreground); font-family: var(--font-ui); font-size: 0.875rem; font-weight: 500; line-height: 1.25rem; cursor: pointer; transition: opacity 150ms cubic-bezier(0.4, 0, 0.2, 1); } .ds-btn-primary:hover { opacity: 0.9; } .ds-btn-primary:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; } .ds-btn-primary:disabled { opacity: 0.45; pointer-events: none; }"
+    },
+    {
+      "name": "Button Quiet",
+      "kind": "button",
+      "refersTo": "button-quiet",
+      "description": "The default button. Paper fill on a Rule border; hover moves to Paper Tint.",
+      "html": "<button class=\"ds-btn-quiet\">Export CSV</button>",
+      "css": ".ds-btn-quiet { display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--background); color: var(--foreground); font-family: var(--font-ui); font-size: 0.875rem; font-weight: 500; line-height: 1.25rem; cursor: pointer; transition: background-color 150ms cubic-bezier(0.4, 0, 0.2, 1); } .ds-btn-quiet:hover { background: var(--muted); } .ds-btn-quiet:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; } .ds-btn-quiet:disabled { opacity: 0.45; pointer-events: none; }"
+    },
+    {
+      "name": "Button Danger",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "Destructive actions only. Paper fill, Alarm text, a 40%-strength Alarm border.",
+      "html": "<button class=\"ds-btn-danger\">Delete account</button>",
+      "css": ".ds-btn-danger { display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; padding: 0.5rem 0.75rem; border: 1px solid color-mix(in oklch, var(--destructive) 40%, transparent); border-radius: var(--radius); background: var(--background); color: var(--destructive); font-family: var(--font-ui); font-size: 0.875rem; font-weight: 500; line-height: 1.25rem; cursor: pointer; transition: background-color 150ms cubic-bezier(0.4, 0, 0.2, 1); } .ds-btn-danger:hover { background: color-mix(in oklch, var(--destructive) 10%, transparent); } .ds-btn-danger:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }"
+    },
+    {
+      "name": "Field",
+      "kind": "input",
+      "refersTo": "field",
+      "description": "A labelled input. The stroke is Rule Strong so an input reads differently from a divider; errors appear below in text, never as a red border.",
+      "html": "<div class=\"ds-field-wrap\"><label class=\"ds-label\" for=\"ds-amount\">Amount</label><input class=\"ds-field\" id=\"ds-amount\" value=\"−128.40\" /><p class=\"ds-hint\">Signed. Use a leading minus for money out.</p></div>",
+      "css": ".ds-field-wrap { display: block; } .ds-label { display: block; font-family: var(--font-ui); font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.14em; color: var(--muted-foreground); } .ds-field { display: block; width: 100%; margin-top: 0.375rem; padding: 0.5rem 0.625rem; border: 1px solid var(--input); border-radius: var(--radius); background: var(--background); color: var(--foreground); font-family: var(--font-ui); font-size: 0.875rem; line-height: 1.25rem; } .ds-field:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; } .ds-field:disabled { background: var(--muted); color: var(--muted-foreground); cursor: not-allowed; } .ds-hint { margin: 0.375rem 0 0; font-size: 0.75rem; line-height: 1.5rem; color: var(--muted-foreground); }"
+    },
+    {
+      "name": "Navigation Link",
+      "kind": "nav",
+      "refersTo": "nav-link",
+      "description": "Label typography, quiet at rest. The active item is marked by a 2px Ledger Ink underline — not a fill, a pill, or a weight change.",
+      "html": "<a class=\"ds-nav\" href=\"#\">Accounts</a><a class=\"ds-nav ds-nav-active\" href=\"#\">Transactions</a>",
+      "css": ".ds-nav { position: relative; padding: 0.25rem 0; font-family: var(--font-ui); font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.14em; color: var(--muted-foreground); text-decoration: none; transition: color 150ms cubic-bezier(0.4, 0, 0.2, 1); } .ds-nav:hover { color: var(--foreground); } .ds-nav:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; } .ds-nav-active { color: var(--foreground); } .ds-nav-active::after { content: \"\"; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--primary); }"
+    },
+    {
+      "name": "Masthead",
+      "kind": "nav",
+      "refersTo": "masthead",
+      "description": "The one piece of chrome every route shares. A band of Paper at 85% opacity with a backdrop blur, underlined by a 1px Rule.",
+      "html": "<header class=\"ds-masthead\"><div class=\"ds-masthead-inner\"><span class=\"ds-wordmark\">Life OS<span class=\"ds-wordmark-sub\">Ledger</span></span><nav class=\"ds-masthead-nav\"><a class=\"ds-nav\" href=\"#\">Overview</a><a class=\"ds-nav\" href=\"#\">Accounts</a><a class=\"ds-nav ds-nav-active\" href=\"#\">Transactions</a></nav></div></header>",
+      "css": ".ds-masthead { background: color-mix(in oklch, var(--background) 85%, transparent); border-bottom: 1px solid var(--border); backdrop-filter: blur(4px); } .ds-masthead-inner { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem 2rem; max-width: 64rem; margin: 0 auto; padding: 1rem 1.5rem; } .ds-wordmark { font-family: var(--font-display); font-size: 1.125rem; line-height: 1; letter-spacing: -0.025em; color: var(--foreground); } .ds-wordmark-sub { margin-left: 0.5rem; font-family: var(--font-ui); font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.18em; color: var(--muted-foreground); vertical-align: middle; } .ds-masthead-nav { display: flex; flex-wrap: wrap; gap: 0.25rem 1.5rem; }"
+    },
+    {
+      "name": "Panel",
+      "kind": "card",
+      "refersTo": "panel",
+      "description": "The only element permitted a shadow. Defined by its border and header rule, not by a different fill — a Panel is the same paper as the page beneath it.",
+      "html": "<section class=\"ds-panel\"><header class=\"ds-panel-head\"><h2 class=\"ds-panel-title\">Uncategorised</h2><p class=\"ds-panel-desc\">Four records the categoriser has not claimed.</p></header><div class=\"ds-panel-body\">Four entries netted from Rabobank, Revolut and Amex.</div></section>",
+      "css": ".ds-panel { border: 1px solid var(--border); border-radius: 0.4375rem; background: var(--background); box-shadow: 0 1px 0 0 oklch(0 0 0 / 0.02), 0 1px 3px 0 oklch(0.2 0.02 80 / 0.05); } .ds-panel-head { padding: 0.875rem 1.25rem; border-bottom: 1px solid var(--border); } .ds-panel-title { margin: 0; font-family: var(--font-display); font-size: 1.125rem; line-height: 1.4; letter-spacing: -0.025em; color: var(--foreground); } .ds-panel-desc { margin: 0.25rem 0 0; font-size: 0.8125rem; line-height: 1.625; color: var(--muted-foreground); } .ds-panel-body { padding: 1.25rem; font-size: 0.875rem; line-height: 1.625; color: var(--foreground); }"
+    },
+    {
+      "name": "List Row",
+      "kind": "card",
+      "refersTo": "list-row",
+      "description": "One continuous surface divided by hairlines — never a stack of individually bordered rows, never a card. Three tracks: date, description, amount.",
+      "html": "<ul class=\"ds-rows\"><li class=\"ds-row\"><span class=\"ds-row-date\">23 Jun</span><span class=\"ds-row-desc\">ALBERT HEIJN 1234</span><span class=\"ds-row-amt ds-amt-out\">−&nbsp;128.40&nbsp;<span class=\"ds-amt-code\">EUR</span></span></li><li class=\"ds-row\"><span class=\"ds-row-date\">23 Jun</span><span class=\"ds-row-desc\">SALARY ACME BV</span><span class=\"ds-row-amt ds-amt-in\">+&nbsp;3.210.00&nbsp;<span class=\"ds-amt-code\">EUR</span></span></li></ul>",
+      "css": ".ds-rows { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--border); } .ds-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: baseline; gap: 0.25rem 1rem; padding: 0.875rem 1.25rem; border-bottom: 1px solid var(--border); transition: background-color 150ms cubic-bezier(0.4, 0, 0.2, 1); } .ds-row:hover { background: color-mix(in oklch, var(--muted) 70%, transparent); } .ds-row-date { font-family: var(--font-ui); font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.14em; color: var(--muted-foreground); white-space: nowrap; } .ds-row-desc { font-size: 0.875rem; line-height: 1.625; color: var(--foreground); overflow-wrap: anywhere; } .ds-row-amt { font-family: var(--font-mono); font-size: 0.875rem; font-variant-numeric: tabular-nums; white-space: nowrap; } .ds-amt-out { color: var(--money-out); } .ds-amt-in { color: var(--money-in); } .ds-amt-code { margin-left: 0.25rem; font-size: 0.75em; letter-spacing: 0.04em; opacity: 0.7; }"
+    },
+    {
+      "name": "Amount",
+      "kind": "custom",
+      "refersTo": "amount-out",
+      "description": "The signature component. Monospace with tabular figures, right-aligned, so a column aligns on the decimal and a flipped sign cannot hide. Direction is the sign glyph first, colour second — and a screen reader is told the direction in words.",
+      "html": "<span class=\"ds-amt ds-amt-out\"><span class=\"ds-sr\">money out </span>−&nbsp;128.40<span class=\"ds-amt-code\">EUR</span></span>",
+      "css": ".ds-amt { font-family: var(--font-mono); font-size: 0.875rem; font-variant-numeric: tabular-nums; white-space: nowrap; } .ds-amt-out { color: var(--money-out); } .ds-amt-in { color: var(--money-in); } .ds-amt-zero { color: var(--muted-foreground); } .ds-amt-code { margin-left: 0.25rem; font-size: 0.75em; letter-spacing: 0.04em; opacity: 0.7; } .ds-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }"
+    },
+    {
+      "name": "Notice",
+      "kind": "custom",
+      "refersTo": "notice",
+      "description": "Tone-framed message for error, warning and information. Tone is carried three times over — tint fill, tone-named Label, 1px frame — so it survives a monochrome print and a screen reader.",
+      "html": "<div class=\"ds-notice\"><p class=\"ds-notice-label\">Import refused</p><div class=\"ds-notice-body\">This statement has already been imported. 0 new transactions.</div></div>",
+      "css": ".ds-notice { padding: 0.75rem 1rem; border: 1px solid color-mix(in oklch, var(--money-out) 35%, transparent); border-radius: var(--radius); background: color-mix(in oklch, var(--money-out) 5%, transparent); } .ds-notice-label { margin: 0; font-family: var(--font-ui); font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.14em; color: var(--money-out); } .ds-notice-body { margin-top: 0.25rem; font-size: 0.8125rem; line-height: 1.625; white-space: pre-line; color: var(--foreground); }"
+    },
+    {
+      "name": "Empty State",
+      "kind": "custom",
+      "refersTo": "empty-state",
+      "description": "States honestly what is absent. LifeOS prefers saying 'no budgets defined' to drawing an illustration of an empty budget.",
+      "html": "<div class=\"ds-empty\"><p class=\"ds-empty-title\">No budgets defined.</p><p class=\"ds-empty-body\">A budget caps what a category may spend in a month. None has been set yet, so nothing here is being withheld from you.</p></div>",
+      "css": ".ds-empty { padding: 3rem 1.5rem; text-align: center; } .ds-empty-title { margin: 0; font-family: var(--font-display); font-size: 1.125rem; line-height: 1.4; letter-spacing: -0.025em; color: var(--foreground); } .ds-empty-body { max-width: 28rem; margin: 0.5rem auto 0; font-size: 0.8125rem; line-height: 1.625; color: var(--muted-foreground); }"
+    },
+    {
+      "name": "Status Chip",
+      "kind": "chip",
+      "refersTo": "status-chip",
+      "description": "Informational only, never clickable. Filter and selection use the segmented control instead.",
+      "html": "<span class=\"ds-chip\">Uncategorised</span>",
+      "css": ".ds-chip { display: inline-flex; align-items: center; padding: 0.25rem 0.625rem; border: 1px solid var(--border); border-radius: 0.3rem; background: var(--muted); font-family: var(--font-ui); font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; line-height: 1rem; color: var(--muted-foreground); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Confluence",
+    "overview": "LifeOS gathers money that lives in scattered places — a Rabobank current account, a Revolut balance, an Amex card statement, a PDF exported by hand — and nets all of it into one double-entry ledger whose balance rule is enforced by the database itself. The interface is that confluence made visible: several currents arriving at one page and resolving into a single, quiet, trustworthy statement. When a reader sees a transaction, they should be able to trust that five different ingestion paths and three different banks produced it and it still balances.\n\nThe world is warm and calm. The ground is warm off-white paper, not white and not grey; the ink is warm near-black, never pure black. Nothing on the page is louder than it needs to be. There is no gradient, no glass, no glow, no pill-shaped chrome, and no shadow that lifts a card off the surface. Restraint is not the absence of design here — restraint is the design.\n\nDepth comes from paper, not from elevation. Surfaces separate with a 1px hairline in a warm grey, the way a ruled ledger page separates a heading from its entries. The single shadow in the system is a whisper on the Panel: a zero-blur 1px top-light that reads as the cut edge of a sheet catching light, plus a 3px settle underneath. That is the entire vocabulary.",
+    "keyCharacteristics": [
+      "Warm paper ground, warm near-black ink, hairline rules instead of boxes.",
+      "Serif for anything that names a thing; platform sans for prose; monospace for money.",
+      "One accent — Ledger Ink — spent only on things you can act on.",
+      "Motion is a single authored moment: the page's blocks arrive in a short cascade.",
+      "Nothing is fetched at runtime. The app must run with the network switched off."
+    ],
+    "rules": [
+      {
+        "name": "The One Ink Rule",
+        "body": "Ledger Ink appears only on something the reader can act on — a button, a link, the active nav item, a focus ring. Never on a heading, a container, or a large area. If a screen is mostly ink-blue, the accent has stopped being an accent.",
+        "section": "colors"
+      },
+      {
+        "name": "The Sign First Rule",
+        "body": "The direction of money is carried by the sign glyph before it is carried by colour. Colour is the second signal, never the only one. This is why the Amount component renders a screen-reader-only 'money out'/'money in' — the minus is read aloud as a dash by some readers, and no one should have to infer direction from a hue.",
+        "section": "colors"
+      },
+      {
+        "name": "The Warm Neutral Rule",
+        "body": "Every neutral in this system carries hue 75–88. A pure grey, a pure black, or a blue-grey neutral breaks the paper illusion and makes the page feel like a generic admin panel.",
+        "section": "colors"
+      },
+      {
+        "name": "The Serif Names Rule",
+        "body": "The serif is used for things that have names — page titles, panel headings, the wordmark. Prose, labels and controls are sans. A paragraph set in the serif is a mistake, not a choice.",
+        "section": "typography"
+      },
+      {
+        "name": "The Mono Means Money Rule",
+        "body": "Monospace is reserved for figures that must align or be compared: amounts, dates in columns, quantities. It is never used to imply technicality, and never applied to running text.",
+        "section": "typography"
+      },
+      {
+        "name": "The Hairline Rule",
+        "body": "Separate two things with a 1px Rule, not with a shadow. A shadow that lifts a surface off the page breaks the paper illusion immediately, and is the single fastest way to make this system look like a generic admin panel.",
+        "section": "elevation"
+      },
+      {
+        "name": "The One Shadow Rule",
+        "body": "Panel is the only element permitted a shadow. Buttons, fields, list rows, chips and notices are flat. Do not add a second elevation tier.",
+        "section": "elevation"
+      },
+      {
+        "name": "The No Kicker Rule",
+        "body": "The page header carries no eyebrow above its h1. A kicker that only restates the heading's own words puts a second, quieter voice on the page, and the reader's eye lands on the quiet one. Anything worth labelling belongs in the body as data — a definition row, a field label, a status chip. This is a deliberate omission, not an unfinished one.",
+        "section": "typography"
+      },
+      {
+        "name": "Documented deviation — the display face is a system stack",
+        "body": "The serif resolves from the platform (Iowan Old Style → Palatino → Book Antiqua → Georgia) rather than being downloaded. Deliberate: the app runs with the network switched off as a proof of no telemetry, nothing is fetched at runtime, and the bundled-asset licence policy is unresolved. Revisit only if all three change.",
+        "section": "typography"
+      }
+    ],
+    "dos": [
+      "Do carry money direction with the sign glyph first and colour second, always.",
+      "Do set every amount in tabular monospace and right-align it, so columns align on the decimal.",
+      "Do separate surfaces with a 1px Rule; reach for the Paper Edge whisper only on Panel.",
+      "Do spend Ledger Ink only on things the reader can act on.",
+      "Do let the serif name things and the sans carry prose — never swap them.",
+      "Do honour prefers-reduced-motion by dropping the animation entirely, not by shortening it.",
+      "Do keep text selection, the caret, and scrollbars on the palette's own terms. They are the cheapest signal that a page was built rather than assembled, and the first thing that regresses when nobody is looking.",
+      "Do state honestly when a surface has no data behind it, the way the empty states already do.",
+      "Do keep every asset local: no runtime-fetched font, icon, or stylesheet. The app is designed to run with --network=none as a proof of no telemetry, and that is a product guarantee, not an accident."
+    ],
+    "donts": [
+      "Don't add a charting library, or design a chart, before an aggregation endpoint exists to feed it. Net-worth-over-time, spend-by-category and cashflow-by-period have no endpoint today; the arithmetic is correct but nothing exposes a series.",
+      "Don't put a chart on a page whose data comes from a stub endpoint. /review, /imports and /budgets currently have nothing behind them.",
+      "Don't introduce hard offset shadows, gradient text, glass or backdrop-blur as decoration. The only blur in the system is the masthead's, and it is doing a job.",
+      "Don't let colour be the sole carrier of meaning anywhere on the page.",
+      "Don't wrap a list in individually bordered rows or nest cards inside panels. One surface, hairline dividers.",
+      "Don't use colour alone to distinguish a filter chip's active and inactive states; the fill carries it.",
+      "Don't silently replace the system font stacks with a downloaded webfont without revisiting the offline guarantee first.",
+      "Don't invent numbers to fill an empty view. Empty states say what is missing."
+    ]
+  }
+}

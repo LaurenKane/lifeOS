@@ -15,16 +15,24 @@ import React from "react";
 import { amountParts } from "@/lib/money";
 import { cn } from "@/lib/utils";
 
+/** The page's one heading, in the display serif, with the prose that frames it
+ * and whatever single action the page exists to perform.
+ *
+ * There is deliberately no kicker above the `<h1>`. An eyebrow that only repeats
+ * the heading's own words — "Finance / Transactions" over "Transactions" — adds
+ * a second, smaller voice saying the thing the serif already names at full
+ * size, and the reader's eye lands on the quieter one. Anything genuinely worth
+ * labelling belongs in the page body as data: a definition row, a field label,
+ * a status chip. The `.eyebrow` utility survives for those.
+ */
 export const PageHeader: React.FC<{
-  eyebrow: string;
   title: string;
   description?: React.ReactNode;
   actions?: React.ReactNode;
-}> = ({ eyebrow, title, description, actions }) => (
+}> = ({ title, description, actions }) => (
   <div className="rise mb-8 flex flex-wrap items-end justify-between gap-x-8 gap-y-4">
     <div className="max-w-2xl">
-      <p className="eyebrow">{eyebrow}</p>
-      <h1 className="mt-1.5 font-display text-3xl leading-tight tracking-tight">{title}</h1>
+      <h1 className="font-display text-3xl leading-tight tracking-tight">{title}</h1>
       {description !== undefined && (
         <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{description}</p>
       )}
@@ -60,6 +68,11 @@ export const Panel: React.FC<{
   </section>
 );
 
+/** A notice's tone is carried three times over — the tint fill, the tone-named
+ * label, and the frame — so it survives a monochrome print and a screen reader.
+ * The frame is a 1px hairline like every other rule in the system; a 3px bar
+ * down one side was the loudest thing on the page and it said nothing the tint
+ * and the label did not already say. */
 const NOTICE_TONE = {
   error: {
     frame: "border-destructive/35 bg-destructive/[0.045]",
@@ -82,7 +95,7 @@ export const Notice: React.FC<{
 }> = ({ tone = "info", label, children }) => (
   <div
     role={tone === "error" ? "alert" : "status"}
-    className={cn("rounded-md border-l-[3px] px-4 py-3", NOTICE_TONE[tone].frame)}
+    className={cn("rounded-md border px-4 py-3", NOTICE_TONE[tone].frame)}
   >
     {label !== undefined && (
       <p className={cn("eyebrow", NOTICE_TONE[tone].label)}>{label}</p>

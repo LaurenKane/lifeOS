@@ -82,7 +82,6 @@ export const AccountsPage: React.FC = () => {
   return (
     <AppShell>
       <PageHeader
-        eyebrow="Finance / Accounts"
         title="Accounts"
         description={
           <>
@@ -117,7 +116,7 @@ export const AccountsPage: React.FC = () => {
               {accounts.map((account, index) => (
                 <li
                   key={account.id}
-                  className="rise grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-4 gap-y-1 px-5 py-3.5"
+                  className="rise-row grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-4 gap-y-1 px-5 py-3.5"
                   style={{ animationDelay: `${Math.min(index, 8) * 34}ms` }}
                 >
                   <div className="min-w-0">

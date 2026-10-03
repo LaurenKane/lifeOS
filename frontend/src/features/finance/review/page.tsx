@@ -12,7 +12,6 @@ export const ReviewPage: React.FC = () => {
   return (
     <AppShell>
       <PageHeader
-        eyebrow="Finance / Review"
         title="Review queue"
         description="Transactions the pipeline could not decide on by itself."
       />

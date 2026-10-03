@@ -54,7 +54,6 @@ export const Root: React.FC = () => {
   return (
     <AppShell>
       <PageHeader
-        eyebrow="Life OS / Ledger"
         title="Life OS — money, double-entry."
         description="A ledger with raw evidence and balanced journal entries behind it. Records are kept, not edited: a correction is a reversal."
       />
