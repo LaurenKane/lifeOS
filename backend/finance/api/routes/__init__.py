@@ -10,7 +10,14 @@ That is what keeps `finance.domain` pure and therefore testable.
 
 from __future__ import annotations
 
-from finance.api.routes import accounts, categories, imports, review, transactions
+from finance.api.routes import (
+    accounts,
+    analytics,
+    categories,
+    imports,
+    review,
+    transactions,
+)
 
 #: Every router, in mount order. `main` includes these in sequence.
 ROUTERS = (
@@ -19,6 +26,7 @@ ROUTERS = (
     imports.router,
     review.router,
     categories.router,
+    analytics.router,
 )
 
 __all__ = ["ROUTERS"]

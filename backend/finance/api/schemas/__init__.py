@@ -33,15 +33,18 @@ __all__ = [
     "AccountNature",
     "AccountSummary",
     "AccountType",
+    "CashflowBucket",
     "CategoryKind",
     "CategorySummary",
     "ImportRequest",
     "ImportSummary",
     "ManualTransactionRequest",
     "ManualTransactionUpdate",
+    "NetWorthPoint",
     "Provider",
     "ProviderInfo",
     "RawRecord",
+    "SpendByCategoryPoint",
     "TransactionStatus",
     "TransactionSummary",
 ]
@@ -245,3 +248,57 @@ class ImportRequest(_Write):  # type: ignore[explicit-any]
     account_id: int | None = None
     source_filename: str | None = None
     force: bool = False
+
+# ──────────────────────────────────────────────────────────────────────
+# Analytics response schemas
+# ──────────────────────────────────────────────────────────────────────
+#
+# Every amount below is an INTEGER count of EUR cents, never a decimal and
+# never a float. That is not a formatting preference: it is the only shape the
+# frontend can render (`ARCHITECTURE.md` §6), and a second money type on the
+# wire is a second place for rounding to disagree with the ledger.
+#
+# The sign is the ledger's own. A negative amount is money out, which is what
+# `Amount` already reads that way in the UI — so an expense arrives already
+# coloured, signed and labelled correctly, with no per-report convention to
+# learn.
+
+
+class NetWorthPoint(BaseModel):  # type: ignore[explicit-any]
+    """One day's net worth. Assets plus liabilities, in EUR cents."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    #: ISO 8601 `YYYY-MM-DD`.
+    date: str
+    #: Signed. Negative means the user owes more than they hold.
+    net_worth: int
+
+
+class SpendByCategoryPoint(BaseModel):  # type: ignore[explicit-any]
+    """One category's spend. Expenses are negative; income is positive."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    category_id: int
+    category_name: str
+    kind: CategoryKind
+    amount: int
+
+
+class CashflowBucket(BaseModel):  # type: ignore[explicit-any]
+    """One period's cash movement.
+
+    `income` and `expense` are both positive magnitudes — "€42 spent" reads
+    better than "-42" on a chart — while `net` keeps the sign, so a deficit is
+    negative. That asymmetry is deliberate and is the one place these three
+    schemas do not share a convention.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    #: `YYYY-MM-DD` for day, the Monday for week, `YYYY-MM` for month.
+    period: str
+    income: int
+    expense: int
+    net: int
