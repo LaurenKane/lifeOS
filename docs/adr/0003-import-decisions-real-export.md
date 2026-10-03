@@ -321,6 +321,9 @@ constraint on its contents. The parser already retains out-of-period rows; the d
   §3.2 `CR` marker, §3.3 both identities, §3.6 two products/two IBANs, §4 legend and continuity,
   §5.3 `Periode`, §5.5 free-text IBANs
 - `docs/adr/0002-import-provider-enum.md` — which import paths exist at all
+- `docs/adr/0007-imported-card-payment-is-a-transfer.md` — the sixth import decision, taken after
+  this one: a flagged card payment is a transfer with an asset contra-leg, so it must be dispatched
+  before the equity-only manual resolver rather than routed through it
 - `docs/ARCHITECTURE-PROPOSAL.md` §E (DDL), §G (dedup), §L (test strategy)
 - Beads `LifeOS-3pe` (this decision), `LifeOS-2` (the verification exercise),
   `LifeOS-hwv` / `LifeOS-nie` / `LifeOS-07m` / `LifeOS-hwv` (superseded into it)
