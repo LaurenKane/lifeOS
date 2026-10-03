@@ -19,7 +19,7 @@ import base64
 import datetime as dt
 import gzip
 from collections.abc import Sequence
-from typing import Annotated, Protocol
+from typing import Annotated, Final, Protocol
 
 from core.datetime import parse_date
 from core.money import Currency, Money
@@ -257,37 +257,58 @@ def _gzip_b64(payload: bytes) -> str:
     return base64.b64encode(gzip.compress(payload, mtime=0)).decode("ascii")
 
 
+#: The `raw_data` keys that carry a provider's SECOND date, in the order they
+#: are tried.
+#:
+#: `raw_posting_date` is the documented one and the only one Amex writes
+#: (`amex_pdf.py`, an ISO string). Rabobank writes its processing date under
+#: `processing_date` instead, in `DD-MM-YYYY`, and it differs from the booking
+#: date on 35 of the 37 rows of one real statement — so reading only the Amex key
+#: would leave the column NULL for every Rabobank row, which is the same silent
+#: loss as not having the column at all.
+#:
+#: Two keys rather than a per-provider table because the SECOND date is the same
+#: concept under both names. A provider that starts writing a third spelling
+#: belongs here, once.
+_POSTING_DATE_KEYS: Final[tuple[str, ...]] = ("raw_posting_date", "processing_date")
+
+
 def _posting_date(record: RawRecord) -> dt.date | None:
     """The provider's SECOND date, lifted out of `raw_data` and parsed.
 
     `raw_posting_date` differs from `raw_date` on 42 of the 121 rows in the real
     Amex statements, so collapsing them loses a real fact. It lives in `raw_data`
-    as a STRING (`amex_pdf.py` writes `post_date.isoformat()`), and the column is
-    a DATE — so it has to be parsed on the way in, or it is silently NULL.
+    as a STRING and the column is a DATE — so it has to be parsed on the way in, or
+    it is silently NULL. `parse_date` handles both the ISO form Amex writes and
+    the `DD-MM-YYYY` form Rabobank writes.
 
     A value that will not parse is None, not an exception: one malformed row in a
     7-year PDF must not abandon the other 4000, and the raw string is already
     preserved verbatim in `raw_data`.
+
+    A date equal to `raw_date` is still returned rather than collapsed to None. The
+    column records what the provider SAID, and "it said the same thing twice" is
+    not the same claim as "it said it once"; deciding otherwise here would make the
+    column a derived value rather than evidence.
     """
-    raw = record.raw_data.get("raw_posting_date")
-    if raw is None or isinstance(raw, bool):
-        return None
-    # `RawRecord.raw_data` is declared `str | int | float | bool | None`, so mypy
-    # narrows a `dt.date` out of that union as unreachable and `warn_unreachable`
-    # complains about the `return`. The declared type is narrower than what an
-    # adapter may actually put in a JSON object, and an adapter that put a real
-    # `date` there would otherwise have it stringified into `'2026-06-01'` — which
-    # `parse_date` happens to accept, but only by luck of the format.
-    #
-    # So the value is re-widened to `object` before the check rather than
-    # silenced, which makes the runtime behaviour the type describes.
-    wide: object = raw
-    if isinstance(wide, dt.date):
-        return wide
-    try:
-        return parse_date(str(wide))
-    except ValueError:
-        return None
+    for key in _POSTING_DATE_KEYS:
+        raw = record.raw_data.get(key)
+        if raw is None or isinstance(raw, bool):
+            continue
+        # `RawRecord.raw_data` is declared `str | int | float | bool | None`, so
+        # mypy narrows a `dt.date` out of that union as unreachable and
+        # `warn_unreachable` complains about the `return`. The declared type is
+        # narrower than what an adapter may actually put in a JSON object, so the
+        # value is re-widened to `object` before the check rather than the check
+        # being silenced — which makes the runtime behaviour the type describes.
+        wide: object = raw
+        if isinstance(wide, dt.date):
+            return wide
+        try:
+            return parse_date(str(wide))
+        except ValueError:
+            continue
+    return None
 
 
 def _money(record: RawRecord) -> Money:
@@ -451,14 +472,20 @@ def _persist(
     """
     reasons: list[str] = []
 
-    if account_id is not None:
-        # 404 rather than letting the first row's INSERT raise a
-        # ForeignKeyViolation as a 500. Checked once, BEFORE the batch opens, so a
-        # request for a nonexistent account leaves no batch behind at all.
-        if session.get(Account, account_id) is None:
+    # `session.begin()` is the FIRST statement. Not a style preference:
+    # `Session.get()` autobegins, and `begin()` refuses when a transaction is
+    # already in progress — so an account check placed before the block makes
+    # every write below it fail. See `finance.api.deps`, which is where this rule
+    # is written down.
+    with session.begin():
+        if account_id is not None and session.get(Account, account_id) is None:
+            # 404 rather than letting the first row's INSERT raise a
+            # ForeignKeyViolation as a 500. Before `open_import_batch`, so a
+            # request naming no real account leaves no batch behind at all — and
+            # the rollback of this block is what guarantees that, since the
+            # refusal is raised rather than caught.
             raise HTTPException(status_code=404, detail=f"No account {account_id}")
 
-    with session.begin():
         batch_id = open_import_batch(
             session,
             provider=result.provider,
@@ -487,13 +514,11 @@ def _persist(
         # Re-importing [K, K, L] therefore gives K->1, K->2, L->1 both times.
         ranks = _content_only_ranks(records)
 
-        stored_keys = _stored_occurrence_keys(session, _occurrence_keys(records))
+        keys = _occurrence_keys(records)
 
         for record, rank in zip(records, ranks, strict=True):
             money = _money(record)
 
-            # An unattributable row cannot be written at all — the column is NOT
-            # NULL — so it is a per-row failure, not a skip.
             # `source_record.account_id` is NOT NULL, so an unattributable row
             # cannot be written at all. That is a per-row failure, not a skip.
             row_account = record.account_id
@@ -591,7 +616,23 @@ def _persist(
                 continue
             created += 1
 
-        status = _batch_status(created=created, duplicated=duplicated, failed=failed)
+        # The consistency assertion, INSIDE this transaction. After the writes,
+        # deliberately: `count_existing_occurrences` is checked and NEVER used to
+        # compute an index — it cannot reproduce a global ROW_NUMBER while the
+        # probe is content-only (see `_stored_occurrence_keys` for what was
+        # simulated, and why the alternative is wrong). What it can do is prove
+        # the ranks this import used are reproducible from the rows now stored, so
+        # a future change to `_content_only_ranks` fails here instead of quietly
+        # renumbering every stored fingerprint.
+        #
+        # Inside the block rather than after it: the COMMIT is what makes these
+        # rows durable, and an assertion that ran afterwards would be reading a
+        # different connection's view of a batch that might never commit.
+        _assert_ranks_agree(records, ranks, _stored_occurrence_keys(session, keys))
+
+        status = _batch_status(
+            record_count=result.record_count, created=created, duplicated=duplicated
+        )
         stats: dict[str, object] = {
             "record_count": result.record_count,
             "created": created,
@@ -600,16 +641,6 @@ def _persist(
             "parse_failed": len(result.failed),
         }
         finish_import_batch(session, batch_id=batch_id, status=status, stats=stats)
-
-    # ── The consistency assertion, after the rows are in ──
-    #
-    # `count_existing_occurrences` is checked HERE and never used to compute an
-    # index. It cannot reproduce a global ROW_NUMBER while the probe is
-    # content-only: see `_stored_occurrence_keys` for why, and what was simulated.
-    # What it can do is prove the two agree about the file, so a future change to
-    # `_content_only_ranks` that breaks the correspondence fails here instead of
-    # quietly renumbering every stored fingerprint.
-    _assert_ranks_agree(records, ranks, stored_keys)
 
     return status, created, duplicated, failed, reasons
 
@@ -644,24 +675,28 @@ def _content_only_ranks(records: Sequence[RawRecord]) -> list[int]:
     return ranks
 
 
-def _batch_status(*, created: int, duplicated: int, failed: int) -> str:
+def _batch_status(*, record_count: int, created: int, duplicated: int) -> str:
     """What the batch status says about what PERSISTED.
 
     **Never `ImportResult.status`.** That is parse-derived: it says `completed`
     when the parser produced rows and reported no failures, which is exactly the
-    claim that a silently short statement must not make. A file of 40 rows where 39
+    claim a silently short statement must not make. A file of 40 rows where 39
     posted and one card payment was stored unposted is `partial`, whatever the
     adapter thought.
 
-    `failed` when nothing landed at all — a batch that created no rows and
-    recognised no duplicates recorded no work, and calling that `partial` would
-    understate it.
+    The test is `created + duplicated == record_count`, and nothing else. Notably
+    it is NOT "did anything get created": a re-import creates nothing, recognises
+    everything, and IS complete, because every row the file named is accounted for
+    in the ledger. Conversely a single unpostable row in an otherwise clean file is
+    `partial` even though that row was STORED — storing a row is not posting it,
+    and `partial` is what sends the user to look
+    (`docs/adr/0007-imported-card-payment-is-a-transfer.md`).
+
+    `failed` is left for the case that deserves it: a file that parsed to nothing.
     """
-    if created == 0 and duplicated == 0:
+    if record_count == 0:
         return "failed"
-    if failed:
-        return "partial"
-    return "completed"
+    return "completed" if created + duplicated == record_count else "partial"
 
 
 def _assert_ranks_agree(
