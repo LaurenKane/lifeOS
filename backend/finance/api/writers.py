@@ -56,7 +56,7 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Sequence
 from decimal import Decimal
-from typing import Final
+from typing import Final, Protocol
 
 from core.money import Currency, Money
 from sqlalchemy import func, select
@@ -72,6 +72,7 @@ from finance.domain.services.manual_posting import (
     CounterAccountUnresolvedError,
     ManualPostingError,
     PostingAccount,
+    PostingLeg,
     absorb_fx_residual,
     build_expense_legs,
     resolve_counter_account_by_id,
@@ -82,11 +83,14 @@ from finance.ingestion.fingerprint import compute_fingerprint
 from finance.public import TransactionStatus
 
 __all__ = [
+    "LegBuilder",
     "PostingRefused",
     "ReferenceNotFound",
+    "default_leg_builder",
     "finish_import_batch",
     "leg_count",
     "open_import_batch",
+    "resolve_contra_account",
     "write_posted_transaction",
     "write_unposted_transaction",
 ]
@@ -146,6 +150,51 @@ class PostingRefused(ValueError):  # noqa: N818
 BATCH_STATUSES: Final[frozenset[str]] = frozenset(
     {"pending", "processing", "completed", "failed", "partial"}
 )
+
+
+class LegBuilder(Protocol):
+    """The leg policy `write_posted_transaction` delegates its arithmetic to.
+
+    Typed as a protocol rather than as `Callable[..., tuple[PostingLeg, ...]]`
+    because the keyword arguments are the contract and a plain callable type would
+    erase them — which is precisely the part a caller has to get right.
+    """
+
+    def __call__(
+        self,
+        *,
+        funding_account: PostingAccount,
+        counter_account: PostingAccount,
+        amount: Money,
+        rate: Decimal,
+        counter_decimals: int | None = None,
+    ) -> Sequence[PostingLeg]: ...
+
+
+def default_leg_builder(
+    *,
+    funding_account: PostingAccount,
+    counter_account: PostingAccount,
+    amount: Money,
+    rate: Decimal,
+    counter_decimals: int | None = None,
+) -> Sequence[PostingLeg]:
+    """`absorb_fx_residual(build_expense_legs(...))` — the production policy.
+
+    The ONLY implementation of this arithmetic in the API. It is a named function
+    rather than an inline pair of calls so that "which legs get built" has one
+    name in this module, the same way `fingerprint` and `_fingerprint` are two
+    names for one rule.
+    """
+    return absorb_fx_residual(
+        build_expense_legs(
+            funding_account=funding_account,
+            counter_account=counter_account,
+            amount=amount,
+            rate=rate,
+            counter_decimals=counter_decimals,
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -210,10 +259,15 @@ def _require_currency(session: Session, code: str) -> CurrencyRow:
     return row
 
 
-def _resolve_counter_account(
+def resolve_contra_account(
     session: Session, *, requested_id: int | None
 ) -> PostingAccount:
     """The contra-account: the seeded system one, or the one the caller named.
+
+    Public because a caller needs it for something the writer cannot do: a manual
+    entry's `raw_data` records the account id that was ACTUALLY used, not the one
+    that was asked for. When no id is asked for, the default resolver picks by
+    name, so "None" would be a claim the entry does not back up.
 
     Raises:
         PostingRefused: with the resolver's own message, which names the account
@@ -465,6 +519,7 @@ def write_posted_transaction(
     occurrence_index: int = 1,
     provider_txn_id: str | None = None,
     status: TransactionStatus = TransactionStatus.POSTED,
+    leg_builder: LegBuilder | None = None,
 ) -> int:
     """Write one `source_record` and post it to the ledger. Return its id.
 
@@ -512,6 +567,12 @@ def write_posted_transaction(
             DELEGATES to `write_unposted_transaction` — the entry is never built,
             because a row the caller has already decided not to post must not go
             anywhere near the expense resolver.
+        leg_builder: The leg POLICY, injectable only so a caller can replace it.
+            Defaults to `default_leg_builder`, which is `absorb_fx_residual(
+            build_expense_legs(...))` — the same two functions, and the only
+            implementation of that arithmetic anywhere in the API. A caller that
+            substitutes something else is running a test, and says so in a comment
+            where it does it.
 
     Returns:
         The new `source_record` id.
@@ -545,7 +606,7 @@ def write_posted_transaction(
             "currency, so this is a mistake in the request, not a conversion."
         )
 
-    counter = _resolve_counter_account(session, requested_id=counter_account_id)
+    counter = resolve_contra_account(session, requested_id=counter_account_id)
     counter_currency = _require_currency(session, counter.currency)
 
     # The exponent comes from the TABLE. A `scaleb(2)` here would store JPY 1,234
@@ -554,22 +615,21 @@ def write_posted_transaction(
     currency = Currency(code=currency_row.code, decimals=currency_row.decimals)
     stored = Money(amount=amount.amount, currency=currency)
     rate = _base_rate(session, currency_row.code, booked_date)
+    build = default_leg_builder if leg_builder is None else leg_builder
 
     try:
-        legs = absorb_fx_residual(
-            build_expense_legs(
-                funding_account=PostingAccount(
-                    id=funding.id,
-                    name=funding.name,
-                    currency=funding.currency.strip(),
-                    account_nature=funding.account_nature,
-                    is_active=funding.is_active,
-                ),
-                counter_account=counter,
-                amount=stored,
-                rate=rate,
-                counter_decimals=counter_currency.decimals,
-            )
+        legs = build(
+            funding_account=PostingAccount(
+                id=funding.id,
+                name=funding.name,
+                currency=funding.currency.strip(),
+                account_nature=funding.account_nature,
+                is_active=funding.is_active,
+            ),
+            counter_account=counter,
+            amount=stored,
+            rate=rate,
+            counter_decimals=counter_currency.decimals,
         )
     except ManualPostingError as exc:
         raise PostingRefused(str(exc), reason=exc) from exc

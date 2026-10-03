@@ -7,12 +7,15 @@ creating one writes, in ONE transaction:
     2. a `journal_entry` and its two `journal_line` legs
     3. the `source_record`, already `status='posted'` and pointing at the entry
 
-The fingerprint is computed here rather than left blank, because a manual entry
-travels the same dedupe path as every imported row: the user who types the same
-transaction twice must get a conflict, not two rows. It goes through
-`compute_fingerprint` (hash-frozen) with the account scope rendered by
-`fingerprint_account_scope`, which is the one place the `int | None -> str`
-conversion lives. Never `str(None)`.
+**THE WRITER IS NOT HERE.** `_write_manual_transaction` below is a thin adapter
+over `finance.api.writers.write_posted_transaction`, and that is the point: a
+file import and a typed entry are the same fact, so they must not have two
+writers that can disagree about the counter-leg, the FX rate or the currency
+exponent. What stays here is what is specific to a typed request — the
+`raw_data` shape, the `manual` provider pair, and the mapping from the writer's
+`ReferenceNotFound`/`PostingRefused` to the status codes this router has always
+returned. Those are unchanged: 404 for a row that names nothing, 422 for a
+posting the domain rules refuse.
 
 **No parallel representation.** There is no in-memory list here any more. What a
 manual transaction IS, is what an imported transaction is: a raw record plus a
@@ -42,14 +45,12 @@ there is no file, so there is nothing to checksum and nothing to replay from.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import date
-from decimal import Decimal
 from typing import Annotated
 
 from core.money import Currency, Money
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi import status as http_status
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
@@ -60,24 +61,25 @@ from finance.api.schemas import (
     ManualTransactionUpdate,
     TransactionSummary,
 )
+from finance.api.writers import (
+    PostingRefused,
+    ReferenceNotFound,
+    finish_import_batch,
+    leg_count,
+    open_import_batch,
+    resolve_contra_account,
+    write_posted_transaction,
+)
 from finance.domain.models.accounts import Account
-from finance.domain.models.importer import ImportBatch, SourceRecord
+from finance.domain.models.importer import SourceRecord
 from finance.domain.models.ledger import JournalEntry, JournalLine
 from finance.domain.models.reference import Currency as CurrencyRow
-from finance.domain.models.reference import ExchangeRate
 from finance.domain.models.taxonomy import Category
 from finance.domain.services.manual_posting import (
-    BASE_CURRENCY,
-    CounterAccountUnresolvedError,
-    ManualPostingError,
-    PostingAccount,
+    PostingLeg,
     absorb_fx_residual,
     build_expense_legs,
-    resolve_counter_account_by_id,
-    resolve_default_counter_account,
 )
-from finance.ingestion.dedupe import fingerprint_account_scope
-from finance.ingestion.fingerprint import compute_fingerprint
 from finance.public import TransactionStatus
 
 router = APIRouter(tags=["finance"], prefix="/transactions")
@@ -110,40 +112,18 @@ MANUAL_IMPORT_METHOD = "manual"
 # ---------------------------------------------------------------------------
 
 
-def _all_accounts(session: Session) -> list[PostingAccount]:
-    """Every account as the posting rules see it.
-
-    All of them, including inactive ones, because the error message a caller
-    gets for "no counter-leg" is only actionable if it can say "it exists but is
-    inactive" rather than "not found".
-    """
-    rows: Sequence[tuple[int, str, str, str, bool]] = session.execute(
-        select(
-            Account.id,
-            Account.name,
-            Account.currency,
-            Account.account_nature,
-            Account.is_active,
-        ).order_by(Account.id)
-    ).all()
-    return [
-        PostingAccount(
-            id=account_id,
-            name=name,
-            currency=currency.strip(),
-            account_nature=nature,
-            is_active=is_active,
-        )
-        for account_id, name, currency, nature, is_active in rows
-    ]
-
-
 def _require_account(session: Session, account_id: int) -> Account:
     """Load one account, or refuse.
 
     404 rather than 500: a request naming an account that does not exist is a
     client mistake, and the `ForeignKeyViolation` the INSERT would raise is an
     unhandled database error that says less about it.
+
+    `finance.api.writers._require_account` raises the same refusal for the write
+    path; the two are separate on purpose. This one still raises
+    `HTTPException`, because the callers here are handlers whose contract is a
+    status code, and it is called BEFORE the transaction block so the read is a
+    plain lookup rather than a write-path refusal.
     """
     account = session.get(Account, account_id)
     if account is None:
@@ -189,63 +169,6 @@ def _require_category(session: Session, category_id: int) -> Category:
     return category
 
 
-def _resolve_counter_account(
-    session: Session, *, requested_id: int | None
-) -> PostingAccount:
-    """The contra-account for this entry: the seeded system one, or the named one.
-
-    Raises:
-        HTTPException: 422 with the resolver's own message, which names the
-            expected account. A refusal that says only "no counter-leg" is not
-            actionable; one that says "no ACTIVE account named 'Expenses
-            (system)'" is.
-    """
-    accounts = _all_accounts(session)
-    try:
-        if requested_id is None:
-            return resolve_default_counter_account(accounts)
-        return resolve_counter_account_by_id(accounts, requested_id)
-    except CounterAccountUnresolvedError as exc:
-        raise HTTPException(
-            status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
-        ) from exc
-
-
-def _base_rate(session: Session, currency_code: str, on_date: date) -> Decimal:
-    """Units of `currency_code` per 1 EUR on `on_date`, from `exchange_rate`.
-
-    `amount_base` is EUR by definition, so a transaction in another currency
-    cannot be stated without a rate, and inventing one would be worse than
-    refusing. `1.0` for EUR itself, which needs no row.
-
-    The convention (`base_currency` is always EUR, `rate` is units of quote per
-    one base) is the migration's own and the ECB's: EUR 1 buys 160 JPY. The same
-    figure is written to `journal_line.exchange_rate`, so for the leg that
-    carries it `amount_base * exchange_rate == amount / 10**decimals` and a
-    conversion is re-derivable from stored data alone.
-    """
-    if currency_code == BASE_CURRENCY:
-        return Decimal(1)
-    rate: Decimal | None = session.scalar(
-        select(ExchangeRate.rate).where(
-            ExchangeRate.date == on_date,
-            ExchangeRate.base_currency == BASE_CURRENCY,
-            ExchangeRate.quote_currency == currency_code,
-        )
-    )
-    if rate is None:
-        raise HTTPException(
-            status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=(
-                f"No {BASE_CURRENCY}/{currency_code} exchange rate for "
-                f"{on_date.isoformat()}. A transaction in a currency other than "
-                f"{BASE_CURRENCY} cannot be stated without one, and the ledger "
-                "does not guess a rate."
-            ),
-        )
-    return rate
-
-
 # ---------------------------------------------------------------------------
 # Writing a manual transaction
 # ---------------------------------------------------------------------------
@@ -280,26 +203,44 @@ def _raw_payload(
     }
 
 
-def _fingerprint_bytes(
-    request: ManualTransactionRequest, *, account_id: int, amount_minor: int
-) -> bytes:
-    """The stored 32 raw bytes of this row's Tier-3 fingerprint.
+def _legs(**kwargs: object) -> Sequence[PostingLeg]:
+    """The leg policy for a manual posting, named so a test can replace it.
 
-    `compute_fingerprint` is SHA-256 hash-pinned and returns a 64-character hex
-    digest; the column is BYTEA, so the digest is stored as its 32 raw bytes —
-    half the index width, and byte-for-byte reproducible on replay. `.hex()` on
-    the way out is the exact inverse, which is what `TransactionSummary.fingerprint`
-    hands to a client.
+    This looks like indirection for its own sake and is not.
+    `TestAnUnbalancedEntryIsRefusedByTheDatabase` sabotages
+    `build_expense_legs` and `absorb_fx_residual` ON THIS MODULE, and it is the
+    only proof the database would actually catch a bad entry. When this router
+    stopped owning the posting (see `finance.api.writers`), that sabotage had
+    somewhere to land or the test would go green while checking a perfectly
+    balanced entry — which is worse than no test at all, and its own docstring
+    says so.
+
+    So the POLICY is injected and the DEFAULT is the same two functions the
+    writer calls itself: same arithmetic, same behaviour. Only the seam is new,
+    and it exists so that "the writer builds legs" and "which legs get built" are
+    two names rather than one.
+
+    Both are resolved from module globals at CALL time, which is what makes
+    `monkeypatch.setattr` on this module reach them.
     """
-    digest = compute_fingerprint(
-        raw_description=request.description,
-        raw_amount=amount_minor,
-        raw_currency=request.currency,
-        raw_date=request.booked_date.isoformat(),
-        account_id=fingerprint_account_scope(account_id),
-        occurrence_index=1,
-    )
-    return bytes.fromhex(digest)
+    return absorb_fx_residual(build_expense_legs(**kwargs))  # type: ignore[arg-type]
+
+
+def _resolved_counter_account_id(session: Session, requested_id: int | None) -> int:
+    """The contra-account's id, resolved here so `raw_data` can record it.
+
+    `_raw_payload` stores the id that was actually used rather than the id that
+    was asked for, because when no id is asked for there IS no other answer to
+    store: the default resolver picks by name, and recording "None" in the raw
+    payload would make a replay unable to reproduce the fingerprint.
+
+    Resolving twice — once here, once inside the writer — is deliberate. The
+    writer owns the refusal (it raises `PostingRefused`, not `HTTPException`),
+    and this call happens BEFORE the batch is opened so a request that will be
+    refused leaves no batch behind at all. The cost is one extra indexed scan;
+    the alternative is a payload whose value can disagree with the entry.
+    """
+    return resolve_contra_account(session, requested_id=requested_id).id
 
 
 def _write_manual_transaction(
@@ -308,22 +249,30 @@ def _write_manual_transaction(
 ) -> int:
     """Write one manual transaction and return its `source_record` id.
 
+    A THIN ADAPTER over `finance.api.writers`, and deliberately so. What this
+    function still owns is everything that is specific to a typed entry: the
+    `raw_data` shape (the exact request, so a replay can reproduce the
+    fingerprint without this API), the `manual` provider pair, and turning the
+    writer's two refusals into the status codes this router has always returned.
+    What it no longer owns is the posting itself — the counter-leg convention,
+    the FX rate, the currency exponent and the fingerprint all live in the
+    writer now, which is what makes "exactly one writer" true rather than
+    aspirational.
+
     The caller owns the transaction: this function never begins or commits one,
     so a background path can reuse it without a second, differently-committed
     write.
-
-    Two flushes, one commit. The entry needs its id before the lines can
-    reference it and the source record needs the entry's id; flushing between
-    them is what makes that possible inside one transaction.
     """
     funding = _require_account(session, request.account_id)
     currency_row = _require_currency(session, request.currency)
 
-    # The account/currency agreement is checked HERE, before the rate lookup, and
-    # the order is load-bearing: asking for a EUR rate on a EUR/USD transaction is
-    # a legitimate question with a legitimate answer, so looking the rate up first
-    # would report a missing rate when the actual mistake is that the transaction
-    # is in the wrong currency for its own account. The specific error first.
+    # The account/currency agreement is checked HERE, before anything is written,
+    # and the order is load-bearing: asking for a EUR rate on a EUR/USD transaction
+    # is a legitimate question with a legitimate answer, so looking the rate up
+    # first would report a missing rate when the actual mistake is that the
+    # transaction is in the wrong currency for its own account. The specific error
+    # first. (The writer checks it again, against the amount it was handed, because
+    # a writer with two callers cannot trust a caller to have checked.)
     if funding.currency.strip() != request.currency:
         raise HTTPException(
             status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -335,83 +284,56 @@ def _write_manual_transaction(
             ),
         )
 
-    counter = _resolve_counter_account(session, requested_id=request.counter_account_id)
-    counter_currency = _require_currency(session, counter.currency)
-
     # `currency.decimals` is the only authority for the exponent. A `scaleb(2)`
     # here would store JPY 1,234 as 123,400: off by a factor of 100.
     currency = Currency(code=currency_row.code, decimals=currency_row.decimals)
     amount = Money.from_decimal(request.amount_decimal, currency)
-    rate = _base_rate(session, request.currency, request.booked_date)
 
     try:
-        legs = absorb_fx_residual(
-            build_expense_legs(
-                funding_account=PostingAccount(
-                    id=funding.id,
-                    name=funding.name,
-                    currency=funding.currency.strip(),
-                    account_nature=funding.account_nature,
-                    is_active=funding.is_active,
-                ),
-                counter_account=counter,
-                amount=amount,
-                rate=rate,
-                counter_decimals=counter_currency.decimals,
-            )
+        # Resolved INSIDE the try so a refusal maps to a 422 here rather than
+        # escaping as a bare ValueError, and after the account/currency check so
+        # the more specific error still wins.
+        counter_account_id = _resolved_counter_account_id(
+            session, request.counter_account_id
         )
-    except ManualPostingError as exc:
+        batch_id = open_import_batch(
+            session,
+            provider=MANUAL_PROVIDER,
+            import_method=MANUAL_IMPORT_METHOD,
+            status="completed",
+            account_id=funding.id,
+            stats={"manual_entry": 1},
+        )
+        record_id = write_posted_transaction(
+            session,
+            batch_id=batch_id,
+            funding_account_id=funding.id,
+            description=request.description,
+            amount=amount,
+            booked_date=request.booked_date,
+            raw_data=_raw_payload(request, counter_account_id=counter_account_id),
+            counter_account_id=counter_account_id,
+            occurrence_index=1,
+            leg_builder=_legs,
+        )
+        finish_import_batch(
+            session,
+            batch_id=batch_id,
+            status="completed",
+            stats={
+                "manual_entry": 1,
+                "journal_entry_legs": leg_count(session, source_record_id=record_id),
+            },
+        )
+    except ReferenceNotFound as exc:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+    except PostingRefused as exc:
         raise HTTPException(
             status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
         ) from exc
-
-    batch = ImportBatch(
-        account_id=funding.id,
-        provider=MANUAL_PROVIDER,
-        import_method=MANUAL_IMPORT_METHOD,
-        status="completed",
-        stats={"manual_entry": 1, "journal_entry_legs": len(legs)},
-        completed_at=func.now(),
-    )
-    session.add(batch)
-
-    entry = JournalEntry(
-        entry_date=request.booked_date,
-        description=request.description,
-    )
-    session.add(entry)
-    session.flush()
-
-    for leg in legs:
-        session.add(
-            JournalLine(
-                journal_entry_id=entry.id,
-                account_id=leg.account_id,
-                amount=leg.amount,
-                currency=leg.currency,
-                amount_base=leg.amount_base,
-                exchange_rate=leg.exchange_rate,
-                sort_order=leg.sort_order,
-            )
-        )
-
-    record = SourceRecord(
-        import_batch_id=batch.id,
-        account_id=funding.id,
-        fingerprint=_fingerprint_bytes(
-            request, account_id=funding.id, amount_minor=amount.amount
-        ),
-        raw_data=_raw_payload(request, counter_account_id=counter.id),
-        raw_description=request.description,
-        raw_amount=amount.amount,
-        raw_currency=currency_row.code,
-        raw_date=request.booked_date,
-        status=TransactionStatus.POSTED.value,
-        journal_entry_id=entry.id,
-    )
-    session.add(record)
-    session.flush()
-    return record.id
+    return record_id
 
 
 # ---------------------------------------------------------------------------
