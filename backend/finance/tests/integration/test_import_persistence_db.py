@@ -322,6 +322,17 @@ def _scalar(engine: Engine, statement: str, **params: object) -> object:
         return connection.execute(text(statement), params).scalar_one()
 
 
+def _as_str(value: object) -> str:
+    """A string, with `CHAR` padding removed.
+
+    `raw_currency` is `CHAR(3)`, which PostgreSQL blank-pads. The padding is not
+    part of an ISO 4217 code, so every currency read goes through here rather than
+    through `.strip()` at each call site — one place to forget it.
+    """
+    assert isinstance(value, str), f"expected a text column, got {value!r}"
+    return value.strip()
+
+
 def _as_int(value: object) -> int:
     """An int, or a loud failure.
 
@@ -507,7 +518,11 @@ class TestARealStatementBecomesRealRows:
             )
             assert key in by_key, f"row {record.description!r} did not round-trip"
             row = by_key[key]
-            assert row[1].strip() == record.currency, row
+            # `raw_currency` is `CHAR(3)` and PostgreSQL blank-pads what it returns,
+            # and the padding is not part of an ISO 4217 code. `_as_str` is the
+            # helper for that, for the same reason `test_manual_transactions_db.py`
+            # has one.
+            assert _as_str(row[1]) == record.currency, row
 
         # And the second date survived as a DATE rather than as NULL — asserted
         # as a COUNT, not as `>= 0`, because `>= 0` is true of an empty result and
