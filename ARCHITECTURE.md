@@ -50,7 +50,7 @@ life-os/
 │   └── tests/                  # cross-module only
 ├── frontend/
 │   ├── src/
-│   │   ├── components/         # shadcn/ui
+│   │   ├── components/         # AppShell + hand-rolled primitives (no UI library)
 │   │   ├── features/finance/   # transactions, review, imports, budgets
 │   │   ├── lib/
 │   │   └── routes/
