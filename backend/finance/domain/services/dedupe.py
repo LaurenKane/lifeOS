@@ -30,9 +30,9 @@ __all__ = ["DedupeCandidate", "DedupeResult", "dedupe_check", "find_duplicate"]
 class DedupeCandidate:
     """A stored row that an incoming transaction might duplicate."""
 
-    account_id: str
+    account_id: int | None
     fingerprint: str
-    source_record_id: str
+    source_record_id: int
     journal_entry_id: int | None = None
 
     @property
@@ -71,7 +71,7 @@ class DedupeResult:
 def find_duplicate(
     candidates: Iterable[DedupeCandidate],
     *,
-    account_id: str,
+    account_id: int | None,
     fingerprint: str,
 ) -> DedupeCandidate | None:
     """The first candidate on the same account with this fingerprint.
@@ -87,7 +87,7 @@ def find_duplicate(
 
 def dedupe_check(
     *,
-    account_id: str,
+    account_id: int | None,
     fingerprint: str,
     candidates: Iterable[DedupeCandidate] = (),
     occurrence_index: int = 1,

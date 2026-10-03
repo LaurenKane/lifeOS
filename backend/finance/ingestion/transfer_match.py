@@ -44,8 +44,8 @@ __all__ = [
 class TransferCandidate:
     """A journal line as the pipeline sees it, ready for the domain rule."""
 
-    entry_id: str
-    account_id: str
+    entry_id: int
+    account_id: int
     amount_minor: int
     currency: str
     booked_date: dt.date
@@ -94,10 +94,10 @@ def find_transfer_matches(
     )
 
     matches: list[TransferMatch] = []
-    claimed: set[str] = set()
+    claimed: set[int] = set()
     for outbound in outbound_legs:
         best: TransferMatch | None = None
-        best_inbound: str | None = None
+        best_inbound: int | None = None
         for inbound in inbound_legs:
             if inbound.entry_id in claimed:
                 continue
@@ -123,7 +123,7 @@ def unmatched_transfer_legs(
     transfer whose other leg has not arrived yet, or spending. Guessing which is
     exactly what the review queue is for.
     """
-    used: set[str] = set()
+    used: set[int] = set()
     for match in find_transfer_matches(list(candidates)):
         used.add(match.outbound)
         used.add(match.inbound)

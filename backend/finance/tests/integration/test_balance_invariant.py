@@ -44,7 +44,8 @@ from finance.ingestion.adapters import AmexPdfAdapter
 from finance.ingestion.adapters.base import ImportResult
 from finance.public import RawRecord
 
-ACCOUNT_ID: Final = "acct-test-balance-invariant"
+# Invented, and shaped like the BIGSERIAL M1 hands out. No real account id.
+ACCOUNT_ID: Final = 1001
 
 
 class AccountType(StrEnum):

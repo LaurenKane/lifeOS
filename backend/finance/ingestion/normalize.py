@@ -82,9 +82,13 @@ class NormalizedRecord:
     `raw_amount` is minor units and signed under the project convention:
     negative is a debit. `provider_txn_id` stays None for Amex, which supplies
     no stable ID — that is exactly why Tier 3 exists.
+
+    `account_id` is None when the row is not yet attributed to an account. It
+    was `""` before, which read as an id and compared equal to every other
+    unattributed row.
     """
 
-    account_id: str
+    account_id: int | None
     description: str
     amount: Money
     booked_date: dt.date
@@ -232,7 +236,7 @@ def normalize_description(description: str | None) -> str:
 
 def normalize_record(
     *,
-    account_id: str,
+    account_id: int | None,
     description: str | None,
     amount: str | Decimal | int,
     currency_code: str,

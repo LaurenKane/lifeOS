@@ -52,7 +52,7 @@ __all__ = [
 class PendingCategory:
     """A row queued for manual review."""
 
-    record_id: str
+    record_id: int
     raw_description: str
     amount_minor: int
     currency: str
@@ -64,7 +64,7 @@ class PendingCategory:
 class CategorizationBatchResult:
     """What happened across one import batch."""
 
-    categorized: dict[str, CategorizeResult] = field(default_factory=dict)
+    categorized: dict[int, CategorizeResult] = field(default_factory=dict)
     pending_review: list[PendingCategory] = field(default_factory=list)
 
     @property
@@ -72,7 +72,7 @@ class CategorizationBatchResult:
         return len(self.categorized)
 
     @property
-    def auto_categorized(self) -> list[str]:
+    def auto_categorized(self) -> list[int]:
         """Record IDs resolved confidently enough not to interrupt anyone."""
         return [
             record_id
@@ -132,7 +132,7 @@ def categorize_batch(
         A `CategorizationBatchResult`. Records that could not be categorized are
         in `pending_review`, not dropped.
     """
-    categorized: dict[str, CategorizeResult] = {}
+    categorized: dict[int, CategorizeResult] = {}
     pending: list[PendingCategory] = []
 
     for record in records:

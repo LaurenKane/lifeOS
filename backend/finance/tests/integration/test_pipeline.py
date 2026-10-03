@@ -24,6 +24,7 @@ from finance.ingestion.adapters import AmexPdfAdapter
 from finance.ingestion.dedupe import (
     ExistingFingerprint,
     assign_occurrence_indices,
+    fingerprint_account_scope,
     lookup_fingerprint,
 )
 from finance.ingestion.fingerprint import compute_fingerprint, normalize_description
@@ -37,7 +38,7 @@ from finance.tests.fixtures import (
 
 
 def _ingest(
-    lines: list[str], account_id: str = ACCOUNT_ID
+    lines: list[str], account_id: int = ACCOUNT_ID
 ) -> tuple[list[NormalizedRecord], list[int]]:
     """Adapter -> RawRecords -> NormalizedRecords -> occurrence indices."""
     parsed = AmexPdfAdapter(text_extractor=lambda _payload: lines).parse(
@@ -71,11 +72,11 @@ class TestReimportIsANoOp:
                     raw_amount=record.amount.amount,
                     raw_currency=record.amount.currency.code,
                     raw_date=record.booked_date.isoformat(),
-                    account_id=record.account_id,
+                    account_id=fingerprint_account_scope(record.account_id),
                     occurrence_index=index,
                 ),
                 account_id=record.account_id,
-                source_record_id=f"sr-{position}",
+                source_record_id=position,
                 journal_entry_id=position,
             )
             for position, (record, index) in enumerate(
@@ -131,11 +132,11 @@ class TestReimportIsANoOp:
                     raw_amount=heijn[0][0].amount.amount,
                     raw_currency=heijn[0][0].amount.currency.code,
                     raw_date=heijn[0][0].booked_date.isoformat(),
-                    account_id=heijn[0][0].account_id,
+                    account_id=fingerprint_account_scope(heijn[0][0].account_id),
                     occurrence_index=1,
                 ),
                 account_id=heijn[0][0].account_id,
-                source_record_id="sr-1",
+                source_record_id=5001,
             )
         ]
         resolver = IdentityResolver()
@@ -185,14 +186,14 @@ class TestReimportIsANoOp:
                 raw_amount=record_a.amount.amount,
                 raw_currency=record_a.amount.currency.code,
                 raw_date=record_a.booked_date.isoformat(),
-                account_id=record_a.account_id,
+                account_id=fingerprint_account_scope(record_a.account_id),
                 occurrence_index=index,
             ) == compute_fingerprint(
                 raw_description=record_b.description,
                 raw_amount=record_b.amount.amount,
                 raw_currency=record_b.amount.currency.code,
                 raw_date=record_b.booked_date.isoformat(),
-                account_id=record_b.account_id,
+                account_id=fingerprint_account_scope(record_b.account_id),
                 occurrence_index=index,
             )
 
@@ -225,11 +226,11 @@ class TestCrossBatchOverlap:
                     raw_amount=-1234,
                     raw_currency="EUR",
                     raw_date="2026-03-14",
-                    account_id=ACCOUNT_ID,
+                    account_id=fingerprint_account_scope(ACCOUNT_ID),
                     occurrence_index=1,
                 ),
                 account_id=ACCOUNT_ID,
-                source_record_id="from-pdf",
+                source_record_id=5001,
                 journal_entry_id=1,
             )
         ]
@@ -245,7 +246,7 @@ class TestCrossBatchOverlap:
             stored_fingerprints=earlier_stored,
         )
         assert decision.is_duplicate
-        assert decision.source_record_id == "from-pdf"
+        assert decision.source_record_id == 5001
         assert norm("ALBERT HEIJN 1234") == norm("albert  heijn  1234")
 
 
@@ -272,7 +273,7 @@ class TestPendingThenBooked:
             merchant_alias_id=7,
             candidates=[
                 Candidate(
-                    source_record_id="sr-pending",
+                    source_record_id=5001,
                     account_id=ACCOUNT_ID,
                     amount_minor=-850,
                     booked_date=dt.date(2026, 3, 15),
@@ -286,7 +287,7 @@ class TestPendingThenBooked:
         assert decision.tier == 2
         assert decision.is_duplicate
         assert decision.journal_entry_id == 42
-        assert decision.source_record_id == "sr-pending"
+        assert decision.source_record_id == 5001
 
     def test_a_vague_pair_is_queued_not_merged(self) -> None:
         """The bias, end to end.
@@ -303,7 +304,7 @@ class TestPendingThenBooked:
             booked_date=dt.date(2026, 3, 15),
             candidates=[
                 Candidate(
-                    source_record_id="sr-other",
+                    source_record_id=5002,
                     account_id=ACCOUNT_ID,
                     amount_minor=-850,
                     booked_date=dt.date(2026, 3, 15),
@@ -330,13 +331,13 @@ class TestUnnormalisedDuplicate:
             raw_amount=-850,
             raw_currency="EUR",
             raw_date="2026-03-14",
-            account_id=ACCOUNT_ID,
+            account_id=fingerprint_account_scope(ACCOUNT_ID),
             occurrence_index=1,
         )
         stored = ExistingFingerprint(
             fingerprint=fingerprint,
             account_id=ACCOUNT_ID,
-            source_record_id="sr-imported-only",
+            source_record_id=5001,
             journal_entry_id=None,
         )
         decision = IdentityResolver().resolve(
@@ -349,7 +350,7 @@ class TestUnnormalisedDuplicate:
             stored_fingerprints=[stored],
         )
         assert decision.is_duplicate
-        assert decision.source_record_id == "sr-imported-only"
+        assert decision.source_record_id == 5001
         # No canonical entry yet, which is not the same as "not a duplicate".
         assert decision.journal_entry_id is None
 
@@ -367,19 +368,19 @@ class TestCrossAccountSafety:
             raw_amount=-1234,
             raw_currency="EUR",
             raw_date="2026-03-14",
-            account_id="acc-a",
+            account_id=fingerprint_account_scope(1001),
             occurrence_index=1,
         )
         stored = [
             ExistingFingerprint(
                 fingerprint=fingerprint,
-                account_id="acc-a",
-                source_record_id="sr-a",
+                account_id=1001,
+                source_record_id=5001,
                 journal_entry_id=1,
             )
         ]
         decision = IdentityResolver().resolve(
-            account_id="acc-b",
+            account_id=2002,
             description="Albert Heijn 1234",
             amount_minor=-1234,
             currency="EUR",
@@ -395,20 +396,20 @@ class TestCrossAccountSafety:
             raw_amount=-1234,
             raw_currency="EUR",
             raw_date="2026-03-14",
-            account_id="acc-a",
+            account_id=fingerprint_account_scope(1001),
             occurrence_index=1,
         )
         stored = [
             ExistingFingerprint(
                 fingerprint=fingerprint,
-                account_id="acc-a",
-                source_record_id="sr-a",
+                account_id=1001,
+                source_record_id=5001,
             )
         ]
         assert (
             lookup_fingerprint(
                 existing=stored,
-                account_id="acc-a",
+                account_id=1001,
                 raw_description="Albert Heijn 1234",
                 raw_amount=-1234,
                 raw_currency="EUR",
@@ -419,7 +420,7 @@ class TestCrossAccountSafety:
         assert (
             lookup_fingerprint(
                 existing=stored,
-                account_id="acc-b",
+                account_id=2002,
                 raw_description="Albert Heijn 1234",
                 raw_amount=-1234,
                 raw_currency="EUR",
@@ -496,7 +497,7 @@ def test_replay_reproduces_the_same_fingerprint(occurrence_index: int) -> None:
         raw_amount=record.amount.amount,
         raw_currency=record.amount.currency.code,
         raw_date=record.booked_date.isoformat(),
-        account_id=record.account_id,
+        account_id=fingerprint_account_scope(record.account_id),
         occurrence_index=occurrence_index,
     )
     # Replay re-normalises from the preserved raw description.
@@ -505,7 +506,7 @@ def test_replay_reproduces_the_same_fingerprint(occurrence_index: int) -> None:
         raw_amount=int(record.raw_data["amount_minor"]),  # type: ignore[arg-type]
         raw_currency=record.amount.currency.code,
         raw_date=record.booked_date.isoformat(),
-        account_id=record.account_id,
+        account_id=fingerprint_account_scope(record.account_id),
         occurrence_index=occurrence_index,
     )
     assert replayed == original

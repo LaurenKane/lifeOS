@@ -15,6 +15,13 @@ What may not:
 
 Every schema is frozen. A consumer cannot mutate a shared response object, and
 cannot accidentally build one and hand it to a writer.
+
+Identifier types. Every ledger/record identifier below is an `int`, because the
+tables hand them out as `BIGSERIAL` and typing them `str` would be a fiction M1
+cannot honour: a `str` id is either coerced at every boundary or compared against
+one and silently never matches. A non-id identifier — a fingerprint, an ISO 4217
+code, a provider's own reference — stays `str`, and so does anything that is
+genuinely optional, which is `int | None` rather than a `""` sentinel.
 """
 
 from __future__ import annotations
@@ -112,7 +119,7 @@ class _ReadOnly(BaseModel):  # type: ignore[explicit-any]
 class AccountSummary(_ReadOnly):  # type: ignore[explicit-any]
     """An account as other modules see it. No credentials, no provider IDs."""
 
-    id: str
+    id: int
     name: str
     currency: str
     account_type: AccountType
@@ -130,8 +137,8 @@ class TransactionSummary(_ReadOnly):  # type: ignore[explicit-any]
     purpose, so a failed batch can be inspected and retried.
     """
 
-    id: str
-    account_id: str
+    id: int
+    account_id: int
     fingerprint: str
     raw_description: str
     raw_amount: int
@@ -173,7 +180,7 @@ class DedupeOutcome(_ReadOnly):  # type: ignore[explicit-any]
 
     is_duplicate: bool
     tier: int
-    duplicate_of: str | None = None
+    duplicate_of: int | None = None
     confidence: float = 0.0
     needs_review: bool = False
 
@@ -181,8 +188,8 @@ class DedupeOutcome(_ReadOnly):  # type: ignore[explicit-any]
 class TransferLink(_ReadOnly):  # type: ignore[explicit-any]
     """A matched pair of journal lines, both sides of the same movement."""
 
-    outbound_entry_id: str
-    inbound_entry_id: str
+    outbound_entry_id: int
+    inbound_entry_id: int
     match_method: str
     confidence: float
 
@@ -194,9 +201,14 @@ class RawRecord(_ReadOnly):  # type: ignore[explicit-any]
     point (ARCHITECTURE-PROPOSAL.md section C). Only the IdentityResolver is
     provider-aware. `raw_data` is the exact row as received and is immutable
     forever — the `raw_data_immutable` invariant.
+
+    `account_id` is None when the row has not been attributed to an account
+    yet. It used to be `""` for exactly that case, which was a sentinel
+    pretending to be a value: an empty string is a legal `str` id, and every
+    consumer then had to decide for itself whether it meant "unknown".
     """
 
-    account_id: str
+    account_id: int | None = None
     description: str
     amount_minor: int
     currency: str
@@ -233,7 +245,7 @@ class ITransferMatcher(Protocol):
     "guess and merge".
     """
 
-    def match(self, outbound_id: str, inbound_id: str) -> TransferLink | None:
+    def match(self, outbound_id: int, inbound_id: int) -> TransferLink | None:
         """Return the link if these two lines are a transfer pair, else None."""
         ...
 

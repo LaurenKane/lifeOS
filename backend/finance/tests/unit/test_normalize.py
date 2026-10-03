@@ -181,7 +181,7 @@ class TestDescription:
 class TestNormalizeRecord:
     def test_full_record(self) -> None:
         record = normalize_record(
-            account_id="acc-1",
+            account_id=1,
             description="  Jumbo 4321  REF:1 ",
             amount="-8.50",
             currency_code="eur",
@@ -190,7 +190,7 @@ class TestNormalizeRecord:
             provider_txn_id="  tx-1 ",
             line_number=7,
         )
-        assert record.account_id == "acc-1"
+        assert record.account_id == 1
         assert record.description == "Jumbo 4321"
         assert record.amount.amount == -850
         assert record.amount.currency.code == "EUR"
@@ -202,7 +202,7 @@ class TestNormalizeRecord:
 
     def test_credit_is_not_a_debit(self) -> None:
         record = normalize_record(
-            account_id="acc-1",
+            account_id=1,
             description="Salary",
             amount="300000",
             currency_code="EUR",
@@ -213,7 +213,7 @@ class TestNormalizeRecord:
 
     def test_value_date_is_optional(self) -> None:
         record = normalize_record(
-            account_id="acc-1",
+            account_id=1,
             description="Jumbo",
             amount=-100,
             currency_code="EUR",
@@ -229,7 +229,7 @@ class TestNormalizeRecord:
         stripped.
         """
         record = normalize_record(
-            account_id="acc-1",
+            account_id=1,
             description="  Jumbo  4321  ",
             amount="-8.50",
             currency_code="EUR",
@@ -242,7 +242,7 @@ class TestNormalizeRecord:
         """An adapter that has the original row keeps it; normalisation adds to
         the mapping rather than replacing it."""
         record = normalize_record(
-            account_id="acc-1",
+            account_id=1,
             description="Jumbo",
             amount=-850,
             currency_code="EUR",
@@ -261,7 +261,7 @@ class TestNormalizeRecord:
         queue.
         """
         record = normalize_record(
-            account_id="acc-1",
+            account_id=1,
             description=None,
             amount=-100,
             currency_code="EUR",
@@ -272,7 +272,7 @@ class TestNormalizeRecord:
     def test_bad_date_raises(self) -> None:
         with pytest.raises(ValueError, match="Cannot parse date"):
             normalize_record(
-                account_id="acc-1",
+                account_id=1,
                 description="Jumbo",
                 amount=-100,
                 currency_code="EUR",

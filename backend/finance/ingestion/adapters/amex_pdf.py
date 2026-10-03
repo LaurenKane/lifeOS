@@ -186,7 +186,7 @@ class AmexPdfAdapter(ImportAdapter):
     def parse(
         self,
         payload: bytes,
-        account_id: str = "",
+        account_id: int | None = None,
         filename: str | None = None,
     ) -> ImportResult:
         """Extract the text, then parse each transaction row.
@@ -216,7 +216,7 @@ class AmexPdfAdapter(ImportAdapter):
 
 
 def iter_transactions(
-    lines: list[str], *, account_id: str, first_line: int = 1
+    lines: list[str], *, account_id: int | None, first_line: int = 1
 ) -> list[RawRecord | AdapterParseError]:
     """Parse transaction rows out of statement text.
 
@@ -229,7 +229,8 @@ def iter_transactions(
 
     Args:
         lines: Extracted text lines.
-        account_id: The account to attribute rows to; a PDF names none.
+        account_id: The account to attribute rows to; a PDF names none, so this
+            is None unless the caller already resolved one.
         first_line: Line number of `lines[0]`, for stable indices across a page
             boundary in the caller.
 
@@ -333,7 +334,9 @@ def _to_minor(text: str) -> int:
     return int(s)
 
 
-def _finish(pending: _PendingRow, account_id: str) -> RawRecord | AdapterParseError:
+def _finish(
+    pending: _PendingRow, account_id: int | None
+) -> RawRecord | AdapterParseError:
     """Turn a pending row into a record, or explain why it cannot be one."""
     description = pending.description_source.strip()
     if not pending.amount_text:

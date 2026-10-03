@@ -75,7 +75,7 @@ class RevolutCsvAdapter(ImportAdapter):
     def parse(
         self,
         payload: bytes,
-        account_id: str = "",
+        account_id: int | None = None,
         filename: str | None = None,
     ) -> ImportResult:
         """Parse the whole export, skipping non-transaction row types."""
@@ -105,7 +105,7 @@ class RevolutCsvAdapter(ImportAdapter):
         return result
 
     def _parse_row(
-        self, row: dict[str, str | None], line_number: int, account_id: str
+        self, row: dict[str, str | None], line_number: int, account_id: int | None
     ) -> RawRecord | None:
         """One CSV row to a RawRecord, or None when the row is skipped."""
         if not any((value or "").strip() for value in row.values()):

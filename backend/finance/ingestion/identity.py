@@ -32,7 +32,11 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from decimal import Decimal
 
-from finance.ingestion.dedupe import ExistingFingerprint, lookup_fingerprint
+from finance.ingestion.dedupe import (
+    ExistingFingerprint,
+    fingerprint_account_scope,
+    lookup_fingerprint,
+)
 from finance.ingestion.fingerprint import compute_fingerprint, normalize_description
 
 __all__ = [
@@ -66,8 +70,8 @@ DATE_WINDOW_LATER = dt.timedelta(days=3)
 class Candidate:
     """A stored row being considered as the counterpart of an incoming one."""
 
-    source_record_id: str
-    account_id: str
+    source_record_id: int
+    account_id: int | None
     amount_minor: int
     booked_date: dt.date
     description: str
@@ -97,7 +101,7 @@ class IdentityDecision:
 
     is_duplicate: bool
     tier: int
-    source_record_id: str | None = None
+    source_record_id: int | None = None
     journal_entry_id: int | None = None
     confidence: float = 0.0
     needs_review: bool = False
@@ -134,7 +138,7 @@ def trigram_similarity(left: str, right: str) -> Decimal:
 def _tier_2_candidates(
     amount_minor: int,
     booked_date: dt.date,
-    account_id: str,
+    account_id: int | None,
     currency: str,
     candidates: Iterable[Candidate],
 ) -> list[Candidate]:
@@ -225,7 +229,7 @@ class IdentityResolver:
     def resolve(
         self,
         *,
-        account_id: str,
+        account_id: int | None,
         description: str,
         amount_minor: int,
         currency: str,
@@ -233,14 +237,15 @@ class IdentityResolver:
         provider_txn_id: str | None = None,
         merchant_alias_id: int | None = None,
         occurrence_index: int = 1,
-        known_txn_ids: Iterable[tuple[str, str]] = (),
+        known_txn_ids: Iterable[tuple[int | None, str]] = (),
         candidates: Iterable[Candidate] = (),
         stored_fingerprints: Iterable[ExistingFingerprint] = (),
     ) -> IdentityDecision:
         """Run the tiers in order and return the first decisive answer.
 
         Args:
-            account_id: Scope key for every tier.
+            account_id: Scope key for every tier. None means the row is not
+                attributed to an account yet.
             description: The raw provider description.
             amount_minor: Signed minor units. Never a float.
             currency: ISO 4217 code.
@@ -261,7 +266,10 @@ class IdentityResolver:
             raw_amount=amount_minor,
             raw_currency=currency,
             raw_date=booked_date.isoformat(),
-            account_id=account_id,
+            # The pinned function takes a str and never coerces, and str(None)
+            # would put "None" in the scope key. See
+            # `dedupe.fingerprint_account_scope`.
+            account_id=fingerprint_account_scope(account_id),
             occurrence_index=occurrence_index,
         )
 
@@ -301,9 +309,9 @@ class IdentityResolver:
     def _tier_1(
         self,
         *,
-        account_id: str,
+        account_id: int | None,
         provider_txn_id: str | None,
-        known_txn_ids: Iterable[tuple[str, str]],
+        known_txn_ids: Iterable[tuple[int | None, str]],
         fingerprint: str,
     ) -> IdentityDecision | None:
         """Exact provider-ID match. API providers only."""
@@ -324,7 +332,7 @@ class IdentityResolver:
     def _tier_2(
         self,
         *,
-        account_id: str,
+        account_id: int | None,
         description: str,
         amount_minor: int,
         currency: str,
@@ -386,7 +394,7 @@ class IdentityResolver:
     def _tier_3(
         self,
         *,
-        account_id: str,
+        account_id: int | None,
         description: str,
         amount_minor: int,
         currency: str,

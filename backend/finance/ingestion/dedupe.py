@@ -35,8 +35,32 @@ __all__ = [
     "OccurrenceKey",
     "assign_occurrence_indices",
     "count_existing_occurrences",
+    "fingerprint_account_scope",
     "lookup_fingerprint",
 ]
+
+
+def fingerprint_account_scope(account_id: int | None) -> str:
+    """Render an account id as the string the fingerprint scope key expects.
+
+    `fingerprint.compute_fingerprint` is SHA-256 hash-pinned and joins its
+    parts with `"|"` and no coercion, so it only accepts a `str`. Every caller
+    holding an `int` id has to convert here, in exactly one place.
+
+    An unresolved account is `""`, NOT `str(None)`. `"None"` would be a real,
+    stable-looking scope key shared by every unattributed row in the database,
+    so two unrelated purchases from different unknown accounts would
+    fingerprint-match and one would be silently swallowed as a duplicate.
+    `""` keeps them in one bucket too, but that bucket is the honest "we do not
+    know which account this is yet" bucket rather than a fabricated id.
+
+    Args:
+        account_id: A resolved account id, or None.
+
+    Returns:
+        The decimal account id as a string, or `""` when unresolved.
+    """
+    return "" if account_id is None else str(account_id)
 
 
 @dataclass(frozen=True, order=True)
@@ -46,9 +70,14 @@ class OccurrenceKey:
     Two rows differing only in `occurrence_index` are the same purchase seen
     twice. Two rows differing in any other component are different purchases.
     Ordered so a set or sorted() of keys is deterministic.
+
+    `account_id` is Optional, and it is the first field, so `<` on two keys with
+    DIFFERENT accounts raises TypeError rather than answering. That is fine
+    because nothing sorts across accounts: grouping uses equality, and the
+    ordering exists to make ordering *within* one account reproducible.
     """
 
-    account_id: str
+    account_id: int | None
     normalized_description: str
     amount_minor: int
     currency: str
@@ -76,8 +105,8 @@ class ExistingFingerprint:
     """
 
     fingerprint: str
-    account_id: str
-    source_record_id: str
+    account_id: int | None
+    source_record_id: int
     journal_entry_id: int | None = None
 
 
@@ -132,7 +161,7 @@ def count_existing_occurrences(
 def lookup_fingerprint(
     *,
     existing: Iterable[ExistingFingerprint],
-    account_id: str,
+    account_id: int | None,
     raw_description: str,
     raw_amount: int,
     raw_currency: str,
@@ -155,7 +184,7 @@ def lookup_fingerprint(
         raw_amount=raw_amount,
         raw_currency=raw_currency,
         raw_date=raw_date,
-        account_id=account_id,
+        account_id=fingerprint_account_scope(account_id),
         occurrence_index=occurrence_index,
     )
     for candidate in existing:
