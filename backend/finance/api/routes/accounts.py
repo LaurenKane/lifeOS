@@ -59,6 +59,7 @@ def _to_summary(account: Account) -> AccountSummary:
         is_active=account.is_active,
         is_hidden=account.is_hidden,
         sort_order=account.sort_order,
+        system_role=account.system_role,
     )
 
 
@@ -99,6 +100,10 @@ def create_account(
     choosing the same one produce a conflict that looks like a duplicate
     account rather than a collision.
 
+    `system_role` designates a canonical system-purpose account. The only value
+    accepted today is 'system_expense', and it is optional and explicit: the role
+    is never inferred from the account's name.
+
     Raises:
         HTTPException: 422 for an unknown currency, or for an account_type /
             account_nature the schema does not allow.
@@ -128,6 +133,7 @@ def create_account(
         sort_order=request.sort_order,
         is_active=request.is_active,
         is_hidden=request.is_hidden,
+        system_role=request.system_role,
     )
     # The currency check is INSIDE the transaction block, and that is not a
     # style preference: `Session.get()` autobegins a transaction, so a lookup

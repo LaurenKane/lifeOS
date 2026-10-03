@@ -31,8 +31,8 @@ The question this module answers is only ever: **which account is the counter?**
 The convention
 --------------
 
-**The counter-leg is a seeded account of nature `equity`, named exactly
-`SYSTEM_EXPENSE_ACCOUNT_NAME`.** It is resolved by that exact name, among active
+**The counter-leg is a designated account of nature `equity`, carrying
+`SYSTEM_EXPENSE_ACCOUNT_ROLE`.** It is resolved by that role, among active
 accounts, and nothing else is ever substituted for it:
 
 * **Why `equity`.** It is the third of the three natures, and it is the only one
@@ -42,14 +42,15 @@ accounts, and nothing else is ever substituted for it:
   semantically — it would make a sandwich look like money moving between the
   user's own accounts, which is the single most misleading thing this ledger can
   report.
-* **Why the exact name, not "the first equity account".** "The first one" is a
-  guess that silently succeeds today and mis-posts tomorrow, when the user adds
-  their own equity account. An exact name is a contract: it either resolves to
-  one row or it raises.
+* **Why the role, not the name or "the first equity account".** A name is a
+  human-editable label, not an identity: renaming the account would break every
+  posting that matched on it. "The first equity account" is a guess that silently
+  succeeds today and mis-posts tomorrow, when the user adds their own equity
+  account. A role is a contract: it either resolves to one row or it raises.
 * **Why it raises instead of falling back.** A silently mis-posted expense is far
   worse than a refused one. Every failure mode here raises
-  `CounterAccountUnresolvedError` with the expected name in the message, so the
-  caller is told exactly what to create.
+  `CounterAccountUnresolvedError` with the expected role in the message, so the
+  caller is told exactly what to designate.
 * **Why `account_type` is `cash`.** The CHECK on `finance.account.account_type`
   is closed and contains no "expense" or "equity" value, so the seeded row has
   to name *something* from that list. `cash` is the least-committal member: it is
@@ -108,6 +109,7 @@ __all__ = [
     "BASE_SCALE",
     "SYSTEM_EXPENSE_ACCOUNT_NAME",
     "SYSTEM_EXPENSE_ACCOUNT_NATURE",
+    "SYSTEM_EXPENSE_ACCOUNT_ROLE",
     "SYSTEM_EXPENSE_ACCOUNT_TYPE",
     "CounterAccountUnresolvedError",
     "ManualPostingError",
@@ -143,6 +145,11 @@ SYSTEM_EXPENSE_ACCOUNT_NAME: Final[str] = "Expenses (system)"
 #: The nature the counter-leg account MUST have. Checked, not assumed.
 SYSTEM_EXPENSE_ACCOUNT_NATURE: Final[str] = "equity"
 
+#: The role that designates THE system expense account. Checked, not assumed;
+#: an account's name is a human-editable label and must never be used as an
+#: identity.
+SYSTEM_EXPENSE_ACCOUNT_ROLE: Final[str] = "system_expense"
+
 #: The `account_type` the seeded row carries. The vocabulary is closed and has
 #: no expense member; see the module docstring for why this one.
 SYSTEM_EXPENSE_ACCOUNT_TYPE: Final[str] = "cash"
@@ -161,9 +168,9 @@ class ManualPostingError(ValueError):
 class CounterAccountUnresolvedError(ManualPostingError):
     """The counter-leg account could not be identified. Never guessed.
 
-    Carries the expected name and what was actually found, because "no equity
-    account" is not actionable and "no ACTIVE account named 'Expenses (system)'"
-    is.
+    Carries the expected role and what was actually found, because "no equity
+    account" is not actionable and "no account is designated as the system
+    expense account" is.
     """
 
 
@@ -186,10 +193,15 @@ class PostingAccount:
     currency: str
     account_nature: str
     is_active: bool = True
+    system_role: str | None = None
 
     @property
     def is_equity(self) -> bool:
         return self.account_nature == SYSTEM_EXPENSE_ACCOUNT_NATURE
+
+    @property
+    def is_system_expense(self) -> bool:
+        return self.system_role == SYSTEM_EXPENSE_ACCOUNT_ROLE
 
 
 @dataclass(frozen=True)
@@ -222,56 +234,61 @@ class PostingLeg:
 
 def resolve_default_counter_account(
     accounts: Sequence[PostingAccount],
-    *,
-    name: str = SYSTEM_EXPENSE_ACCOUNT_NAME,
 ) -> PostingAccount:
-    """Find THE counter-leg account: the active account with exactly `name`.
+    """Find THE counter-leg account: the active account with `system_role`.
+
+    The counter-leg is identified by the immutable role column, not by the
+    human-editable account name. A renamed account keeps the role and keeps
+    being selected; an account that merely happens to share the old magic name
+    is NOT selected.
 
     Args:
         accounts: Every candidate. The caller passes all of them, active and
             not, so the error message can distinguish "no such account" from
             "it exists but is deactivated" — two very different mistakes.
-        name: The exact, case-sensitive name to look for.
 
     Returns:
-        The one matching account.
+        The one account that carries `SYSTEM_EXPENSE_ACCOUNT_ROLE`.
 
     Raises:
-        CounterAccountUnresolvedError: If there is no such account, if it is
-            inactive, if its nature is not `equity`, or if MORE THAN ONE account
-            answers to the name. The last case matters as much as the first: two
-            rows with the same name is a half-finished setup, and picking one
-            would be a coin flip that decides where the user's money goes.
+        CounterAccountUnresolvedError: If no account holds the role, if the
+            designated account is inactive, if its nature is not `equity`, or if
+            MORE THAN ONE account carries the role. The database partial unique
+            index prevents the last case in production, but this module does not
+            trust the database to enforce its own invariants.
     """
-    matches = [account for account in accounts if account.name == name]
+    role = SYSTEM_EXPENSE_ACCOUNT_ROLE
+    matches = [account for account in accounts if account.system_role == role]
     if not matches:
         raise CounterAccountUnresolvedError(
-            f"No account named {name!r} exists, so there is nowhere to book the "
-            "other side of a manual transaction. Create exactly one account with "
-            f"name={name!r}, account_type={SYSTEM_EXPENSE_ACCOUNT_TYPE!r} and "
-            f"account_nature={SYSTEM_EXPENSE_ACCOUNT_NATURE!r}, or pass "
+            "No account is designated as the system expense account, so there is "
+            "nowhere to book the other side of a manual transaction. Designate "
+            "exactly one account with "
+            f"system_role={role!r}, account_type={SYSTEM_EXPENSE_ACCOUNT_TYPE!r} "
+            f"and account_nature={SYSTEM_EXPENSE_ACCOUNT_NATURE!r}, or pass "
             "counter_account_id explicitly."
         )
 
     active = [account for account in matches if account.is_active]
     if not active:
         raise CounterAccountUnresolvedError(
-            f"Account {name!r} (id={matches[0].id}) exists but is not active, so "
-            "it cannot receive the counter-leg. Activate it, or pass "
-            "counter_account_id explicitly."
+            f"Account {matches[0].name!r} (id={matches[0].id}) is designated as "
+            "the system expense account but is not active, so it cannot receive "
+            "the counter-leg. Activate it, or pass counter_account_id explicitly."
         )
     if len(active) > 1:
         ids = sorted(account.id for account in active)
         raise CounterAccountUnresolvedError(
-            f"{len(active)} active accounts are named {name!r} (ids={ids}). The "
-            "counter-leg is not guessed: keep exactly one, or pass "
-            "counter_account_id explicitly."
+            f"{len(active)} active accounts are designated as the system expense "
+            f"account (ids={ids}). The counter-leg is not guessed: keep exactly "
+            "one, or pass counter_account_id explicitly."
         )
 
     account = active[0]
     if not account.is_equity:
         raise CounterAccountUnresolvedError(
-            f"Account {name!r} (id={account.id}) has nature "
+            f"Account {account.name!r} (id={account.id}) is designated as the "
+            "system expense account but has nature "
             f"{account.account_nature!r}; the counter-leg of an expense must be "
             f"{SYSTEM_EXPENSE_ACCOUNT_NATURE!r}."
         )

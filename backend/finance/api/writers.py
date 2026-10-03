@@ -211,13 +211,14 @@ def _all_accounts(session: Session) -> list[PostingAccount]:
     scan, so this is deliberately not cached across rows: a cache would be a
     second source of truth about which accounts exist, invalidated by nobody.
     """
-    rows: Sequence[tuple[int, str, str, str, bool]] = session.execute(
+    rows: Sequence[tuple[int, str, str, str, bool, str | None]] = session.execute(
         select(
             Account.id,
             Account.name,
             Account.currency,
             Account.account_nature,
             Account.is_active,
+            Account.system_role,
         ).order_by(Account.id)
     ).all()
     return [
@@ -227,8 +228,9 @@ def _all_accounts(session: Session) -> list[PostingAccount]:
             currency=currency.strip(),
             account_nature=nature,
             is_active=is_active,
+            system_role=system_role,
         )
-        for account_id, name, currency, nature, is_active in rows
+        for account_id, name, currency, nature, is_active, system_role in rows
     ]
 
 
@@ -262,18 +264,18 @@ def _require_currency(session: Session, code: str) -> CurrencyRow:
 def resolve_contra_account(
     session: Session, *, requested_id: int | None
 ) -> PostingAccount:
-    """The contra-account: the seeded system one, or the one the caller named.
+    """The contra-account: the designated system one, or the one the caller named.
 
     Public because a caller needs it for something the writer cannot do: a manual
     entry's `raw_data` records the account id that was ACTUALLY used, not the one
     that was asked for. When no id is asked for, the default resolver picks by
-    name, so "None" would be a claim the entry does not back up.
+    role, so "None" would be a claim the entry does not back up.
 
     Raises:
-        PostingRefused: with the resolver's own message, which names the account
+        PostingRefused: with the resolver's own message, which names the role
             that was expected. A refusal that says only "no counter-leg" is not
-            actionable; one that says "no ACTIVE account named 'Expenses
-            (system)'" is.
+            actionable; one that says "no account is designated as the system
+            expense account" is.
     """
     accounts = _all_accounts(session)
     try:

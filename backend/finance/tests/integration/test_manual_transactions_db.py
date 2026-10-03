@@ -193,8 +193,9 @@ def seeded(engine: Engine) -> dict[str, int]:
                 connection.execute(
                     text(
                         "INSERT INTO finance.account"
-                        " (name, account_type, account_nature, currency)"
-                        " VALUES (:name, 'cash', 'equity', 'EUR') RETURNING id"
+                        " (name, account_type, account_nature, currency, system_role)"
+                        " VALUES (:name, 'cash', 'equity', 'EUR', 'system_expense')"
+                        " RETURNING id"
                     ),
                     {"name": SYSTEM_EXPENSE_ACCOUNT_NAME},
                 ).scalar_one()
@@ -739,11 +740,11 @@ class TestTheCounterLegIsResolvedOrRefused:
     def test_a_missing_counter_account_fails_loudly_and_writes_nothing(
         self, client: TestClient, engine: Engine
     ) -> None:
-        """No system expense account → 422 naming the account, and an empty ledger.
+        """No designated system expense account → 422 naming the role, empty ledger.
 
         The message is asserted because "could not resolve the counter-leg" is
-        not actionable and "no account named 'Expenses (system)' exists, create
-        one with…" is. A silent fallback here would be the worst possible
+        not actionable and "no account is designated as the system expense
+        account" is. A silent fallback here would be the worst possible
         behaviour, so the test also asserts the ledger is still empty.
         """
         with engine.connect() as connection:
@@ -768,8 +769,8 @@ class TestTheCounterLegIsResolvedOrRefused:
         response = client.post("/api/v1/transactions", json=_payload(checking))
         assert response.status_code == 422
         detail = response.json()["detail"]
-        assert SYSTEM_EXPENSE_ACCOUNT_NAME in detail
-        assert "create" in detail.lower()
+        assert "system expense account" in detail.lower()
+        assert "designate" in detail.lower()
 
         assert _scalar(engine, "SELECT count(*) FROM finance.source_record") == 0
         assert _scalar(engine, "SELECT count(*) FROM finance.journal_entry") == 0
@@ -799,32 +800,62 @@ class TestTheCounterLegIsResolvedOrRefused:
         assert "not active" in response.json()["detail"]
         assert _scalar(engine, "SELECT count(*) FROM finance.source_record") == 0
 
-    def test_two_counter_accounts_with_the_same_name_are_refused(
+    def test_the_role_not_the_name_selects_the_counter_account(
         self, client: TestClient, engine: Engine, seeded: dict[str, int]
     ) -> None:
-        """A coin flip must not decide where the user's money goes.
+        """An account that merely shares the old magic name is NOT selected.
 
-        `resolve_default_counter_account` raises on more than one match rather
-        than taking the first. This is the case the M0 stub could not have had,
-        and it is the one that turns a setup mistake into a silent mis-posting.
+        The old resolver matched on `name == SYSTEM_EXPENSE_ACCOUNT_NAME`. The
+        new resolver matches on `system_role == 'system_expense'`. An ordinary
+        account carrying the legacy name but no role is ignored.
         """
         with engine.connect() as connection:
             with connection.begin():
-                connection.execute(
-                    text(
-                        "INSERT INTO finance.account"
-                        " (name, account_type, account_nature, currency)"
-                        " VALUES (:name, 'cash', 'equity', 'EUR')"
-                    ),
-                    {"name": SYSTEM_EXPENSE_ACCOUNT_NAME},
+                decoy = int(
+                    connection.execute(
+                        text(
+                            "INSERT INTO finance.account"
+                            " (name, account_type, account_nature, currency)"
+                            " VALUES (:name, 'cash', 'equity', 'EUR') RETURNING id"
+                        ),
+                        {"name": SYSTEM_EXPENSE_ACCOUNT_NAME},
+                    ).scalar_one()
                 )
 
         response = client.post(
             "/api/v1/transactions", json=_payload(seeded["checking"])
         )
-        assert response.status_code == 422
-        assert "not guessed" in response.json()["detail"]
-        assert _scalar(engine, "SELECT count(*) FROM finance.source_record") == 0
+        assert response.status_code == 201, response.text
+        entry_id = int(response.json()["journal_entry_id"])
+        by_account = _legs_by_account(engine, entry_id)
+        assert seeded["counter"] in by_account
+        assert decoy not in by_account
+
+    def test_renaming_the_designated_account_still_selects_it(
+        self, client: TestClient, engine: Engine, seeded: dict[str, int]
+    ) -> None:
+        """The role is the identity; the name is a human-editable label.
+
+        Renaming the designated account in the database must not break posting:
+        the resolver still finds the same account id.
+        """
+        with engine.connect() as connection:
+            with connection.begin():
+                connection.execute(
+                    text(
+                        "UPDATE finance.account SET name = 'Renamed expenses'"
+                        " WHERE id = :id"
+                    ),
+                    {"id": seeded["counter"]},
+                )
+
+        response = client.post(
+            "/api/v1/transactions", json=_payload(seeded["checking"])
+        )
+        assert response.status_code == 201, response.text
+        entry_id = int(response.json()["journal_entry_id"])
+        by_account = _legs_by_account(engine, entry_id)
+        assert set(by_account) == {seeded["checking"], seeded["counter"]}
 
     def test_an_explicit_counter_account_is_honoured(
         self, client: TestClient, engine: Engine, seeded: dict[str, int]
@@ -1792,7 +1823,7 @@ class TestTheRulesOnTheirOwn:
             )
 
     def test_the_convention_documented_is_the_convention_used(self) -> None:
-        """The counter-leg's name, nature and type are read from the module.
+        """The counter-leg's role, nature and type are read from the module.
 
         Asserted as a round trip through the resolver so that changing a constant
         without changing the resolver's expectations — or vice versa — fails here
@@ -1800,6 +1831,7 @@ class TestTheRulesOnTheirOwn:
         """
         from finance.domain.services.manual_posting import (
             SYSTEM_EXPENSE_ACCOUNT_NATURE,
+            SYSTEM_EXPENSE_ACCOUNT_ROLE,
             SYSTEM_EXPENSE_ACCOUNT_TYPE,
             PostingAccount,
             resolve_default_counter_account,
@@ -1812,6 +1844,7 @@ class TestTheRulesOnTheirOwn:
                     name=SYSTEM_EXPENSE_ACCOUNT_NAME,
                     currency="EUR",
                     account_nature=SYSTEM_EXPENSE_ACCOUNT_NATURE,
+                    system_role=SYSTEM_EXPENSE_ACCOUNT_ROLE,
                 )
             ]
         )

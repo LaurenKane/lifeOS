@@ -68,6 +68,10 @@ class Account(Base):
     # under `no_cross_schema_fk`. A column that cannot be joined is the honest
     # state of an unfinished feature.
     security_id: Mapped[int | None] = mapped_column(nullable=True)
+    # Canonical system-purpose account. NULL means "not designated". The only
+    # value today is 'system_expense'; the CHECK and the partial unique index
+    # (created in migration 0002) guarantee at most one account carries it.
+    system_role: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
         # A CHECK rather than an Enum, so adding a provider's account type is a
@@ -82,6 +86,10 @@ class Account(Base):
         CheckConstraint(
             "account_nature IN ('asset','liability','equity')",
             name="account_nature",
+        ),
+        CheckConstraint(
+            "system_role IS NULL OR system_role = 'system_expense'",
+            name="system_role",
         ),
     )
 

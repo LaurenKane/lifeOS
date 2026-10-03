@@ -174,8 +174,8 @@ def seeded(engine: Engine) -> dict[str, int]:
             connection.execute(
                 text(
                     "INSERT INTO finance.account"
-                    " (name, account_type, account_nature, currency)"
-                    " VALUES (:name, 'cash', 'equity', 'EUR')"
+                    " (name, account_type, account_nature, currency, system_role)"
+                    " VALUES (:name, 'cash', 'equity', 'EUR', 'system_expense')"
                 ),
                 {"name": SYSTEM_EXPENSE_ACCOUNT_NAME},
             )
@@ -1111,7 +1111,7 @@ class TestTheSilentWrongDataTraps:
             assert status == "pending"
             assert entry_id is None
             assert isinstance(message, str), message
-            assert SYSTEM_EXPENSE_ACCOUNT_NAME in message, message
+            assert "system expense account" in message.lower(), message
 
         # Nothing was posted, so nothing can be unbalanced.
         assert _scalar(engine, "SELECT count(*) FROM finance.journal_entry") == 0

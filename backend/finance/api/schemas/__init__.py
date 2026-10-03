@@ -72,6 +72,10 @@ class AccountCreateRequest(_Write):  # type: ignore[explicit-any]
     `currency` is validated against the `currency` table rather than trusted: it
     is `journal_line.currency`'s source, and an account whose currency is wrong
     re-denominates every posting made through it.
+
+    `system_role` designates this account as the canonical system-purpose account
+    for manual expenses. The only value accepted today is 'system_expense'. It is
+    optional and explicit: the role is NEVER inferred from the account's name.
     """
 
     name: str = Field(min_length=1, max_length=200)
@@ -81,6 +85,7 @@ class AccountCreateRequest(_Write):  # type: ignore[explicit-any]
     sort_order: int = Field(default=0, ge=0)
     is_active: bool = True
     is_hidden: bool = False
+    system_role: str | None = Field(default=None, pattern=r"^system_expense$")
 
 
 class ManualTransactionRequest(_Write):  # type: ignore[explicit-any]
@@ -248,6 +253,7 @@ class ImportRequest(_Write):  # type: ignore[explicit-any]
     account_id: int | None = None
     source_filename: str | None = None
     force: bool = False
+
 
 # ──────────────────────────────────────────────────────────────────────
 # Analytics response schemas
