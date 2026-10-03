@@ -75,6 +75,10 @@ from finance.ingestion.adapters.pdf_text import extract_lines
 from finance.ingestion.adapters.pdf_text import (
     extract_pdf_text as _pdftotext_extract,
 )
+from finance.ingestion.adapters.redaction import (
+    redact_card_numbers,
+    redact_ibans,
+)
 from finance.ingestion.normalize import (
     AmountSignConvention,
     normalize_record,
@@ -118,14 +122,58 @@ _CARD_PAYMENT_RE = re.compile(r"HARTELIJK\s+BEDANKT\s+VOOR\s+UW\s+BETALING", re.
 
 # Printed statement furniture, verified present in all four statements: the
 # repeating legal block and its "Nieuwe transacties voor:" sub-header, the
-# address-correction notice, and the card-payment reminder. A line containing any
-# of these is not a transaction. Checked as a substring because poppler's -layout
-# output breaks the legal block across several lines at column boundaries.
+# address-correction notice, the card-payment reminder, and the non-prose
+# summary lines that follow the transaction table ("Totaal voor:", etc.). A line
+# containing any of these is not a transaction. Checked as a substring because
+# poppler's -layout output breaks the legal block across several lines at column
+# boundaries.
 _STATEMENT_FURNITURE: Final = (
     "American Express Europe S.A. gevestigd",
     "Nieuwe transacties voor:",
     "Is het adres onjuist?",
     "Het te betalen bedrag is met",
+    "Totaal voor:",
+    "Overige Transacties:",
+    "Totaal Overige Transacties :",
+)
+
+# Headings that mark the start of a non-transaction block (the trailing legal
+# section on pages 1-3, the running header that repeats on every page, and the
+# Membership Rewards summary on page 4). Once one of these is seen, continuation
+# lines must not be appended to the pending row until a new real row starts. The
+# two-column layout means left/right headings can share one line; matching is by
+# prefix so a heading is not confused with prose that merely contains the words.
+# A heading line carries no trailing amount.
+_LEGAL_SECTION_HEADINGS: Final = frozenset(
+    {
+        # Page 1-3 legal block headings.
+        "belangrijke informatie",
+        "handmatig betalen",
+        "automatische incasso",
+        "online services",
+        "correspondentieadres",
+        "bankgegevens",
+        "zakelijke uitgaven",
+        "american express app",
+        # Running header that repeats at the top of every page. When it appears
+        # after the last real row on a page it marks the start of the trailing
+        # footer/rewards block.
+        "the gold card",
+        "maandafrekening",
+        "pagina",
+        "datum volgende",
+        # Page 4 Membership Rewards summary.
+        "membership rewards classic",
+        "membership rewards nummer",
+        "totaal aantal gespaarde punten",
+        # Page 1 trailing address/legal block. "identificatienummer" is the first
+        # word of the footer prose; the cardholder name line is caught by "mevr "
+        # so the postal address cannot reach the ledger even if the first marker
+        # were missed.
+        "identificatienummer",
+        "u kunt het adres",
+        "mevr ",
+    }
 )
 
 # Printed as `Periode: 24.05.2026 tot 23.06.2026`. Read only to keep it out of
@@ -134,12 +182,6 @@ _STATEMENT_FURNITURE: Final = (
 _PERIOD_RE = re.compile(
     r"Periode:\s*(\d{2}\.\d{2}\.\d{4})\s+tot\s+(\d{2}\.\d{2}\.\d{4})"
 )
-
-# A card number printed inside a description or a continuation line, in the
-# form `123456******3456`. The statement's own `Kaartnummer` line is never a row,
-# but a masked number can appear in free text; the project's privacy rule is
-# last-four only, so it is reduced to `****` here rather than persisted.
-_CARD_NUMBER_RE = re.compile(r"\b\d{6,}\*+\d{4}\b")
 
 _MONTHS = {
     name: index
@@ -181,16 +223,6 @@ _SECTION_HEADINGS = frozenset(
         "amount",
     }
 )
-
-
-def redact_card_numbers(text: str) -> str:
-    """Reduce any printed card number to `****`.
-
-    Applied to the description before it reaches a `RawRecord`. The rule this
-    enforces is the project's: never persist more than the last four digits of a
-    card, and here not even those.
-    """
-    return _CARD_NUMBER_RE.sub("****", text)
 
 
 def printed_period(lines: list[str]) -> tuple[dt.date, dt.date] | None:
@@ -361,6 +393,7 @@ def iter_transactions(
     results: list[RawRecord | AdapterParseError] = []
     pending: _PendingRow | None = None
     line_number = first_line
+    in_legal_block = False
 
     for text in lines:
         line_number += 1
@@ -369,10 +402,14 @@ def iter_transactions(
             continue
         if _is_heading(stripped) or _is_furniture(stripped):
             continue
+        if _is_legal_heading(stripped):
+            in_legal_block = True
+            continue
 
         parsed = _parse_row(stripped)
         if parsed is not None:
-            # A new row starts. Flush the previous one.
+            # A new row starts. Flush the previous one and leave the legal block.
+            in_legal_block = False
             if pending is not None:
                 results.append(_finish(pending, account_id))
             pending = _PendingRow(
@@ -385,7 +422,7 @@ def iter_transactions(
             continue
 
         # Not a new row: either a credit marker or a description continuation.
-        if pending is not None:
+        if pending is not None and not in_legal_block:
             if _CR_RE.match(stripped):
                 pending.is_credit = True
             else:
@@ -406,6 +443,23 @@ def _is_furniture(text: str) -> bool:
     the legal paragraph across lines at column boundaries.
     """
     return any(marker in text for marker in _STATEMENT_FURNITURE)
+
+
+def _is_legal_heading(text: str) -> bool:
+    """Whether a line is a heading marking the start of the trailing legal block.
+
+    The legal block is printed as two interleaved columns, so a naive substring
+    whitelist misses it. A heading is recognised by its vocabulary and by the
+    fact that it carries no amount. Once one is seen, every following non-row
+    line is treated as legal prose until a new real row starts.
+
+    Matching is by prefix (after lower-casing and stripping trademark symbols)
+    so a sentence that merely contains the words is not treated as furniture.
+    """
+    if _AMOUNT.search(text):
+        return False
+    normalized = text.strip().lower().rstrip(":").replace("®", "").replace("™", "")
+    return any(normalized.startswith(heading) for heading in _LEGAL_SECTION_HEADINGS)
 
 
 def _is_heading(text: str) -> bool:
@@ -469,7 +523,9 @@ def _finish(
     pending: _PendingRow, account_id: int | None
 ) -> RawRecord | AdapterParseError:
     """Turn a pending row into a record, or explain why it cannot be one."""
-    description = redact_card_numbers(pending.description_source.strip())
+    description = redact_ibans(
+        redact_card_numbers(pending.description_source.strip())
+    ) or ""
     if not pending.amount_text:
         return AdapterParseError(
             "row has no amount", pending.line_number, AmexPdfAdapter.provider
@@ -480,6 +536,26 @@ def _finish(
         # CR line beneath the amount — is the only thing that distinguishes
         # them, so this branch is the credit rule, not a heuristic.
         signed_minor = amount_minor if pending.is_credit else -amount_minor
+        raw_data: dict[str, str | int | float | bool | None] = {
+            "raw_date": pending.txn_date.isoformat(),
+            "raw_posting_date": pending.post_date.isoformat(),
+            "raw_amount_minor": signed_minor,
+            "amount_raw": pending.amount_text,
+            "is_credit": pending.is_credit,
+            # The monthly card payment shares the credit section with real
+            # refunds and is positive in the same way, so it is separated by
+            # description. Downstream matching must not treat a repayment as
+            # a refund, or vice versa.
+            "is_card_payment": bool(_CARD_PAYMENT_RE.search(description)),
+            # `Bedrag in vreemde valuta` is empty in all four verified
+            # statements, so no foreign amount or rate is available and none
+            # is invented here.
+            "foreign_amount_minor": None,
+        }
+        raw_data = {
+            key: redact_ibans(value) if isinstance(value, str) else value
+            for key, value in raw_data.items()
+        }
         normalized = normalize_record(
             account_id=account_id,
             description=description,
@@ -495,22 +571,7 @@ def _finish(
             pending=False,
             line_number=pending.line_number,
             sign_convention=AmountSignConvention.SIGNED,
-            raw_data={
-                "raw_date": pending.txn_date.isoformat(),
-                "raw_posting_date": pending.post_date.isoformat(),
-                "raw_amount_minor": signed_minor,
-                "amount_raw": pending.amount_text,
-                "is_credit": pending.is_credit,
-                # The monthly card payment shares the credit section with real
-                # refunds and is positive in the same way, so it is separated by
-                # description. Downstream matching must not treat a repayment as
-                # a refund, or vice versa.
-                "is_card_payment": bool(_CARD_PAYMENT_RE.search(description)),
-                # `Bedrag in vreemde valuta` is empty in all four verified
-                # statements, so no foreign amount or rate is available and none
-                # is invented here.
-                "foreign_amount_minor": None,
-            },
+            raw_data=raw_data,
         )
     except ValueError as exc:
         return AdapterParseError(str(exc), pending.line_number, AmexPdfAdapter.provider)

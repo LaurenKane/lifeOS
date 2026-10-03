@@ -24,6 +24,7 @@ from finance.ingestion.adapters.base import (
     ImportAdapter,
 )
 from finance.ingestion.adapters.manual import ManualEntry
+from finance.ingestion.adapters.redaction import redact_ibans
 from finance.tests.fixtures import (
     ACCOUNT_ID,
     AIS_TRANSACTIONS,
@@ -360,6 +361,53 @@ class TestAmexPdfRegression:
         record = result.records[0]
         assert record.booked_date == dt.date(2026, 5, 24)
         assert record.value_date == dt.date(2026, 5, 25)
+
+    def test_continuation_before_legal_block_is_still_appended(self) -> None:
+        """A real wrapped description must survive even when a legal block follows."""
+        lines = [
+            "Transactiedatum Datum verwerkt Omschrijving Bedrag",
+            "24.05.26  25.05.26  AMAZON EU SARL                   99,99",
+            "ORDER 123-4567890-1234567",
+            "BELANGRIJKE INFORMATIE",
+            "Bankgegevens",
+            "IBAN: NL63DEUT0265188040",
+            "23.05.26  24.05.26  JUMBO 4321 AMSTERDAM             8,50",
+        ]
+        adapter = AmexPdfAdapter(text_extractor=lambda _payload: lines)
+        result = adapter.parse("\n".join(lines).encode(), account_id=ACCOUNT_ID)
+        assert result.record_count == 2
+        amazon = [r for r in result.records if "AMAZON" in r.description][0]
+        assert "ORDER 123-4567890-1234567" in amazon.description
+        assert "BELANGRIJKE" not in amazon.description
+        assert "NL63DEUT" not in amazon.description
+        jumbo = [r for r in result.records if "JUMBO" in r.description][0]
+        assert jumbo.amount_minor == -850
+
+
+class TestRedaction:
+    """IBAN redaction happens at parse time because raw_data is immutable."""
+
+    def test_spaced_dutch_iban_is_redacted(self) -> None:
+        """Dutch IBANs print with a 4-letter bank code: NL79 RABO 0000 0000 00."""
+        result = redact_ibans("Payment from NL79 RABO 0000 0000 00")
+        assert result == "Payment from ...0000"
+
+    def test_compact_iban_is_redacted(self) -> None:
+        assert redact_ibans("Payment from NL79RABO0000000000") == "Payment from ...0000"
+
+    def test_full_iban_in_merchant_description_does_not_reach_raw_record(self) -> None:
+        """A free-text IBAN in the description is masked before normalize_record."""
+        lines = [
+            "Transactiedatum Datum verwerkt Omschrijving Bedrag",
+            "24.05.26  25.05.26  MERCHANT NL79RABO0000000000          10,00",
+        ]
+        adapter = AmexPdfAdapter(text_extractor=lambda _payload: lines)
+        result = adapter.parse("\n".join(lines).encode(), account_id=ACCOUNT_ID)
+        assert result.record_count == 1
+        record = result.records[0]
+        assert "NL79RABO0000000000" not in record.description
+        assert "...0000" in record.description
+        assert "NL79RABO0000000000" not in str(record.raw_data)
 
 
 class TestManual:

@@ -275,6 +275,11 @@ _PRINTED_IBAN: Final = re.compile(
     r"\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{4}){2,4}[A-Z0-9]{1,4}\b"
 )
 
+#: Letter-masked card numbers Amex prints (XXXX-XXXXXX-23007 or XXXXXXXXXX23007).
+_MASKED_CARD_NUMBER: Final = re.compile(
+    r"\b(?:[Xx]{4}-[Xx]{6}-\d{5}|[Xx]{10}\d{5})\b"
+)
+
 
 def dutch_to_money(text: str) -> Money:
     """`'1.234,56'` -> `Money(123456)`. Dot thousands, comma decimal.
@@ -1424,38 +1429,26 @@ class TestTheStatementsCannotBeCommitted:
 
 
 # ---------------------------------------------------------------------------
-# Known defects, recorded rather than hidden
+# Privacy: no full IBAN or cardholder details reach the immutable raw_data
 # ---------------------------------------------------------------------------
 
 
-class TestKnownDefectsNotYetFixed:
-    """One expected failure, pinned so it cannot be forgotten.
+def _records_with_full_iban(
+    records: Sequence[RawRecord], provider: str, filename: str
+) -> list[tuple[str, str, str]]:
+    """Any `(provider, filename, matched_iban)` found in a provider's records."""
+    offenders: list[tuple[str, str, str]] = []
+    for record in records:
+        for field in (record.description, str(record.raw_data)):
+            found = _PRINTED_IBAN.search(field)
+            if found is not None:
+                offenders.append((provider, filename, found.group(0)))
+    return offenders
 
-    `amex_pdf.py` folds a wrapped description onto the row above it, and its
-    `_STATEMENT_FURNITURE` list does not cover the boilerplate these statements
-    actually print. Fourteen of the 121 Amex rows therefore carry page furniture
-    in their description, and four of them carry the cardholder's name, home
-    address, and Amex's own IBAN and BIC. `raw_data` is immutable forever, so
-    that is a write-once privacy defect, and the project rule is last-four-only.
 
-    It does **not** affect any reconciliation above: dates, amounts and row
-    counts match `tools/bankparse/amex.py` exactly, which is why every identity
-    holds at delta 0. It is recorded here because a real IBAN in a permanent
-    column breaks a stated rule, and a rule with no test is a rule nobody checks.
+class TestPrivacy:
+    """The immutable raw_data column must never store a full IBAN or PII."""
 
-    `strict=True` is the point. When someone widens the furniture list this test
-    XPASSes, `strict` turns that into a failure, and the failure says to remove
-    the marker — so the defect cannot be silently closed and the marker cannot
-    outlive the defect.
-    """
-
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "amex_pdf._STATEMENT_FURNITURE does not cover the page furniture "
-            "these statements print, so boilerplate is appended to the row above"
-        ),
-    )
     def test_no_amex_description_carries_a_full_iban(self) -> None:
         require_extractor()
         offenders: list[tuple[str, str]] = []
@@ -1472,6 +1465,73 @@ class TestKnownDefectsNotYetFixed:
         assert not offenders, (
             f"{len(offenders)} Amex description(s) carry a full IBAN, which "
             f"raw_data stores forever; first: {offenders[0] if offenders else ''}"
+        )
+
+    def test_no_amex_description_carries_the_legal_block(self) -> None:
+        """The trailing legal block must not be appended to any real row."""
+        require_extractor()
+        offenders: list[tuple[str, str]] = []
+        for name, path in statements("amex"):
+            for record in _parse_amex(path, name).records:
+                lowered = record.description.lower()
+                for marker in (
+                    "belangrijke informatie",
+                    "bankgegevens",
+                    "correspondentieadres",
+                    "iban:",
+                    "bic:",
+                ):
+                    if marker in lowered:
+                        offenders.append((name, marker))
+                        break
+        assert not offenders, (
+            f"{len(offenders)} Amex description(s) still carry legal-block prose; "
+            f"first marker: {offenders[0] if offenders else ''}"
+        )
+
+    def test_no_adapter_description_or_raw_data_carries_a_full_iban(self) -> None:
+        """All three PDF adapters mask IBANs before anything reaches raw_data."""
+        require_extractor()
+        offenders: list[tuple[str, str, str]] = []
+        for name, path in statements("rabobank"):
+            records = _parse_rabobank(path, name).records
+            offenders.extend(_records_with_full_iban(records, "rabobank", name))
+        for name, path in statements("revolut"):
+            records = _parse_revolut(path, name).records
+            offenders.extend(_records_with_full_iban(records, "revolut", name))
+        for name, path in statements("amex"):
+            records = _parse_amex(path, name).records
+            offenders.extend(_records_with_full_iban(records, "amex", name))
+        assert not offenders, (
+            f"{len(offenders)} record field(s) carry a full IBAN, which raw_data "
+            f"stores forever; first: {offenders[0] if offenders else ''}"
+        )
+
+    def test_no_amex_description_carries_cardholder_or_rewards_details(self) -> None:
+        """The page 4/4 trailing block must not leak the cardholder or card number."""
+        require_extractor()
+        offenders: list[tuple[str, str]] = []
+        for name, path in statements("amex"):
+            for record in _parse_amex(path, name).records:
+                candidates = (
+                    record.description,
+                    str(record.raw_data.get("description", "")),
+                )
+                for field in candidates:
+                    lowered = field.lower()
+                    if "mevr " in lowered:
+                        offenders.append((name, "MEVR "))
+                        break
+                    if "membership rewards" in lowered:
+                        offenders.append((name, "Membership Rewards"))
+                        break
+                    masked = _MASKED_CARD_NUMBER.search(field)
+                    if masked:
+                        offenders.append((name, masked.group(0)))
+                        break
+        assert not offenders, (
+            f"{len(offenders)} Amex description(s) still carry cardholder or "
+            f"rewards details; first: {offenders[0] if offenders else ''}"
         )
 
 

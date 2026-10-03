@@ -66,6 +66,10 @@ from finance.ingestion.adapters.base import (
 )
 from finance.ingestion.adapters.pdf_text import extract_lines
 from finance.ingestion.adapters.pdf_text import extract_pdf_text as _pdftotext_extract
+from finance.ingestion.adapters.redaction import (
+    mask_iban,
+    redact_ibans,
+)
 from finance.ingestion.normalize import (
     AmountSignConvention,
     normalize_record,
@@ -220,18 +224,6 @@ def to_minor_units(text: str) -> int:
         raise ValueError(msg)
     value = int(whole) * 100 + int(fraction)
     return -value if negative else value
-
-
-def mask_iban(iban: str) -> str:
-    """An IBAN reduced to `...` plus its last four characters."""
-    return "..." + iban[-4:]
-
-
-def redact_ibans(text: str | None) -> str | None:
-    """Mask any IBAN inside a free-text field before it reaches a `RawRecord`."""
-    if text is None:
-        return None
-    return _IBAN_RE.sub(lambda m: mask_iban(m.group(1)), text)
 
 
 def strip_page_furniture(lines: list[str]) -> tuple[list[str], int]:

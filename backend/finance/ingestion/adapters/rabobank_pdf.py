@@ -63,6 +63,10 @@ from finance.ingestion.adapters.base import (
 )
 from finance.ingestion.adapters.pdf_text import extract_lines
 from finance.ingestion.adapters.pdf_text import extract_pdf_text as _pdftotext_extract
+from finance.ingestion.adapters.redaction import (
+    mask_iban,
+    redact_ibans,
+)
 from finance.ingestion.normalize import (
     AmountSignConvention,
     normalize_record,
@@ -92,23 +96,12 @@ _HEADER_RE = re.compile(r"Debit amount\s+Credit amount")
 # `xx = meaning` pairs in the last page's type-code legend.
 _LEGEND_RE = re.compile(r"(?:^|\s)([a-z]{2})\s*=\s")
 
-# Compact-format IBAN, used to reduce one found inside free text.
-_IBAN_RE = re.compile(r"\b([A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{4}){2,4}[A-Z0-9]{1,4})\b")
-
 # Dutch IBANs print as "NL79 RABO 0000 0000 00": country+check digits, then a
-# 4-letter bank code, then three numeric groups. The bank code is what a
-# compact-format regex misses, and missing it means the account is never
-# captured and no redaction happens.
+# 4-letter bank code, then three numeric groups. Used here for reading the
+# statement's own IBAN and the counterparty IBAN that some rows carry as a
+# prefix; redaction itself lives in `redaction.py` so the three adapters share
+# one implementation.
 _SPACED_IBAN_RE = re.compile(r"\b([A-Z]{2}\d{2}[ ][A-Z]{4}[ ]\d{4}[ ]\d{4}[ ]\d{2})\b")
-
-# Any printed IBAN: 2 letters + 2 check digits, optional 4-letter bank code, then
-# 1-4 numeric groups. Deliberately permissive, and used only for redaction: the
-# layout is not uniform across countries (Irish IBANs print four numeric groups,
-# Dutch three), so a regex pinned to the Dutch shape would silently pass foreign
-# counterparty IBANs through to disk.
-_ANY_SPACED_IBAN_RE = re.compile(
-    r"\b([A-Z]{2}\d{2}(?:[ ][A-Z]{4})?(?:[ ]\d{2,4}){2,5})\b"
-)
 
 _PROCESSING_RE = re.compile(r"Processing date:\s*(\d{2}-\d{2}-\d{4})", re.I)
 _TERMINAL_RE = re.compile(r"Terminal:\s*(\d+)")
@@ -189,24 +182,6 @@ def to_minor_units(text: str) -> int:
         msg = f"unparseable Dutch amount: {text!r}"
         raise ValueError(msg)
     return int(stripped)
-
-
-def mask_iban(iban: str) -> str:
-    """An IBAN reduced to `...` plus its last four characters."""
-    return "..." + re.sub(r"\s+", "", iban)[-4:]
-
-
-def redact_ibans(text: str | None) -> str | None:
-    """Mask any IBAN embedded in free text before it reaches a `RawRecord`.
-
-    Applied to the description AND to every captured sub-field. `raw_data` is
-    immutable forever, so redaction has to happen at parse time rather than at
-    display time.
-    """
-    if text is None:
-        return None
-    spaced = _ANY_SPACED_IBAN_RE.sub(lambda m: mask_iban(m.group(1)), text)
-    return _IBAN_RE.sub(lambda m: mask_iban(m.group(1)), spaced)
 
 
 def _year_for(month: int, period_from: str | None, period_to: str | None) -> int:
