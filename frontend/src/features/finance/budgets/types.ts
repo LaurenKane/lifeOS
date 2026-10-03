@@ -3,7 +3,7 @@ import { z } from "zod";
 
 /* Money is signed integer MINOR units, never a float (ARCHITECTURE.md §6). */
 export const BudgetSchema = z.object({
-  id: z.string(),
+  id: z.number().int(),
   name: z.string(),
   amountMinor: z.number().int(),
   currency: z.string().length(3),

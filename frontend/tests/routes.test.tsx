@@ -1,16 +1,26 @@
 /**
- * Route tree / stub page rendering.
+ * Route tree, and the states every route shares.
  *
- * These tests mount the real route tree from src/routes with a memory
- * router and assert that the stub feature pages actually render. The
- * feature hooks call the API on mount, so fetch is stubbed globally to
- * return an empty collection: these tests must not touch the network or
- * require a running backend.
+ * The feature hooks call the API on mount, so `fetch` is stubbed globally: no
+ * test touches the network or needs a running backend.
+ *
+ * Three assertions here are about honesty rather than rendering, and they used
+ * to assert the opposite:
+ *
+ *   - a page shows ITS OWN loading state, because the providers no longer
+ *     short-circuit the whole app while the slowest collection is in flight;
+ *   - a failed read shows the server's message instead of falling back to an
+ *     empty collection, which is how a backend that is down used to look like
+ *     a ledger with nothing in it;
+ *   - the paths are `/api/v1/...`, because every router in
+ *     `backend/main.py` hangs off `API_V1_PREFIX` = `/api/v1` and the base URL
+ *     is `/api`. The old `/api/finance/...` paths were mounted nowhere.
  */
 import { render, screen, waitFor } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Routes } from "@/routes";
+import { AccountsProvider } from "@/features/finance/accounts/provider";
 import { TransactionsProvider } from "@/features/finance/transactions/provider";
 import { ReviewProvider } from "@/features/finance/review/provider";
 import { ImportsProvider } from "@/features/finance/imports/provider";
@@ -20,15 +30,17 @@ import { BudgetsProvider } from "@/features/finance/budgets/provider";
 function renderAt(path: string) {
   const router = createMemoryRouter(Routes, { initialEntries: [path] });
   return render(
-    <TransactionsProvider>
-      <ReviewProvider>
-        <ImportsProvider>
-          <BudgetsProvider>
-            <RouterProvider router={router} />
-          </BudgetsProvider>
-        </ImportsProvider>
-      </ReviewProvider>
-    </TransactionsProvider>,
+    <AccountsProvider>
+      <TransactionsProvider>
+        <ReviewProvider>
+          <ImportsProvider>
+            <BudgetsProvider>
+              <RouterProvider router={router} />
+            </BudgetsProvider>
+          </ImportsProvider>
+        </ReviewProvider>
+      </TransactionsProvider>
+    </AccountsProvider>,
   );
 }
 
@@ -36,6 +48,7 @@ function renderAt(path: string) {
 function stubFetchEmpty() {
   const fetchMock = vi.fn().mockResolvedValue({
     ok: true,
+    status: 200,
     json: () => Promise.resolve([]),
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -59,61 +72,69 @@ describe("route tree", () => {
   });
 
   it.each([
-    ["/finance/transactions", "Transactions", /no transactions yet/i],
-    ["/finance/review", "Review Queue", /no items in review queue/i],
+    ["/finance/accounts", "Accounts", /no accounts yet/i],
+    ["/finance/transactions", "Transactions", /nothing recorded yet/i],
+    ["/finance/review", "Review queue", /no items in review queue/i],
     ["/finance/imports", "Imports", /no import batches/i],
     ["/finance/budgets", "Budgets", /no budgets defined/i],
-  ])("renders the %s stub page", async (path, heading, emptyText) => {
+  ])("renders the %s page", async (path, heading, emptyText) => {
     renderAt(path);
 
-    // The providers gate on loading, so wait past that first paint.
-    await waitFor(() => expect(screen.getByRole("heading", { name: heading })).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: heading })).toBeInTheDocument(),
+    );
     expect(screen.getByText(emptyText)).toBeInTheDocument();
   });
 
-  it("shows a loading state while the first fetch is in flight", async () => {
-    // Never-resolving fetch: the providers must stay in their loading branch.
+  it("shows a loading state on the page being viewed", async () => {
+    // Never-resolving fetch: the page owns its loading state, and the routes
+    // around it are not held hostage by whichever collection is slowest.
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue({ ok: true, json: () => new Promise(() => {}) }),
+      vi.fn().mockResolvedValue({ ok: true, status: 200, json: () => new Promise(() => {}) }),
     );
 
-    renderAt("/finance/budgets");
+    renderAt("/finance/transactions");
 
-    // The providers are nested, so the outermost (Transactions) gates first
-    // and short-circuits its children until its own load settles.
-    expect(await screen.findByText(/loading transactions/i)).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Budgets" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Transactions" })).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: /loading transactions/i })).toBeInTheDocument();
   });
 
-  it("recovers from a failed fetch instead of hanging on loading", async () => {
+  it("reports a failed read instead of rendering an empty collection", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
         ok: false,
         status: 500,
-        text: () => Promise.resolve("boom"),
+        text: () => Promise.resolve(JSON.stringify({ detail: "boom" })),
       }),
     );
 
     renderAt("/finance/budgets");
 
-    // The hook catches the error and falls back to an empty collection,
-    // so the page renders its empty state rather than an unhandled rejection.
-    expect(
-      await screen.findByRole("heading", { name: "Budgets" }, { timeout: 2000 }),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/no budgets defined/i)).toBeInTheDocument();
+    // The old hook swallowed this and fell back to `[]`, so a dead backend was
+    // indistinguishable from a user who has never set a budget.
+    expect(await screen.findByText("boom")).toBeInTheDocument();
+    expect(screen.queryByText(/no budgets defined/i)).not.toBeInTheDocument();
   });
 
   it("issues one request per feature collection", async () => {
     const fetchMock = stubFetchEmpty();
     renderAt("/finance/budgets");
-    await waitFor(() => expect(screen.getByRole("heading", { name: "Budgets" })).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: "Budgets" })).toBeInTheDocument(),
+    );
 
     const paths = fetchMock.mock.calls.map((call) => String(call[0]));
-    expect(paths).toContain("/api/finance/budgets");
+    expect(paths).toContain("/api/v1/budgets");
     // The provider owns the fetch; the page must not re-request the same data.
-    expect(paths.filter((p) => p === "/api/finance/budgets")).toHaveLength(1);
+    expect(paths.filter((p) => p === "/api/v1/budgets")).toHaveLength(1);
+  });
+
+  it("renders the 404 route as the overview rather than a blank screen", async () => {
+    renderAt("/finance/nothing-here");
+    expect(
+      await screen.findByRole("heading", { name: /life os/i }),
+    ).toBeInTheDocument();
   });
 });

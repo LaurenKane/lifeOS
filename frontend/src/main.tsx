@@ -5,6 +5,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import { Routes } from "./routes";
+import { AccountsProvider } from "@/features/finance/accounts/provider";
 import { TransactionsProvider } from "@/features/finance/transactions/provider";
 import { ReviewProvider } from "@/features/finance/review/provider";
 import { ImportsProvider } from "@/features/finance/imports/provider";
@@ -14,15 +15,17 @@ import "./index.css";
 export const App: React.FC = () => {
   const router = createBrowserRouter(Routes);
   return (
-    <TransactionsProvider>
-      <ReviewProvider>
-        <ImportsProvider>
-          <BudgetsProvider>
-            <RouterProvider router={router} />
-          </BudgetsProvider>
-        </ImportsProvider>
-      </ReviewProvider>
-    </TransactionsProvider>
+    <AccountsProvider>
+      <TransactionsProvider>
+        <ReviewProvider>
+          <ImportsProvider>
+            <BudgetsProvider>
+              <RouterProvider router={router} />
+            </BudgetsProvider>
+          </ImportsProvider>
+        </ReviewProvider>
+      </TransactionsProvider>
+    </AccountsProvider>
   );
 };
 

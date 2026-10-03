@@ -1,6 +1,17 @@
-/* Transactions feature barrel — stub types and exports.
- * Do not add real UI here; M2/M3 work will fill these in.
- */
-export type { Transaction } from "./types";
-export { useTransactions, useTransactionsContext } from "./use-transactions";
+/* Transactions feature barrel. */
+export type {
+  ManualTransactionRequest,
+  ManualTransactionUpdate,
+  TransactionStatus,
+  TransactionSummary,
+} from "./types";
+export {
+  useTransaction,
+  useTransactions,
+  useTransactionsContext,
+  useUncategorized,
+} from "./use-transactions";
+export type { DeleteOutcome, TransactionsState } from "./use-transactions";
 export { TransactionsProvider } from "./provider";
+export { TransactionsPage } from "./page";
+export { TransactionDetailPage } from "./detail";
