@@ -55,6 +55,7 @@ never mixes a card payment with a refund.
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import os
 import re
 import subprocess
@@ -276,9 +277,7 @@ _PRINTED_IBAN: Final = re.compile(
 )
 
 #: Letter-masked card numbers Amex prints (XXXX-XXXXXX-23007 or XXXXXXXXXX23007).
-_MASKED_CARD_NUMBER: Final = re.compile(
-    r"\b(?:[Xx]{4}-[Xx]{6}-\d{5}|[Xx]{10}\d{5})\b"
-)
+_MASKED_CARD_NUMBER: Final = re.compile(r"\b(?:[Xx]{4}-[Xx]{6}-\d{5}|[Xx]{10}\d{5})\b")
 
 
 def dutch_to_money(text: str) -> Money:
@@ -1152,6 +1151,188 @@ def _amex_period_end(lines: Sequence[str]) -> dt.date:
     return dt.datetime.strptime(match.group(2), "%d.%m.%Y").date()
 
 
+#: Page-furniture strings that must never appear in a real Amex transaction
+#: description. These leaked into descriptions before LifeOS-epb because the
+#: adapter's furniture filter was too narrow; the fix widened the filter, and
+#: this list captures the class of leak so a regression cannot silently change
+#: a purchase fingerprint.
+_AMEX_FURNITURE_MARKERS: Final = (
+    "BELANGRIJKE INFORMATIE",
+    "Totaal voor:",
+    "Overige Transacties",
+    "Membership Rewards",
+    "Maandafrekening",
+    "Pagina ",
+    "Postbus",
+    "identificatienummer",
+    "Banco de Espa",
+    "mevr ",
+)
+
+#: Golden Amex description *digests*, keyed by (booked_date, value_date,
+#: amount_minor, is_credit). The fixture stores digests instead of plaintext
+#: because committing 121 rows of real merchant names, amounts and dates would
+#: bake personal financial data into git history - the exact permanence risk
+#: ADR 0003 and bead LifeOS-epb exist to prevent. A SHA-256 digest still pins
+#: the exact text, so any change to any description fails the test.
+#:
+#: Generated from the post-LifeOS-epb parser output and reviewed row by row;
+#: every underlying description is a merchant name, the card-payment label, or
+#: the monthly membership fee. No statement furniture is present. One key has a
+#: tuple value because two rows on the same statement share the same key.
+#:
+#: Deliberately NOT compared to `tools/bankparse/amex.py`: that reference
+#: implementation still carries the same furniture defect this adapter fix
+#: removed, so equality with it would either fail today or force a future
+#: maintainer to loosen the assertion when the reference is fixed. The golden
+#: set is the document-derived oracle.
+#:
+#: Rabobank is not golden-set here: its descriptions contain real counterparty
+#: names and redacted account fragments that should not be committed as a
+#: fixture. Revolut is also excluded: its descriptions leak the statement's own
+#: "Generated on ..." page furniture into some rows (17 of 351 in the current
+#: statement), so they are not stable enough to bless. That furniture leakage
+#: is filed as a separate bead and is deliberately NOT fixed here.
+
+
+def _digest_description(description: str) -> str:
+    """Stable digest of a description for the golden set.
+
+    SHA-256 truncated to 16 hex characters. The truncation is only to keep the
+    fixture readable; the collision resistance still comes from SHA-256.
+    """
+    return hashlib.sha256(description.encode("utf-8")).hexdigest()[:16]
+
+
+#: 120 unique keys, 121 total rows.
+#: Digests are SHA-256 truncated to 16 hex characters.
+AMEX_GOLDEN_DESCRIPTIONS: Final = {
+    (dt.date(2026, 5, 24), dt.date(2026, 5, 24), -1000, False): ("1ac2e1f09404762f",),
+    (dt.date(2026, 5, 24), dt.date(2026, 5, 25), -899, False): ("3c560229bdc4b57c",),
+    (dt.date(2026, 5, 25), dt.date(2026, 5, 25), -1259, False): ("f5a2a1fffa172e4c",),
+    (dt.date(2026, 5, 25), dt.date(2026, 5, 25), -1208, False): ("f5a2a1fffa172e4c",),
+    (dt.date(2026, 5, 28), dt.date(2026, 5, 28), 72135, True): ("4d9328ac2fa7c80c",),
+    (dt.date(2026, 5, 28), dt.date(2026, 5, 29), -22995, False): ("34a49085e0e8d85e",),
+    (dt.date(2026, 5, 29), dt.date(2026, 5, 29), -699, False): ("c5b3116ee563f92f",),
+    (dt.date(2026, 5, 29), dt.date(2026, 5, 30), -2998, False): ("519e0807460abd36",),
+    (dt.date(2026, 5, 31), dt.date(2026, 5, 31), -1137, False): ("f5a2a1fffa172e4c",),
+    (dt.date(2026, 6, 1), dt.date(2026, 6, 1), -1722, False): ("f5a2a1fffa172e4c",),
+    (dt.date(2026, 6, 2), dt.date(2026, 6, 3), -816, False): ("3ba48af1d57f4c74",),
+    (dt.date(2026, 6, 3), dt.date(2026, 6, 3), -499, False): ("67d3464905d01150",),
+    (dt.date(2026, 6, 5), dt.date(2026, 6, 5), -299, False): ("7c85578efc5a6580",),
+    (dt.date(2026, 6, 5), dt.date(2026, 6, 5), 7000, True): ("8982410961147741",),
+    (dt.date(2026, 6, 8), dt.date(2026, 6, 8), -399, False): ("c626c9effca7e3ca",),
+    (dt.date(2026, 6, 9), dt.date(2026, 6, 9), -1400, False): ("cc22aaa861e51230",),
+    (dt.date(2026, 6, 10), dt.date(2026, 6, 10), -899, False): ("043ea2c940d0cf5e",),
+    (dt.date(2026, 6, 10), dt.date(2026, 6, 12), -25412, False): ("7aadd01ceb388279",),
+    (dt.date(2026, 6, 11), dt.date(2026, 6, 11), -1280, False): ("25a11d2d8c547e1e",),
+    (dt.date(2026, 6, 12), dt.date(2026, 6, 12), -1340, False): (
+        "d413495a45ae1786",
+        "d413495a45ae1786",
+    ),
+    (dt.date(2026, 6, 12), dt.date(2026, 6, 14), -1720, False): ("858390a3997f60f0",),
+    (dt.date(2026, 6, 13), dt.date(2026, 6, 13), -1280, False): ("25a11d2d8c547e1e",),
+    (dt.date(2026, 6, 14), dt.date(2026, 6, 15), -2778, False): ("858390a3997f60f0",),
+    (dt.date(2026, 6, 14), dt.date(2026, 6, 15), -1508, False): ("f5a2a1fffa172e4c",),
+    (dt.date(2026, 6, 16), dt.date(2026, 6, 16), -399, False): ("df197212684fc1f8",),
+    (dt.date(2026, 6, 16), dt.date(2026, 6, 17), -1871, False): ("7e58131a01f13948",),
+    (dt.date(2026, 6, 19), dt.date(2026, 6, 19), -1436, False): ("f5a2a1fffa172e4c",),
+    (dt.date(2026, 6, 20), dt.date(2026, 6, 20), -1725, False): ("90bda2bf5638bbe9",),
+    (dt.date(2026, 6, 20), dt.date(2026, 6, 20), -650, False): ("d19cd49c2e63ac37",),
+    (dt.date(2026, 6, 20), dt.date(2026, 6, 21), -599, False): ("b3b2b6fe704c8d53",),
+    (dt.date(2026, 6, 23), dt.date(2026, 6, 23), -2000, False): ("191834f20db5b9fa",),
+    (dt.date(2026, 6, 23), dt.date(2026, 6, 24), -1374, False): ("75a08fcf4786f445",),
+    (dt.date(2026, 6, 24), dt.date(2026, 6, 23), -275, False): ("38ed09c311489ce3",),
+    (dt.date(2026, 6, 24), dt.date(2026, 6, 25), -899, False): ("3c560229bdc4b57c",),
+    (dt.date(2026, 6, 28), dt.date(2026, 6, 28), -1295, False): ("f6827c5e328d8fec",),
+    (dt.date(2026, 6, 28), dt.date(2026, 6, 29), -8368, False): ("34a49085e0e8d85e",),
+    (dt.date(2026, 6, 29), dt.date(2026, 6, 29), -699, False): ("0a936e3ccf5b1bbf",),
+    (dt.date(2026, 6, 29), dt.date(2026, 6, 29), 76567, True): ("4d9328ac2fa7c80c",),
+    (dt.date(2026, 7, 1), dt.date(2026, 7, 2), -650, False): ("a24b2c8e56f086be",),
+    (dt.date(2026, 7, 3), dt.date(2026, 7, 4), -800, False): ("a24b2c8e56f086be",),
+    (dt.date(2026, 7, 3), dt.date(2026, 7, 4), -499, False): ("708d17394899c30b",),
+    (dt.date(2026, 7, 5), dt.date(2026, 7, 5), -299, False): ("4b43ef1cf9153611",),
+    (dt.date(2026, 7, 6), dt.date(2026, 7, 6), -1593, False): ("f5a2a1fffa172e4c",),
+    (dt.date(2026, 7, 6), dt.date(2026, 7, 6), -1520, False): ("f5a2a1fffa172e4c",),
+    (dt.date(2026, 7, 7), dt.date(2026, 7, 7), -1299, False): ("34bff09c2165691d",),
+    (dt.date(2026, 7, 7), dt.date(2026, 7, 7), -499, False): ("647309f809d78d06",),
+    (dt.date(2026, 7, 7), dt.date(2026, 7, 7), 1000, True): ("11e62e5c91ebd6f3",),
+    (dt.date(2026, 7, 8), dt.date(2026, 7, 8), -399, False): ("c626c9effca7e3ca",),
+    (dt.date(2026, 7, 9), dt.date(2026, 7, 9), -2418, False): ("f5a2a1fffa172e4c",),
+    (dt.date(2026, 7, 9), dt.date(2026, 7, 9), 14430, True): ("34a49085e0e8d85e",),
+    (dt.date(2026, 7, 10), dt.date(2026, 7, 10), -899, False): ("043ea2c940d0cf5e",),
+    (dt.date(2026, 7, 11), dt.date(2026, 7, 11), -383, False): ("e7af376807515d40",),
+    (dt.date(2026, 7, 14), dt.date(2026, 7, 14), -7378, False): ("f7235a838db819cb",),
+    (dt.date(2026, 7, 15), dt.date(2026, 7, 15), -1622, False): ("f5a2a1fffa172e4c",),
+    (dt.date(2026, 7, 15), dt.date(2026, 7, 15), -1607, False): ("f5a2a1fffa172e4c",),
+    (dt.date(2026, 7, 15), dt.date(2026, 7, 16), -1997, False): ("75a08fcf4786f445",),
+    (dt.date(2026, 7, 16), dt.date(2026, 7, 16), -2396, False): ("f5a2a1fffa172e4c",),
+    (dt.date(2026, 7, 16), dt.date(2026, 7, 16), -1937, False): ("f5a2a1fffa172e4c",),
+    (dt.date(2026, 7, 16), dt.date(2026, 7, 16), -1599, False): ("647309f809d78d06",),
+    (dt.date(2026, 7, 16), dt.date(2026, 7, 18), -1470, False): ("858390a3997f60f0",),
+    (dt.date(2026, 7, 17), dt.date(2026, 7, 17), -1250, False): ("3b6934e7a61dfbf0",),
+    (dt.date(2026, 7, 19), dt.date(2026, 7, 21), -750, False): ("ffbc521a1b2b1dba",),
+    (dt.date(2026, 7, 22), dt.date(2026, 7, 22), -499, False): ("886636ad434d2053",),
+    (dt.date(2026, 7, 23), dt.date(2026, 7, 23), -2000, False): ("191834f20db5b9fa",),
+    (dt.date(2026, 7, 23), dt.date(2026, 7, 24), -667, False): ("a8d4d2ca7c6bce61",),
+    (dt.date(2026, 7, 25), dt.date(2026, 7, 25), -1649, False): ("f5a2a1fffa172e4c",),
+    (dt.date(2026, 7, 26), dt.date(2026, 7, 27), -899, False): ("3c560229bdc4b57c",),
+    (dt.date(2026, 7, 28), dt.date(2026, 7, 28), -1825, False): ("6dd37c96b0d189cf",),
+    (dt.date(2026, 7, 28), dt.date(2026, 7, 28), 33243, True): ("4d9328ac2fa7c80c",),
+    (dt.date(2026, 7, 29), dt.date(2026, 7, 29), -1532, False): ("f5a2a1fffa172e4c",),
+    (dt.date(2026, 7, 29), dt.date(2026, 7, 29), -699, False): ("c269371d63ba1480",),
+    (dt.date(2026, 7, 29), dt.date(2026, 7, 31), -1495, False): ("858390a3997f60f0",),
+    (dt.date(2026, 7, 31), dt.date(2026, 7, 31), -2199, False): ("1a636dd8e079b658",),
+    (dt.date(2026, 7, 31), dt.date(2026, 8, 1), -1758, False): ("75a08fcf4786f445",),
+    (dt.date(2026, 8, 1), dt.date(2026, 8, 1), -950, False): ("a24b2c8e56f086be",),
+    (dt.date(2026, 8, 3), dt.date(2026, 8, 3), -499, False): ("5d6f7c627ca3c9e7",),
+    (dt.date(2026, 8, 3), dt.date(2026, 8, 4), -1577, False): ("38fd36430a761731",),
+    (dt.date(2026, 8, 3), dt.date(2026, 8, 4), -962, False): ("75a08fcf4786f445",),
+    (dt.date(2026, 8, 5), dt.date(2026, 8, 5), -299, False): ("d90b66da467cc460",),
+    (dt.date(2026, 8, 6), dt.date(2026, 8, 6), 299, True): ("749ef508bc8bb897",),
+    (dt.date(2026, 8, 6), dt.date(2026, 8, 6), 699, True): ("b84af8fddbc2a38e",),
+    (dt.date(2026, 8, 7), dt.date(2026, 8, 7), -2602, False): ("f5a2a1fffa172e4c",),
+    (dt.date(2026, 8, 7), dt.date(2026, 8, 7), 3999, True): ("34a49085e0e8d85e",),
+    (dt.date(2026, 8, 7), dt.date(2026, 8, 8), -1299, False): ("ffbc521a1b2b1dba",),
+    (dt.date(2026, 8, 8), dt.date(2026, 8, 8), -399, False): ("c626c9effca7e3ca",),
+    (dt.date(2026, 8, 8), dt.date(2026, 8, 9), -1356, False): ("75a08fcf4786f445",),
+    (dt.date(2026, 8, 10), dt.date(2026, 8, 10), -899, False): ("043ea2c940d0cf5e",),
+    (dt.date(2026, 8, 11), dt.date(2026, 8, 12), -1457, False): ("75a08fcf4786f445",),
+    (dt.date(2026, 8, 15), dt.date(2026, 8, 16), -1101, False): ("75a08fcf4786f445",),
+    (dt.date(2026, 8, 16), dt.date(2026, 8, 18), -1664, False): ("858390a3997f60f0",),
+    (dt.date(2026, 8, 21), dt.date(2026, 8, 21), -2458, False): ("e46577e4eb60053b",),
+    (dt.date(2026, 8, 23), dt.date(2026, 8, 23), -2000, False): ("191834f20db5b9fa",),
+    (dt.date(2026, 8, 25), dt.date(2026, 8, 25), -2599, False): ("c1c7f8943afdb839",),
+    (dt.date(2026, 8, 28), dt.date(2026, 8, 28), 27248, True): ("4d9328ac2fa7c80c",),
+    (dt.date(2026, 8, 30), dt.date(2026, 9, 1), -499, False): ("1a636dd8e079b658",),
+    (dt.date(2026, 8, 31), dt.date(2026, 8, 31), -2110, False): ("39d12c1da0b4c18a",),
+    (dt.date(2026, 8, 31), dt.date(2026, 9, 1), -29, False): ("75a08fcf4786f445",),
+    (dt.date(2026, 9, 2), dt.date(2026, 9, 3), -33999, False): ("8a19a4bfda703959",),
+    (dt.date(2026, 9, 3), dt.date(2026, 9, 3), -499, False): ("64aa0d2452a1a763",),
+    (dt.date(2026, 9, 4), dt.date(2026, 9, 4), -2370, False): ("f7235a838db819cb",),
+    (dt.date(2026, 9, 4), dt.date(2026, 9, 5), -990, False): ("f5a2a1fffa172e4c",),
+    (dt.date(2026, 9, 5), dt.date(2026, 9, 5), -3900, False): ("87c9af85b668785a",),
+    (dt.date(2026, 9, 5), dt.date(2026, 9, 5), -3350, False): ("fedd93e2400517a8",),
+    (dt.date(2026, 9, 5), dt.date(2026, 9, 5), -2244, False): ("f5a2a1fffa172e4c",),
+    (dt.date(2026, 9, 6), dt.date(2026, 9, 8), -747, False): ("858390a3997f60f0",),
+    (dt.date(2026, 9, 8), dt.date(2026, 9, 8), -399, False): ("d20473fe8f98e338",),
+    (dt.date(2026, 9, 8), dt.date(2026, 9, 9), -2000, False): ("738ba69cfe4459ff",),
+    (dt.date(2026, 9, 10), dt.date(2026, 9, 10), -899, False): ("043ea2c940d0cf5e",),
+    (dt.date(2026, 9, 12), dt.date(2026, 9, 12), -3820, False): ("a4cc3e48250a5978",),
+    (dt.date(2026, 9, 12), dt.date(2026, 9, 12), -3070, False): ("e162e2b7827fa7d3",),
+    (dt.date(2026, 9, 12), dt.date(2026, 9, 13), -6750, False): ("160d43a05c436ba2",),
+    (dt.date(2026, 9, 13), dt.date(2026, 9, 13), -1382, False): ("f5a2a1fffa172e4c",),
+    (dt.date(2026, 9, 14), dt.date(2026, 9, 15), -9349, False): ("2cb914926b2001b6",),
+    (dt.date(2026, 9, 16), dt.date(2026, 9, 16), -1822, False): ("90bda2bf5638bbe9",),
+    (dt.date(2026, 9, 16), dt.date(2026, 9, 17), -3999, False): ("52d14f5eeb7c5efb",),
+    (dt.date(2026, 9, 18), dt.date(2026, 9, 18), -568, False): ("17fdc9bbc87d6253",),
+    (dt.date(2026, 9, 18), dt.date(2026, 9, 19), -2165, False): ("bed0c74b1c83509b",),
+    (dt.date(2026, 9, 19), dt.date(2026, 9, 18), -160, False): ("2a3c164e2204ae75",),
+    (dt.date(2026, 9, 22), dt.date(2026, 9, 22), -500, False): ("2a3c164e2204ae75",),
+    (dt.date(2026, 9, 23), dt.date(2026, 9, 23), -2000, False): ("191834f20db5b9fa",),
+}
+
+
 class TestAmexLiabilityReconcile:
     """`Vorig + Debiteringen - Crediteringen = Nieuw saldo`, per statement, delta 0.
 
@@ -1287,6 +1468,92 @@ class TestAmexSabotage:
         assert balance_gap(
             summary.closing, summary.previous, result.records, Direction.LIABILITY
         ) == drop_gap(removed, Direction.LIABILITY)
+
+
+class TestAmexDescriptionIntegrity:
+    """Descriptions drive the Tier-3 fingerprint, so they must be guarded.
+
+    The balance identities above are insensitive to a changed description: a
+    purchase whose description is silently replaced by page furniture still
+    sums to the same closing balance. That is exactly how a fingerprint shift
+    defeats dedup without tripping the reconciliation tests, so these
+    assertions exist to turn a silent description change into a loud failure.
+    """
+
+    def test_no_amex_description_contains_page_furniture(self) -> None:
+        """A widened furniture filter is only as good as the test that guards it.
+
+        The markers are the ones that actually leaked before LifeOS-epb. The
+        assertion covers both the public `description` and the immutable
+        `raw_data["description"]` because both feed the fingerprint.
+        """
+        require_extractor()
+        offenders: list[tuple[str, str, str]] = []
+        for name, path in statements("amex"):
+            for record in _parse_amex(path, name).records:
+                for field_name, field_value in (
+                    ("description", record.description),
+                    (
+                        "raw_data['description']",
+                        str(record.raw_data.get("description", "")),
+                    ),
+                ):
+                    lowered = field_value.lower()
+                    for marker in _AMEX_FURNITURE_MARKERS:
+                        if marker.lower() in lowered:
+                            offenders.append((name, field_name, marker))
+                            break
+        assert not offenders, (
+            f"{len(offenders)} Amex field(s) contain page furniture; "
+            f"first: {offenders[0] if offenders else ''}"
+        )
+
+    def test_amex_descriptions_match_the_golden_set(self) -> None:
+        """Digested descriptions for all four Amex statements.
+
+        The fixture stores SHA-256 digests instead of plaintext so that a public
+        git history never contains real merchant names, amounts and dates. The
+        regression guarantee is unchanged: any change to any description changes
+        its digest and fails this test. The cost is that the failure message no
+        longer shows the new text; a developer regenerates the digests locally
+        to see the diff.
+        """
+        require_extractor()
+        parsed: dict[tuple[dt.date, dt.date, int, bool], list[str]] = {}
+        for name, path in statements("amex"):
+            for record in _parse_amex(path, name).records:
+                assert record.value_date is not None
+                key = (
+                    record.booked_date,
+                    record.value_date,
+                    record.amount_minor,
+                    record.amount_minor > 0,
+                )
+                parsed.setdefault(key, [])
+                parsed[key].append(_digest_description(record.description))
+
+        extra_keys = sorted(parsed.keys() - AMEX_GOLDEN_DESCRIPTIONS.keys())
+        missing_keys = sorted(AMEX_GOLDEN_DESCRIPTIONS.keys() - parsed.keys())
+        mismatches: list[tuple[tuple[dt.date, dt.date, int, bool], str, str]] = []
+        for key, expected in AMEX_GOLDEN_DESCRIPTIONS.items():
+            if key not in parsed:
+                continue
+            if sorted(parsed[key]) != sorted(expected):
+                mismatches.append((key, str(expected), str(parsed[key])))
+
+        assert not extra_keys, (
+            f"{len(extra_keys)} parsed key(s) are not in the golden set; "
+            f"first: {extra_keys[0]}"
+        )
+        assert not missing_keys, (
+            f"{len(missing_keys)} golden key(s) are missing from the parsed "
+            f"output; first: {missing_keys[0]}"
+        )
+        assert not mismatches, (
+            f"{len(mismatches)} Amex description digest(s) differ from the "
+            f"golden set; first mismatch: key={mismatches[0][0]}, "
+            f"expected_digest={mismatches[0][1]}"
+        )
 
 
 # ---------------------------------------------------------------------------
