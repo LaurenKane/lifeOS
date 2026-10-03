@@ -193,6 +193,58 @@ _CONNECT_RE = re.compile(r"\bconnect\s*\(", re.MULTILINE)
 _UNFINISHED_RE = re.compile(r"\bconnect\s*\(.*<unfinished", re.MULTILINE)
 
 
+# ===========================================================================
+# Strict mode — the difference between a checked gate and a skipped one
+# ===========================================================================
+#
+# Every precondition in this module degrades gracefully. That is right for a
+# contributor laptop and wrong for CI, because a skipped egress test reads in
+# the log as a passed egress test: the job goes green having checked nothing,
+# and the green is the most convincing part.
+#
+# `LIFEOS_REQUIRE_EGRESS=1` inverts the whole module's default. It is set by
+# the `egress-test` job in .github/workflows/ci.yml and by `make
+# egress-test-ci`, and nowhere else, so a contributor without strace is not
+# blocked from running the suite locally.
+#
+# An env var rather than a marker or a second test file because the property
+# being enforced is the *absence of a skip*, and pytest has no flag for that.
+# `--strict-markers`, `-x` and `-W error` all leave a skip a skip.
+
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+EGRESS_REQUIRED = os.environ.get("LIFEOS_REQUIRE_EGRESS", "").strip().lower() in _TRUTHY
+
+_STRACE_MISSING = (
+    "strace is not installed. It is the only thing here that *records* a "
+    "connect() attempt, so without it the egress claim cannot be checked in "
+    "either direction — not proved true and not disproved."
+)
+
+
+def _degrade(detail: str, *, locally: str, can_skip: bool = True) -> None:
+    """Report a missing harness precondition. Never hides it.
+
+    Strict mode: always raises. The job fails with the reason attached, which
+    is the only outcome that cannot be mistaken for coverage.
+
+    Otherwise: skips when `can_skip` is set, and returns when it is not, so
+    the caller can go on with the weaker harness. That second path is the
+    behaviour this module has always documented — strace without a namespace
+    still records the attempt, it just cannot also make it fail — so it stays
+    available locally. It is simply not something CI will accept.
+    """
+    if EGRESS_REQUIRED:
+        raise AssertionError(
+            f"{detail}\n"
+            "CI sets LIFEOS_REQUIRE_EGRESS=1, which turns this into a failure "
+            "instead of a skip: a skipped egress test reads as coverage and is "
+            f"not coverage. Locally this would have degraded to: {locally}"
+        )
+    if can_skip:
+        pytest.skip(f"{detail} Locally this degrades to: {locally}")
+
+
 def _has_strace() -> bool:
     return shutil.which("strace") is not None
 
@@ -281,7 +333,19 @@ def _run_under_trace(
         str(log),
     ]
     wrapper = _unshare_argv()
-    if wrapper is not None:
+    if wrapper is None:
+        # The documented degradation: strace still records the attempt, it just
+        # cannot also make it fail. Strict mode refuses it, because a claim
+        # about an empty network namespace that was checked without the
+        # namespace is not the claim.
+        _degrade(
+            "unprivileged user namespaces are unavailable, so the traced "
+            "process would run with a live network stack",
+            locally="strace-only observation (a connect() would be recorded, "
+            "but nothing would stop it succeeding)",
+            can_skip=False,
+        )
+    else:
         argv.extend(wrapper)
     argv.extend([sys.executable, str(driver)])
 
@@ -342,11 +406,25 @@ def _any_network_syscall(trace: str) -> list[str]:
 # ===========================================================================
 
 
-@pytest.mark.skipif(
-    not _has_strace(),
-    reason="strace is not installed; the egress claim cannot be checked",
-)
 class TestOfflineImportHasNoEgress:
+    @pytest.fixture(autouse=True)
+    def _strace_is_present(self) -> None:
+        """The strace precondition, as a fixture rather than a `skipif`.
+
+        A `skipif` is evaluated at import time and cannot be conditional on
+        "am I in CI", and a skip is the one outcome that must not reach the CI
+        log. As a fixture it runs inside every test in the class, so there is
+        exactly one place where a missing strace is decided: a skip for a
+        contributor, a failure for CI.
+        """
+        if _has_strace():
+            return
+        _degrade(
+            _STRACE_MISSING,
+            locally="both egress tests below are skipped; the harness "
+            "preconditions still run and report",
+        )
+
     def test_offline_import_makes_no_connect_calls(self, tmp_path: Path) -> None:
         """Amex statement -> records -> occurrence indices -> dedup, zero connects.
 
@@ -459,18 +537,30 @@ class TestOfflineImportHasNoEgress:
 
 class TestHarnessPreconditions:
     def test_strace_is_available(self) -> None:
-        """Fail, do not skip.
+        """The strace precondition, and the reason CI cannot silently skip.
 
-        Every test in this module is guarded by `skipif not _has_strace()`.
-        That guard is a convenience for a developer laptop, and a trap in CI: a
-        runner without strace would report "skipped" and the egress gate would
-        go green having checked nothing. This test turns that condition into a
-        hard failure so it is impossible to miss.
+        This is the test that makes a green egress gate mean something. Every
+        other test in this module is guarded by the strace precondition, so a
+        runner without strace reports "skipped" and the gate goes green having
+        checked nothing.
+
+        Under LIFEOS_REQUIRE_EGRESS=1 that is a hard failure (see `_degrade`),
+        which is what the CI job relies on. Locally it is a skip, because a
+        contributor who cannot install strace is not in a position to fix it
+        and should still be able to run the suite. One rule, two modes:
+
+            no strace  ->  skip locally,  fail in CI
+
+        An unconditional `assert` here used to satisfy the CI half and break the
+        local half: `make egress-test` failed on any laptop without strace,
+        which is both unfriendly and inconsistent with every other test here.
         """
-        assert _has_strace(), (
-            "strace is not installed. CI must install it (Debian/Ubuntu: "
-            "`apt-get install -y strace`); otherwise the egress gate silently "
-            "skips. See tests/egress/__init__.py."
+        if _has_strace():
+            return
+        _degrade(
+            _STRACE_MISSING,
+            locally="nothing in this module can be checked, so all of it skips "
+            "(`apt-get install -y strace` to run it)",
         )
 
     def test_the_trace_file_is_actually_written(self, tmp_path: Path) -> None:
@@ -479,6 +569,14 @@ class TestHarnessPreconditions:
         A trace log that silently never gets created would make every
         connect()-counting assertion trivially pass.
         """
+        # Without this guard the `strace` below raises FileNotFoundError, which
+        # is a red run on a machine that simply has no strace. Same rule as
+        # everywhere else in this module.
+        if not _has_strace():
+            _degrade(
+                _STRACE_MISSING,
+                locally="the trace file cannot be checked without strace",
+            )
         driver = tmp_path / "noop.py"
         driver.write_text("value = 1 + 1\n", encoding="utf-8")
         log = tmp_path / "noop.strace"
@@ -508,26 +606,36 @@ class TestHarnessPreconditions:
         assert log.exists(), f"strace wrote no output file at {log}"
 
     def test_unshare_namespace_is_available_or_reported(self) -> None:
-        """Record the namespace status rather than pretending.
+        """The namespace precondition: reported locally, enforced in CI.
 
         Where `unshare -Urn` is unavailable the tests still run and still assert
         on strace's record; they just lose the network-namespace belt. This
         test surfaces that difference instead of letting it pass unnoticed,
         because the namespaces are load-bearing on the machine the claim was
-        written about.
+        written about — and under LIFEOS_REQUIRE_EGRESS=1 it stops being a
+        difference CI accepts at all.
         """
         wrapper = _unshare_argv()
         if wrapper is None:
-            detail = subprocess.run(
-                ["unshare", "-Urn", "--", "/bin/true"],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            pytest.skip(
-                "unprivileged network namespaces are unavailable here "
-                f"({detail.stderr.strip() or 'unshare missing'}); the egress "
-                "tests fall back to strace-only observation"
+            # Two different reasons for `None`, and the message has to
+            # distinguish them. Only shell out when `unshare` is actually
+            # installed: on a host without it, the probe would raise
+            # FileNotFoundError and turn a reportable skip into a red run.
+            if shutil.which("unshare") is None:
+                detail = "unshare is not installed"
+            else:
+                detail = (
+                    subprocess.run(
+                        ["unshare", "-Urn", "--", "/bin/true"],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    ).stderr.strip()
+                    or "unshare -Urn failed with no diagnostic"
+                )
+            _degrade(
+                f"unprivileged network namespaces are unavailable here ({detail})",
+                locally="the egress tests fall back to strace-only observation",
             )
         # If we get here the namespace exists; prove it is actually empty.
         probe = subprocess.run(

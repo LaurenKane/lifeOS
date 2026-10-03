@@ -4,8 +4,9 @@ One place, so "who opened this transaction, and when does it end" has exactly
 one answer in the module. Three things about it are load-bearing rather than
 stylistic:
 
-**The dependency yields a session; it does NOT commit.** `finance.db.session_scope`
-would have been the obvious choice and it is deliberately not used here. It
+**The dependency yields a session; it does NOT commit.** A context manager that
+committed on exit would be the obvious choice and it is deliberately not used
+here. It
 commits when its `with` block exits, which for a FastAPI dependency happens
 *after* the response has been serialised — so a balance-trigger rejection at
 COMMIT would be raised at the wrong moment, as a 500, after the bytes were

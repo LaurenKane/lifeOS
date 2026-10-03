@@ -11,8 +11,8 @@ run `make up-db` yet. The database tests are selected explicitly, by
 `pytest.skip("no database")` when `LIFEOS_TEST_DATABASE_URL` is unset, and it is
 the wrong one. A skipped database test is a green gate that checked nothing,
 which is the specific failure mode this repository's own CI comments rail
-against twice (the strace guard in `tests/egress/`, and the `invariant-negative`
-job). So the fixture calls `pytest.fail` instead: selecting the database tests
+against (the strace guard in `tests/egress/`). So the fixture calls `pytest.fail`
+instead: selecting the database tests
 without a URL is a mistake in the command line, and it is reported as one.
 
 **WHAT THE FIXTURE ACTUALLY DOES.** It does not call
@@ -115,7 +115,7 @@ _NO_URL_MESSAGE: Final[str] = (
     "This fixture FAILS rather than skips, on purpose. A database test that "
     "skips is a green gate that checked nothing, which is the failure mode "
     "this repository's CI comments call out explicitly (see the strace guard in "
-    "tests/egress/ and the invariant-negative job). Selecting these tests "
+    "tests/egress/). Selecting these tests "
     "without a database is a mistake in the command line and is reported as one."
 )
 

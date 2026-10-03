@@ -2,8 +2,8 @@
 
 The project's loudest rule (ARCHITECTURE.md section 6): an amount is an integer
 number of minor units and `currency.decimals` is the authoritative exponent.
-These tests cover both `core.money` and the domain-layer re-export of it,
-because a second Money class would be two answers to "what is a cent".
+`core.money` is the only implementation; a second Money class elsewhere would be
+two answers to "what is a cent".
 
 Synthetic amounts throughout. No real financial data appears in this repository.
 """
@@ -14,9 +14,6 @@ from decimal import ROUND_HALF_EVEN, ROUND_HALF_UP, Decimal
 
 import pytest
 from core.money import Currency, Money
-
-from finance.domain.value_objects import Currency as DomainCurrency
-from finance.domain.value_objects import Money as DomainMoney
 
 EUR = Currency(code="EUR")
 JPY = Currency(code="JPY", decimals=0)
@@ -245,31 +242,6 @@ class TestRendering:
         bare "100" in a log is a bug waiting to be misread.
         """
         assert "EUR" in repr(Money(amount=100, currency=EUR))
-
-
-class TestDomainReExport:
-    """`finance.domain.value_objects.money` re-exports the core implementation.
-
-    One Money, two names. A second class here would be two answers to "what is a
-    cent", which is precisely what this module exists to prevent.
-    """
-
-    def test_same_class(self) -> None:
-        assert DomainMoney is Money
-        assert DomainCurrency is Currency
-
-    def test_isinstance_works_across_both_paths(self) -> None:
-        """The reason it is a re-export rather than a subclass."""
-        money: DomainMoney = DomainMoney(
-            amount=1250, currency=DomainCurrency(code="EUR")
-        )
-        assert isinstance(money, Money)
-        assert isinstance(money, DomainMoney)
-
-    def test_arithmetic_is_identical(self) -> None:
-        assert DomainMoney(amount=100, currency=EUR) + DomainMoney(
-            amount=50, currency=EUR
-        ) == Money(amount=150, currency=EUR)
 
 
 class TestEqualityAndHashing:

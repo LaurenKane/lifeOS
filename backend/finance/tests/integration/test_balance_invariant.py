@@ -1,7 +1,7 @@
 """test_balance_invariant.py — the statement-balance identity, per account type.
 
 No `source_record` or `journal_line` column stores a statement balance
-(`P-NO-HISTORIC-BALANCE`, docs/research/11-real-export-verification.md §4), so
+(`P-NO-HISTORIC-BALANCE`, docs/adr/0003-import-decisions-real-export.md), so
 the identity is asserted nowhere in the schema and has to be asserted here
 instead. It is worth an acceptance test because it is the cheapest completeness
 check that exists: a parser that silently drops a row, mis-signs a credit or

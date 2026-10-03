@@ -1,8 +1,9 @@
 /**
  * The hand-maintained schemas, asserted directly.
  *
- * There is no generated client (`scripts/generate_types.py` emits no real
- * types), so these zod schemas ARE the contract, and the only thing standing
+ * There is no generated client — that generation is unimplemented
+ * (ARCHITECTURE.md §7) — so these zod schemas ARE the contract, and the only
+ * thing standing
  * between a server change and a silently wrong number in an amount column.
  *
  * Two of the cases below came out of running this UI against a real migrated

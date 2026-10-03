@@ -518,9 +518,9 @@ def cmd_probe(args: argparse.Namespace) -> int:
 
     out = Path(f"aspsps-{args.country}.json")
     out.write_text(json.dumps(aspsps, indent=2))
-    print(f"Full list saved to {out}  (commit this to docs/research/ as evidence)")
+    print(f"Full list saved to {out}  (commit this as evidence under docs/)")
     print()
-    print("NEXT: record the answer in docs/research/01-enable-banking-psd2.md,")
+    print("NEXT: record the answer in a bead comment or this guide,")
     print("      update bead LifeOS-1, and close it.")
     return 0
 

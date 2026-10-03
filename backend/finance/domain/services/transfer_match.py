@@ -1,6 +1,7 @@
 """transfer_match.py — the transfer-pair rule.
 
-ARCHITECTURE-PROPOSAL.md section H. Two journal lines are transfer-linked iff:
+docs/adr/0003-import-decisions-real-export.md. Two journal lines are
+transfer-linked iff:
 
 1. different account, same owner (single user, so no owner check here)
 2. opposite signs

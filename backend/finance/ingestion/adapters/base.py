@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import hashlib
 from abc import ABC, abstractmethod
-from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import ClassVar
 
@@ -87,9 +86,8 @@ class ImportResult:
 class ImportAdapter(ABC):
     """Turns one provider's payload into `RawRecord`s.
 
-    Subclasses set the class attributes and implement `parse`. `iter_records` is
-    the streaming entry point for large files; `parse` is the in-memory one that
-    the tests use.
+    Subclasses set the class attributes and implement `parse`, the single
+    entry point.
     """
 
     #: The `import_batch.provider` CHECK value.
@@ -103,11 +101,3 @@ class ImportAdapter(ABC):
     @abstractmethod
     def parse(self, payload: bytes) -> ImportResult:
         """Parse an entire payload."""
-
-    def iter_records(self, payload: bytes) -> Iterator[RawRecord]:
-        """Stream records without holding the whole result in memory.
-
-        Defaults to `parse`; override for sources large enough to matter, which
-        today is the 7-year Amex PDF (M7).
-        """
-        yield from self.parse(payload).records

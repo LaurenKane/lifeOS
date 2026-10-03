@@ -1,6 +1,6 @@
 """IdentityResolver tests — the three dedup tiers.
 
-Section G of docs/ARCHITECTURE-PROPOSAL.md. The property under test throughout
+docs/adr/0003-import-decisions-real-export.md. The property under test throughout
 is the bias: **the default is never "merge"**. A wrong merge destroys a
 transaction; a wrong non-merge is one row in a review queue the user clears in
 seconds. So most of these tests assert that something does NOT auto-link.

@@ -1,6 +1,7 @@
 """identity.py — IdentityResolver, the three dedup tiers.
 
-ARCHITECTURE-PROPOSAL.md section G. The schema is provider-agnostic; only this
+docs/adr/0003-import-decisions-real-export.md. The schema is provider-agnostic;
+only this
 resolver is provider-aware.
 
     Tier 1  provider ID          (account_id, provider_txn_id)   — API only

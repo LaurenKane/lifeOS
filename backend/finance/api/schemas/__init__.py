@@ -1,8 +1,9 @@
 """finance.api.schemas - the Pydantic contract.
 
 Re-exports `finance.public`'s read-only schemas plus the request models that
-appear in the OpenAPI spec. The frontend's TypeScript types are generated from
-this surface by `scripts/generate_types.py`; a change here is a contract change.
+appear in the OpenAPI spec. The frontend's TypeScript types are *supposed* to be
+generated from this surface, but that generation is not implemented
+(ARCHITECTURE.md §7); a change here is a contract change nothing checks.
 
 Imports are absolute. `core` and `finance` are sibling packages under the
 `backend/` import root, so `from core.datetime import ...` is correct and
@@ -14,7 +15,6 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
-from core.money import Currency
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from finance.public import (
@@ -23,12 +23,9 @@ from finance.public import (
     AccountType,
     CategoryKind,
     CategorySummary,
-    DedupeOutcome,
-    FingerprintResult,
     RawRecord,
     TransactionStatus,
     TransactionSummary,
-    TransferLink,
 )
 
 __all__ = [
@@ -38,9 +35,6 @@ __all__ = [
     "AccountType",
     "CategoryKind",
     "CategorySummary",
-    "CurrencyInfo",
-    "DedupeOutcome",
-    "FingerprintResult",
     "ImportRequest",
     "ManualTransactionRequest",
     "ManualTransactionUpdate",
@@ -49,7 +43,6 @@ __all__ = [
     "RawRecord",
     "TransactionStatus",
     "TransactionSummary",
-    "TransferLink",
 ]
 
 
@@ -57,17 +50,6 @@ class _Write(BaseModel):  # type: ignore[explicit-any]
     """Base for request models: mutable, closed to unknown fields."""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-
-
-class CurrencyInfo(_Write):  # type: ignore[explicit-any]
-    """A currency and the exponent that gives its minor units meaning."""
-
-    code: str = Field(min_length=3, max_length=3, pattern=r"^[A-Z]{3}$")
-    decimals: int = Field(ge=0, le=18)
-    name: str | None = None
-
-    def to_domain(self) -> Currency:
-        return Currency(code=self.code, decimals=self.decimals, name=self.name)
 
 
 class AccountCreateRequest(_Write):  # type: ignore[explicit-any]

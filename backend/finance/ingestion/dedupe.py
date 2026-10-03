@@ -2,8 +2,7 @@
 
 Pure logic over already-stored rows. No database: the caller passes in what
 exists and gets back a decision. That is what makes the dedup rules testable
-without a Postgres instance, which is why the reference implementations are not
-worth studying for behaviour (ARCHITECTURE-PROPOSAL.md section B).
+without a Postgres instance (docs/adr/0003-import-decisions-real-export.md).
 
 Two responsibilities, kept separate because they fail differently:
 

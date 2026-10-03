@@ -26,8 +26,9 @@ a seeded `equity` account `+40.50`, and when that account cannot be resolved the
 request is REFUSED. A silently mis-posted expense is far worse than a refused
 one.
 
-**Every write is inside `with session.begin()`.** Not `session_scope()`: a
-FastAPI dependency's teardown runs after the response is serialised, so a commit
+**Every write is inside `with session.begin()`.** Not a committing context
+manager: a FastAPI dependency's teardown runs after the response is serialised,
+so a commit
 rejected by the deferred balance trigger would surface as a 500 after the bytes
 were already sent. See `finance.api.deps`.
 

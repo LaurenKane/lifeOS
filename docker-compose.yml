@@ -1,4 +1,4 @@
-# Life OS — local stack: db, api, worker, frontend.
+# Life OS — local stack: db, api, frontend.
 #
 # ISOLATION. This file is namespaced `lifeos` and must stay that way. The same
 # Docker daemon runs unrelated stacks: a Supabase set for the LifeManager
@@ -52,8 +52,8 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
-    # Not published. Only api and worker need it, and they are on the compose
-    # network. Publishing it would put a Postgres on the host's loopback with a
+    # Not published. Only api needs it, and it is on the compose network.
+    # Publishing it would put a Postgres on the host's loopback with a
     # guessable password for no benefit.
     expose:
       - "5432"
@@ -118,51 +118,6 @@ services:
       retries: 5
       start_period: 10s
     # The app writes nothing to disk, so the root filesystem can be read-only.
-    read_only: true
-    tmpfs:
-      - /tmp
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-
-  worker:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-    restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy
-    environment:
-      LIFEOS_DATABASE_URL: ${LIFEOS_DATABASE_URL:-postgresql://lifeos:lifeos@db:5432/lifeos}
-      LIFEOS_DEBUG: ${LIFEOS_DEBUG:-false}
-      LIFEOS_APP_ID: ${LIFEOS_APP_ID:-}
-      LIFEOS_ENABLE_BANKING_CLIENT_ID: ${LIFEOS_ENABLE_BANKING_CLIENT_ID:-}
-    command:
-      - /bin/sh
-      - -c
-      - |
-        # M0 has an empty job registry — the registry and the tables it
-        # schedules against land in M1 (bead LifeOS-6). So the worker idles on a
-        # health heartbeat instead of pretending to run jobs it does not have.
-        # Each beat is a real set of imports, not a hardcoded "pass".
-        #
-        # Note this never opens a database connection, by design: worker.py is
-        # DB-free at import time on purpose, so a Postgres outage makes the
-        # worker unavailable, not undebuggable.
-        while :; do
-          lifeos-worker health-check >/dev/null || exit 1
-          sleep 30
-        done
-    healthcheck:
-      # The same CLI the worker runs. If an import breaks, the healthcheck is
-      # the first thing that notices.
-      test: ["CMD", "lifeos-worker", "health-check"]
-      interval: 15s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
     read_only: true
     tmpfs:
       - /tmp

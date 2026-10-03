@@ -135,7 +135,8 @@ class SourceRecord(Base):
     account_id: Mapped[int] = mapped_column(ForeignKey("account.id"), nullable=False)
     # Enable Banking's entry_reference. NULL on every v1 PDF path: Amex IDs
     # change between statements, and Rabobank's End-to-End ID is unusable
-    # (docs/research 11 section 3.4). A nullable provider key is not a defect,
+    # (docs/adr/0003-import-decisions-real-export.md). A nullable provider key is
+    # not a defect,
     # it is the honest description of four of the five providers.
     provider_txn_id: Mapped[str | None] = mapped_column(Text, nullable=True)
 

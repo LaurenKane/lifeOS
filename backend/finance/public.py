@@ -10,7 +10,7 @@ What may appear here:
 
 What may not:
     - business logic (that is `finance.domain.services`)
-    - database access (that is `finance.api.routes` / `finance.background`)
+    - database access (that is `finance.api.routes`)
     - re-exports of anything under `finance.domain` or `finance.ingestion`
 
 Every schema is frozen. A consumer cannot mutate a shared response object, and
@@ -28,7 +28,6 @@ from __future__ import annotations
 
 from datetime import date
 from enum import StrEnum
-from typing import Protocol, runtime_checkable
 
 from core.money import Currency, Money
 from pydantic import BaseModel, ConfigDict
@@ -39,16 +38,11 @@ __all__ = [
     "AccountType",
     "CategoryKind",
     "CategorySummary",
-    "DedupeOutcome",
-    "FingerprintResult",
-    "ICategoryClassifier",
-    "IDeduplicator",
-    "ITransferMatcher",
-    "MoneyLike",
+    "Currency",
+    "Money",
     "RawRecord",
     "TransactionStatus",
     "TransactionSummary",
-    "TransferLink",
 ]
 
 
@@ -62,7 +56,7 @@ class AccountType(StrEnum):
     """The account taxonomy. Asset and liability are separate fields on purpose:
 
     direction + signed amounts is a self-contradictory encoding (see
-    ARCHITECTURE-PROPOSAL.md section E).
+    docs/adr/0005-schema-ownership.md).
     """
 
     CHECKING = "checking"
@@ -159,48 +153,14 @@ class CategorySummary(_ReadOnly):  # type: ignore[explicit-any]
     is_system: bool = False
 
 
-class FingerprintResult(_ReadOnly):  # type: ignore[explicit-any]
-    """A computed Tier-3 fingerprint.
-
-    Exposed so another module can check a fingerprint it computed elsewhere
-    against ours without importing `finance.ingestion`.
-    """
-
-    fingerprint: str
-    occurrence_index: int = 1
-
-
-class DedupeOutcome(_ReadOnly):  # type: ignore[explicit-any]
-    """What the resolver decided about one incoming record.
-
-    `duplicate_of` names the canonical record when `is_duplicate` is True.
-    `needs_review` marks the 0.50-0.85 confidence band: the pipeline creates the
-    transaction AND queues it, rather than guessing a merge.
-    """
-
-    is_duplicate: bool
-    tier: int
-    duplicate_of: int | None = None
-    confidence: float = 0.0
-    needs_review: bool = False
-
-
-class TransferLink(_ReadOnly):  # type: ignore[explicit-any]
-    """A matched pair of journal lines, both sides of the same movement."""
-
-    outbound_entry_id: int
-    inbound_entry_id: int
-    match_method: str
-    confidence: float
-
-
 class RawRecord(_ReadOnly):  # type: ignore[explicit-any]
     """One source row, provider-agnostic.
 
     Every adapter emits this shape regardless of source: that is the whole
-    point (ARCHITECTURE-PROPOSAL.md section C). Only the IdentityResolver is
+    point (docs/adr/0002-import-provider-enum.md). Only the IdentityResolver is
     provider-aware. `raw_data` is the exact row as received and is immutable
-    forever — the `raw_data_immutable` invariant.
+    forever - the `raw_data_immutable` rule, now enforced by a database trigger
+    (docs/adr/0006-balance-trigger-and-db-invariants.md).
 
     `account_id` is None when the row has not been attributed to an account
     yet. It used to be `""` for exactly that case, which was a sentinel
@@ -220,60 +180,7 @@ class RawRecord(_ReadOnly):  # type: ignore[explicit-any]
     raw_data: dict[str, str | int | float | bool | None] = {}
 
 
-# ── Protocols ───────────────────────────────────────────────────────
-# runtime_checkable so a caller can isinstance-check a duck-typed
-# implementation without importing the class.
-
-
-@runtime_checkable
-class IDeduplicator(Protocol):
-    """Decides whether an incoming record duplicates an existing one.
-
-    Implementations own all three tiers (ARCHITECTURE-PROPOSAL.md section G).
-    """
-
-    def identify(self, record: RawRecord) -> DedupeOutcome:
-        """Classify one incoming record against what is already stored."""
-        ...
-
-
-@runtime_checkable
-class ITransferMatcher(Protocol):
-    """Decides whether two journal lines are the two halves of one movement.
-
-    Implementations must default to "create new + queue for review" over
-    "guess and merge".
-    """
-
-    def match(self, outbound_id: int, inbound_id: int) -> TransferLink | None:
-        """Return the link if these two lines are a transfer pair, else None."""
-        ...
-
-
-@runtime_checkable
-class ICategoryClassifier(Protocol):
-    """Assigns a category, or says it cannot.
-
-    A `None` category with `needs_review` is a valid, expected answer.
-    """
-
-    def classify(self, record: RawRecord) -> CategorySummary | None:
-        """Return the chosen category, or None to queue for manual review."""
-        ...
-
-
-# ── Convenience types ───────────────────────────────────────────────
+# ── Convenience re-exports ──────────────────────────────────────────
 # Money and Currency are shared primitives from `core`, not domain internals, so
-# re-exporting them here leaks nothing. `MoneyLike` is the alias other modules
-# should import rather than reaching past this surface.
-MoneyLike = Money
-CurrencyLike = Currency
-
-
-def is_valid_currency_code(code: str) -> bool:
-    """Whether `code` looks like an ISO 4217 alphabetic code.
-
-    Shape only. Whether the currency is one we actually hold is a database
-    question, answered against the `currency` table.
-    """
-    return len(code) == 3 and code.isalpha() and code.isupper()
+# re-exporting them here leaks nothing: a consumer that may only import this
+# module still gets the types its arithmetic needs.

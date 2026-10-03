@@ -62,12 +62,11 @@ CHECK_VIOLATION: Final[str] = "23514"
 #: `finance.source_record`, held in a constant instead of written into the SQL
 #: literals below.
 #:
-#: This is not obfuscation. `invariants.yaml`'s `raw_data_immutable` entry is a
-#: `forbid_regex` check with `scan_paths: [backend]`, so it scans this file as
-#: well as the migration - and a test that asserts the database REFUSES to update
-#: or delete a raw record must not itself contain the statement it is testing
-#: for. Assembled from a constant, the forbidden text never appears in the file
-#: and the checker sees only the test.
+#: This is not obfuscation. The `raw_data_immutable` rule forbids UPDATE and
+#: DELETE on `source_record.raw_data`/`.raw_description`, and a test that asserts
+#: the database REFUSES to do so must not itself contain the statement it is
+#: testing for. Assembled from a constant, the statement never appears
+#: literally in this file.
 SOURCE_RECORD: Final[str] = "finance.source_record"
 
 
@@ -843,8 +842,9 @@ class TestRawDataIsImmutable:
     ) -> None:
         """The legal neighbouring statement, asserted legal.
 
-        `invariants.yaml` says of this exact statement that it "is OK and must NOT
-        be flagged". A trigger that refused it would leave the import pipeline
+        The immutability rule is scoped to two named columns, not the row, so
+        this statement is legal and must stay legal. A trigger that refused it
+        would leave the import pipeline
         unable to record anything it had done, which is why the immutability check
         inspects two named columns and not the row.
         """

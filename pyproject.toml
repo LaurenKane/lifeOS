@@ -4,11 +4,11 @@ build-backend = "hatchling.build"
 
 # backend/ is the IMPORT ROOT, not a package. `sources = ["backend"]` strips the
 # prefix so `core/` and `finance/` install as top-level sibling packages
-# (docs/ARCHITECTURE-PROPOSAL.md section D: core/ is a SIBLING of finance/,
-# not a parent). That is what makes `from core.money import Money` correct.
+# (ARCHITECTURE.md §3: core/ is a SIBLING of finance/, not a parent). That is
+# what makes `from core.money import Money` correct.
 # `packages = ["backend"]` would install a `backend.*` package instead, which
-# breaks every absolute import and does not match the console-script targets
-# (`main:app`, `finance.background.worker:main`).
+# breaks every absolute import and does not match the console-script target
+# (`main:app`).
 [tool.hatch.build.targets.wheel]
 only-include = ["backend"]
 sources = ["backend"]
@@ -39,15 +39,10 @@ dev = [
     "ruff",
     "mypy",
     "pytest",
-    "pytest-cov",
-    "import-linter",
-    # tests/invariants/ parses invariants.yaml.
-    "pyyaml",
 ]
 
 [project.scripts]
 lifeos = "main:app"
-lifeos-worker = "finance.background.worker:main"
 
 [tool.ruff]
 line-length = 88
@@ -62,7 +57,6 @@ select = ["E", "F", "I", "N", "W", "B", "C", "T"]
 # Generated revision stubs follow Alembic's fixed layout, and the CLI's whole
 # job is printing to stdout.
 "backend/*/alembic/versions/*.py" = ["E501"]
-"backend/finance/background/worker.py" = ["T201"]
 # FastAPI's dependency-injection idiom is a call in a default argument.
 "backend/finance/api/routes/imports.py" = ["B008"]
 
@@ -78,8 +72,8 @@ mypy_path = "backend"
 explicit_package_bases = false
 
 [tool.pytest.ini_options]
-# backend/tests is cross-module only (section D); a module's own tests live
-# beside it in backend/finance/tests/. `tests/` holds repo-level invariant tests.
+# backend/tests is cross-module only; a module's own tests live beside it in
+# backend/finance/tests/. `tests/` holds repo-level tests (zero-egress).
 testpaths = ["backend/tests", "backend/finance/tests", "tests"]
 # backend/ is the import root, so `core` and `finance` are top-level packages.
 pythonpath = ["backend"]

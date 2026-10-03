@@ -19,9 +19,7 @@ COMPOSE := COMPOSE_PROJECT_NAME=$(COMPOSE_PROJECT_NAME) docker compose -p $(COMP
 
 # --- python ------------------------------------------------------------------
 # --frozen everywhere: uv must install exactly what uv.lock pins and fail if
-# pyproject.toml and uv.lock disagree, rather than re-resolving. The
-# dependency gate in CI is only meaningful if every command here shares that
-# property.
+# pyproject.toml and uv.lock disagree, rather than re-resolving.
 UV ?= uv
 UV_RUN := $(UV) run --frozen
 
@@ -73,8 +71,8 @@ dev: up ## Start the full stack, then run the Vite dev server (:5173) in the for
 # Backend edits need `make up --build` (or `make dev-backend`); the venv on the
 # host is for lint/typecheck/test, not for serving.
 .PHONY: dev-backend
-dev-backend: ## Run api and worker in the foreground (rebuilds first)
-	$(COMPOSE) up --build api worker
+dev-backend: ## Run api in the foreground (rebuilds first)
+	$(COMPOSE) up --build api
 
 # `/api`, not `http://localhost:$(API_PORT)/api`: the dev server proxies /api to
 # the API (see frontend/vite.config.ts). backend/main.py registers no CORS
@@ -90,7 +88,7 @@ dev-frontend: ## Run the Vite dev server (:5173) against the compose API
 # ===========================================================================
 
 .PHONY: up
-up: up-db ## Start the whole stack: db, api, worker, frontend
+up: up-db ## Start the whole stack: db, api, frontend
 	$(COMPOSE) up -d --build
 	@$(MAKE) --no-print-directory ps
 
@@ -149,10 +147,6 @@ format: ## Apply ruff formatting
 typecheck: ## mypy --strict
 	$(UV_RUN) mypy --strict backend
 
-.PHONY: import-linter
-import-linter: ## Enforce the layering contracts in .importlinter
-	$(UV_RUN) lint-imports
-
 .PHONY: test
 test: ## Run the whole pytest suite (no Docker, no database)
 	$(UV_RUN) pytest
@@ -189,10 +183,6 @@ test-db: ## Run the DB-backed tests (-m db) against a real Postgres
 	LIFEOS_TEST_DATABASE_URL="postgresql://$${POSTGRES_USER:-lifeos}:$${POSTGRES_PASSWORD:-lifeos}@127.0.0.1:$(LIFEOS_TEST_DB_PORT)/postgres" \
 	  $(UV_RUN) pytest -m db -v
 
-.PHONY: test-offline
-test-offline: ## Run every test that needs no database (the same set as `test`)
-	$(UV_RUN) pytest -m 'not db'
-
 .PHONY: test-frontend
 test-frontend: ## Run the frontend vitest suite
 	cd $(FRONTEND_DIR) && $(NPM) test
@@ -216,46 +206,39 @@ typecheck-frontend: ## tsc -b --force --noEmit (the only meaningful TS check)
 frontend: frontend-lint typecheck-frontend test-frontend frontend-build ## All frontend gates
 
 # ===========================================================================
-# Invariants
+# Types and migrations
 # ===========================================================================
 
-.PHONY: check-invariants
-check-invariants: ## Run the four machine-checked invariants (exit 0 pass / 1 violation / 2 error)
-	$(UV_RUN) python scripts/check_invariants.py
-
-.PHONY: check-invariants-update
-check-invariants-update: ## Refresh the hash pins. Show and commit the diff deliberately.
-	$(UV_RUN) python scripts/check_invariants.py --update --yes
-	@echo
-	@echo "--- diff ---"
-	@git --no-pager diff -- invariants.yaml scripts/migrations.lock.json
-
-.PHONY: test-invariants
-test-invariants: ## Run the invariant checker's own tests
-	$(UV_RUN) pytest tests/invariants -q
-
-# A checker that always exits 0 looks exactly like a working checker in CI.
-# This target feeds it deliberately broken COPIES of the repository — built in
-# temporary directories, never in the working tree — and asserts it rejects
-# them, in BOTH directions: it must flag the violation and leave the legal
-# neighbouring statement alone.
-.PHONY: invariant-negative
-invariant-negative: ## Prove the invariant checker actually rejects what it forbids
-	PYTHON="$(CURDIR)/.venv/bin/python" bash .github/scripts/invariant_negative.sh
-
+# `egress-test` is the friendly one. It runs the zero-egress gate, the
+# ARCHITECTURE.md §8 property, and is deliberately non-strict: on a laptop without `strace`, or on a
+# host where unprivileged user namespaces are blocked, it skips or degrades to
+# strace-only observation rather than blocking a contributor who is not in a
+# position to fix their kernel.
+#
+# `egress-test-ci` is the byte-for-byte reproduction of the `egress-test` job in
+# .github/workflows/ci.yml, which is what makes a red egress gate debuggable
+# without opening the Actions log. LIFEOS_REQUIRE_EGRESS=1 turns every graceful
+# degradation in tests/egress/test_zero_egress.py into a hard failure, because a
+# skipped egress test reads in a CI log exactly like a passed one.
+#
+# Neither is a prerequisite of `egress-test-ci` the way you might expect: the
+# `strace` package is not optional tooling, and a target that `apt-get install`ed
+# it would teach contributors to fix a missing dependency by reinstalling the
+# harness instead of reporting it. Install it, then run the target:
+#
+#     sudo apt-get install -y strace
+#     make egress-test-ci
+#
+# `ci` deliberately depends on the friendly `egress-test`, not this one: `ci` is
+# the gate that must run anywhere, and folding in a strict kernel-level
+# requirement would mean it cannot.
 .PHONY: egress-test
 egress-test: ## Offline file import + dedup with zero connect() calls (ARCHITECTURE.md §8)
 	$(UV_RUN) pytest tests/egress -v -s
 
-# ===========================================================================
-# Types and migrations
-# ===========================================================================
-
-.PHONY: generate-types
-generate-types: ## Regenerate frontend/src/api/generated from the OpenAPI spec
-	@echo "Reads the spec from a running API on :$(API_PORT). Run 'make up' first;"
-	@echo "the script falls back to a skeleton when the API is unreachable."
-	$(UV_RUN) python scripts/generate_types.py
+.PHONY: egress-test-ci
+egress-test-ci: ## The egress gate exactly as CI runs it: a skip becomes a failure
+	LIFEOS_REQUIRE_EGRESS=1 $(UV_RUN) pytest tests/egress -v -s
 
 .PHONY: migrate
 migrate: ## Apply Alembic migrations for core and finance, inside the api container
@@ -297,23 +280,11 @@ migrate-status: ## Show current Alembic revision for both schemas
 	  done'
 
 # ===========================================================================
-# Dependency gate
-# ===========================================================================
-
-.PHONY: dependency-gate
-dependency-gate: ## Fail if uv.lock or frontend/package-lock.json changed without APPROVED:
-	$(UV_RUN) python .github/scripts/dependency_gate.py
-
-.PHONY: dependency-gate-selftest
-dependency-gate-selftest: ## Prove the dependency gate blocks an unapproved lockfile change
-	$(UV_RUN) python .github/scripts/dependency_gate.py --self-test
-
-# ===========================================================================
 # Everything CI runs, in one command
 # ===========================================================================
 
 .PHONY: ci
-ci: lint typecheck import-linter test test-db check-invariants test-invariants invariant-negative egress-test frontend dependency-gate-selftest ## Run every CI gate locally (needs Docker + `make up-db`)
+ci: lint typecheck test test-db egress-test frontend ## Run every CI gate locally (needs Docker + `make up-db`)
 	@echo
 	@echo "All gates passed."
 

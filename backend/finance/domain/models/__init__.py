@@ -68,7 +68,6 @@ from sqlalchemy import BigInteger, DateTime, MetaData, func
 from sqlalchemy.orm import DeclarativeBase, MappedColumn, mapped_column
 
 __all__ = [
-    "AMOUNT_TYPE",
     "NAMING_CONVENTION",
     "SCHEMA",
     "Base",
@@ -81,10 +80,6 @@ __all__ = [
 #: metadata below; repeated here because every other layer needs it too, and
 #: this is the module that owns the schema's name.
 SCHEMA: Final[str] = "finance"
-
-#: Every money column is a signed BIGINT of minor units. The exponent lives in
-#: `currency.decimals`, which is the only authority for interpreting it.
-AMOUNT_TYPE: Final = BigInteger
 
 # Deterministic constraint names. Alembic autogenerate emits better diffs when
 # constraint names are not random, and a name is required to drop or alter a

@@ -8,10 +8,8 @@ decides where the other half of the entry goes is testable without Postgres, and
 the code that writes the rows has nothing left to decide.
 
 NOT re-exported from `finance/domain/services/__init__.py`, deliberately.
-That package's contract is "re-export surface only", and
-`backend/tests/test_import_smoke.py::test_services_package_defines_nothing_itself`
-pins its exact `__all__`. Adding an entry here is a change to a cross-module
-contract, not to this module, so it is not this milestone's to make.
+That package's contract is "re-export surface only", so adding an entry here is a
+change to a cross-module contract rather than to this module.
 
 
 WHY A COUNTER-LEG CONVENTION EXISTS AT ALL

@@ -7,7 +7,7 @@ are deliberately untyped and this file is excluded from the mypy gate (see
 `target_metadata` stays None: `core` holds no tables of its own. Its only
 object is the Alembic bookkeeping table, which Alembic creates itself, and
 pointing it at another module's metadata would be `core` knowing about finance
-- the coupling `.importlinter` contract 0 exists to prevent.
+- the coupling rule 1 in `backend/core/__init__.py` exists to prevent.
 
 The `search_path` and the URL handling are identical to
 `backend/finance/alembic/env.py`, with `core` in place of `finance`. That

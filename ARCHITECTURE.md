@@ -5,21 +5,20 @@ A personal financial single-user OS for EU residents. Tracks transactions across
 
 ---
 
-## 2. Module map (from §D)
+## 2. Module map
 
 ```
 life-os/
-├── AGENTS.md                  # agent rules; points to ARCHITECTURE.md + invariants.yaml
-├── ARCHITECTURE.md            # module map, layer diagram, invariants (≤200 lines)
-├── invariants.yaml            # machine-checkable invariants
-├── docker-compose.yml         # db, api, worker, frontend
-├── Makefile                   # dev, test, migrate, generate-types, check-invariants
+├── AGENTS.md                  # agent rules; points to ARCHITECTURE.md + SAFETY.md
+├── ARCHITECTURE.md            # this file
+├── SAFETY.md                  # read before any destructive command
+├── docker-compose.yml         # db, api, frontend
+├── Makefile                   # dev, test, migrate, verify-no-secrets
 ├── pyproject.toml             # uv
 ├── docs/
-│   ├── ARCHITECTURE-PROPOSAL.md   # companion: the full design this summarises
-│   ├── RECOMMENDATION.md          # final recommendation, risks, decisions required
-│   ├── research/                  # the 11 research reports
-│   └── adr/                       # one ADR per consequential decision
+│   ├── adr/                       # one ADR per consequential decision
+│   ├── ENABLE-BANKING-SETUP.md
+│   └── legal/
 ├── backend/
 │   ├── main.py                 # app factory, mounts routers
 │   ├── config.py               # pydantic-settings
@@ -30,15 +29,15 @@ life-os/
 │   │   ├── domain/             # PRIVATE
 │   │   │   ├── models/         # SQLAlchemy ORM
 │   │   │   ├── value_objects/  # Money, Currency, DateRange
-│   │   │   └── services/       # pure logic: dedupe, transfer_match, categorize, budget
+│   │   │   └── services/       # pure logic: transfer_match, categorize, budget
 │   │   ├── ingestion/          # THE COMPLEXITY LIVES HERE
 │   │   │   ├── adapters/       # enable_banking.py, amex_pdf.py, manual.py
-│   │   │   │                   # + rabobank_pdf.py, revolut_pdf.py — declared providers,
-│   │   │   │                   #   adapters to come (docs/adr/0002-import-provider-enum.md).
-│   │   │   │                   #   amex_csv.py / revolut_csv.py remain for replay but are
-│   │   │   │                   #   unreachable via V1_PROVIDERS.
+│   │   │   │                   # + rabobank_pdf.py, revolut_pdf.py (all v1
+│   │   │   │                   #   providers, docs/adr/0002-import-provider-enum.md).
+│   │   │   │                   #   amex_csv.py / revolut_csv.py were deleted:
+│   │   │   │                   #   retired/deferred per ADR 0002.
 │   │   │   │   ├── normalize.py
-│   │   │   │   ├── fingerprint.py  # FROZEN once shipped (invariant)
+│   │   │   │   ├── fingerprint.py  # FROZEN once shipped (see §4)
 │   │   │   │   ├── identity.py     # IdentityResolver — 3 tiers
 │   │   │   │   ├── dedupe.py
 │   │   │   │   ├── transfer_match.py
@@ -47,22 +46,16 @@ life-os/
 │   │   │   │   ├── routes/         # accounts, transactions, imports, review, categories
 │   │   │   │   └── schemas/        # Pydantic = the public contract
 │   │   │   ├── public.py           # exports ONLY protocols + read-only schemas
-│   │   │   ├── background/         # scheduler + jobs + CLI
 │   │   │   └── tests/{unit,integration,fixtures}/
 │   └── tests/                  # cross-module only
 ├── frontend/
 │   ├── src/
-│   │   ├── api/generated/      # OpenAPI codegen — DO NOT EDIT
 │   │   ├── components/         # shadcn/ui
 │   │   ├── features/finance/   # transactions, review, imports, budgets
 │   │   ├── lib/
 │   │   └── routes/
 │   └── tests/
-├── scripts/
-│   ├── generate_types.py
-│   ├── check_invariants.py
-│   └── migrate.sh
-└── .github/workflows/          # lint, typecheck, test, invariant-check, egress-test
+└── .github/workflows/ci.yml    # check (ruff, mypy, pytest) + db (pytest -m db)
 ```
 
 ---
@@ -70,7 +63,7 @@ life-os/
 ## 3. Layer/dependency diagram (critical: arrows point inward)
 
 ```
-          frontend TS (generated from OpenAPI)
+          frontend TS (hand-written; see §7)
                          ↓
                           api
                          / \
@@ -89,32 +82,51 @@ life-os/
 - `core/` never imports `finance/`
 - `finance/public.py` exports only protocols + read-only schemas
 
+⚠️ **These four rules are conventions, not gates.** Nothing in CI checks them;
+mypy and ruff do not reason about layering. A violation is caught in review, or
+by a test that happens to import both sides, or not at all. That was deliberately
+accepted over the old static import checker: the contracts it enforced cost more
+than they
+caught, and one of them (`domain` must not import `ingestion`) had caused real
+duplication — two copies of `trigram_similarity`, one returning `Decimal` and one
+returning `float` — rather than preventing any.
+
 ---
 
-## 4. Four machine-checked invariants (table)
+## 4. Integrity rules, and what actually enforces them
 
-| Name                | What it forbids                                                                 | How enforced (static check / manifest / hash pin) | Checker location |
+There is no invariant checker. There are database triggers and tests. If a rule
+below is not enforced by one of those two, it is enforced by nothing but review,
+and the table says so.
+
+| Rule | What it forbids | Enforced by | Since |
 |---|---|---|---|
-| `raw_data_immutable` | `source_record.raw_data` or `.raw_description` ever UPDATE/DELETE | Python static check + CI guard + **DB trigger (M1)** | `scripts/check_invariants.py` |
-| `no_cross_schema_fk` | FKs crossing Postgres schemas (e.g. `finance` → `health`) | Static scan of migration SQL only — the `GRANT`s in the bootstrap do **not** enforce this | CI job `check-invariants` |
-| `migrations_immutable` | Applied Alembic revisions ever edited in place | Manifest hash comparison (alembic heads vs recorded) | CI job `check-invariants` |
-| `fingerprint_frozen` | `backend/finance/ingestion/fingerprint.py` SHA-256 hash changed | Hash pinned in `invariants.yaml`; CI fails on drift | CI job `check-invariants` |
+| `raw_data_immutable` | `source_record.raw_data` or `.raw_description` ever UPDATE/DELETE | **DB row trigger**, asserted by `pytest -m db` (`test_balance_db.py`) | M1 |
+| balance identity | a journal entry that does not sum to zero at commit; an entry with <2 legs; a re-parented line | **DB constraint trigger**, asserted by `pytest -m db` | M1 |
+| schema ownership | FKs crossing Postgres schemas (e.g. `finance` → `health`) | Review only. The `GRANT`s in the bootstrap do **not** enforce it | — |
+| `fingerprint_frozen` | `backend/finance/ingestion/fingerprint.py` changed | The golden digest in `backend/finance/tests/unit/test_fingerprint.py` | M1 |
 
-**Not among them, deliberately.** The per-account-type balance identity is an arithmetic identity
-over *parsed rows* whose right-hand side lives in the uploaded statement, not in this repo, and no
-checker kind available (`forbid_regex`, `hash`, `manifest`) executes a parse. It is a **required
-adapter acceptance test**, not an invariant entry. Full rationale:
+`migrations_immutable` — applied Alembic revisions must never be edited in place —
+has **no** enforcement. It was previously a hash manifest over an empty set of
+revisions, which asserted nothing. Treat editing a released migration as a bug
+caught in review.
+
+**Not a rule, deliberately.** The per-account-type balance identity is an
+arithmetic identity over *parsed rows* whose right-hand side lives in the uploaded
+statement, not in this repo, so no schema constraint can express it. It is a
+**required adapter acceptance test**
+(`backend/finance/tests/integration/test_balance_invariant.py`). Full rationale:
 `docs/adr/0003-import-decisions-real-export.md` Decision 2.
 
 ---
 
 ## 5. M0 / M1 boundary
 
-**M0 (done):** Repo skeleton, Docker Compose (db/api/worker/frontend), Alembic, `ARCHITECTURE.md`,
-`invariants.yaml`, CI with invariant + egress checks. Static checkers only — no DB-level triggers.
+**M0 (done):** Repo skeleton, Docker Compose (db/api/frontend), Alembic, `ARCHITECTURE.md`,
+CI with lint/typecheck/pytest and the zero-egress check.
 
 **M1 (bead LifeOS-6, landed 2026-10-03):** revision `0001_finance_ledger_schema.py` is applied to
-the dev database and hash-pinned in `scripts/migrations.lock.json`; every balance case was verified
+the dev database; every balance case was verified
 against a live Postgres 17 *before* the pin was recorded. Before M1 the ledger was **not** protected
 at the DB level. It now enforces: a journal entry sums to zero **at commit**; an entry has ≥2 legs
 including the zero-leg case; re-parenting a line re-checks *both* ends so it cannot orphan an entry;
@@ -130,9 +142,9 @@ Three traps, each verified by execution rather than assumed:
 - **The triggers are not a complete integrity boundary.** `TRUNCATE` bypasses them, `AUTOCOMMIT`
   reverts the check to per-row, and `SET CONSTRAINTS ALL IMMEDIATE` breaks multi-line writes. Every
   journal write belongs in an explicit transaction.
-- **Two invariants are enforced by a weaker mechanism than their name implies.** `raw_data_immutable`
+- **Two rules are enforced by a weaker mechanism than their name implies.** `raw_data_immutable`
   is trigger-enforced (a row trigger cannot reject an *identical-value* assignment, so a privilege
-  layer is deferred); `no_cross_schema_fk` is enforced by the regex, not by grants.
+  layer is deferred); `no_cross_schema_fk` is enforced by nothing at all — see §4.
 
 Rationale: `docs/adr/0006-balance-trigger-and-db-invariants.md`,
 `docs/adr/0005-schema-ownership.md`.
@@ -147,14 +159,12 @@ Rationale: `docs/adr/0006-balance-trigger-and-db-invariants.md`,
 
 ## 7. Type contract
 
-**There is no shared-types package** (versioning headache). TS types are *intended* to be generated
-from FastAPI's OpenAPI spec via `scripts/generate_types.py`, with `frontend/src/api/generated/`
-regenerated-only — but that script emits a fixed 6-line skeleton and no real type, so the frontend
-API layer is hand-written and zod-validated at runtime.
+**There is no shared-types package** (versioning headache), and **no codegen at
+all**. The OpenAPI spec is not turned into TypeScript; the frontend API layer is
+hand-written and zod-validated at runtime.
 
-⚠️ **Codegen is unimplemented and nothing enforces the contract.** No CI job checks for spec drift
-(10 jobs: lint, typecheck, test, test-db, import-linter, invariant-check, invariant-negative,
-egress-test, frontend, dependency-gate). Two consequences follow. A change to a Pydantic contract is
+⚠️ **Nothing enforces the contract.** Neither CI job (`check`, `db`) checks for
+spec drift. Two consequences follow. A change to a Pydantic contract is
 not caught by CI at all; and a zod schema that disagrees with the server rejects the whole response
 array rather than one field, so the failure surfaces far from its cause.
 
@@ -176,18 +186,22 @@ The app must run with `--network=none`. This is a deliberate design property, no
 
 ## 9. Pointers
 
-- `docs/ARCHITECTURE-PROPOSAL.md` — the full rationale
-- `docs/RECOMMENDATION.md` — final recommendation, risks, decisions required
 - `docs/adr/0001-deployment-topology.md` — Netcup VPS, Docker Compose, Tailscale
 - `docs/adr/0002-import-provider-enum.md` — the v1 provider list; what is retired, deferred, and
   declared-but-not-uploadable
 - `docs/adr/0003-import-decisions-real-export.md` — Amex sign flip, per-account-type balance identity
   and its acceptance test, Rabobank type codes, Revolut Deposit→IBAN hold, advisory `Periode`
+- `docs/adr/0004-psycopg-binary-distribution.md` — why `psycopg[binary]`
+- `docs/adr/0005-schema-ownership.md` — one schema per module, no cross-schema FKs
+- `docs/adr/0006-balance-trigger-and-db-invariants.md` — the deferrable balance trigger, and what
+  it does *not* stop
 - `docs/ENABLE-BANKING-SETUP.md` — Enable Banking connection guide
 - `SAFETY.md` — rules for touching this repo
-- `invariants.yaml` — machine-checkable invariants
 - `AGENTS.md` — agent context rules
-- `docs/research/` — the 9 research reports
+
+The pre-implementation design proposal and the eleven research spikes have been
+deleted; their conclusions live in the ADRs above and in the code. Nothing points
+at them any more, deliberately.
 
 ---
 

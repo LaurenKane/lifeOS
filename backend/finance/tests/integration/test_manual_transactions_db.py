@@ -22,10 +22,10 @@ in M1 is that the API produces entries the trigger accepts, refuses to produce
 entries it would not, and surfaces a refusal as a status code rather than a
 crash.
 
-`SOURCE_RECORD` and friends are held in constants for a specific reason stated in
-`test_balance_db.py`: `invariants.yaml`'s `raw_data_immutable` is a `forbid_regex`
-scan over `backend`, so a test asserting the database REFUSES to mutate raw
-evidence must not itself contain the statement it is testing for. Everything here
+`SOURCE_RECORD` and friends are held in constants for the reason stated in
+`test_balance_db.py`: the `raw_data_immutable` rule forbids UPDATE and DELETE on
+the raw columns, so a test asserting the database REFUSES to mutate raw evidence
+must not itself contain the statement it is testing for. Everything here
 that touches the raw side goes through the ORM, which emits no such SQL text.
 """
 
@@ -1314,11 +1314,15 @@ class TestAnUnbalancedEntryIsRefusedByTheDatabase:
         del client
         # Write the same two legs the sabotaged route would write, in one
         # explicit transaction, and observe WHERE the failure lands.
-        from finance.db import session_scope
+        from finance.db import get_sessionmaker
         from finance.domain.models.ledger import JournalEntry, JournalLine
 
         with pytest.raises(DBAPIError) as refusal:
-            with session_scope() as session:
+            # `get_sessionmaker` rather than the deleted `db.session_scope`: the
+            # commit is explicit below, because the trigger only fires there and
+            # a context manager would commit on the way out of the `raises`.
+            with get_sessionmaker()() as session:
+                session.begin()
                 entry = JournalEntry(entry_date=dt.date.fromisoformat(BOOKED))
                 session.add(entry)
                 session.flush()
@@ -1344,7 +1348,8 @@ class TestAnUnbalancedEntryIsRefusedByTheDatabase:
                     )
                 )
                 session.flush()
-                # Only here does the imbalance become the database's problem.
+                # Only the COMMIT makes the imbalance the database's problem.
+                session.commit()
 
         assert _sqlstate(refusal.value) == CHECK_VIOLATION
         assert "does not balance" in str(refusal.value)

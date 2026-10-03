@@ -1,11 +1,12 @@
 """Fingerprint determinism tests.
 
-`finance/ingestion/fingerprint.py` is SHA-256 hash-pinned by `invariants.yaml`,
-so these tests are the human-readable counterpart to that pin. If one of these
-fails, either the algorithm changed (which invalidates every stored fingerprint
-and breaks replay) or a bug was found. Both are worth knowing immediately.
+`finance/ingestion/fingerprint.py` is FROZEN: changing it invalidates every
+stored fingerprint and breaks replay. These tests are the guard on that rule.
+If one of these
+fails, either the algorithm changed or a bug was found. Both are worth knowing
+immediately.
 
-Section G, lines 555-570 of docs/ARCHITECTURE-PROPOSAL.md.
+Rationale: docs/adr/0003-import-decisions-real-export.md.
 
 All fixtures are synthetic. No real transaction data appears anywhere in this
 repository.
@@ -65,7 +66,7 @@ class TestDeterminism:
         )
 
     def test_known_digest_is_stable(self) -> None:
-        """A golden digest, readable counterpart to the invariants.yaml hash pin.
+        """A golden digest, written down rather than computed from the algorithm.
 
         If this fails, either the algorithm changed — which invalidates every
         stored fingerprint and breaks replay — or a bug was found. Both are worth

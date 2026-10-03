@@ -1,7 +1,7 @@
 /* ── Accounts ──────────────────────────────────────────────────────────────
  * Hand-maintained contract for `GET/POST /accounts`, `GET /accounts/types`
- * and `GET /accounts/natures`. There is no generated client
- * (`scripts/generate_types.py` emits no real types), so these schemas and the
+ * and `GET /accounts/natures`. There is no generated client — that generation
+ * is unimplemented (ARCHITECTURE.md §7) — so these schemas and the
  * backend's `finance.public.AccountType` / `AccountNature` / `AccountSummary`
  * are two halves of one contract and have to be kept in step by hand.
  *

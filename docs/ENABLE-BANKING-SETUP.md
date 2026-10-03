@@ -119,7 +119,7 @@ python3 tools/probe_aspsps.py --app-id <prod-uuid> probe
 
 The probe prints a direct FOUND/ABSENT verdict for Rabobank and Revolut, plus `auth_methods`,
 `required_psu_headers` and `maximum_consent_validity`. Raw output is written to `aspsps-<CC>.json`
-at the repo root (gitignored — curated evidence goes in `docs/research/`).
+at the repo root (gitignored — curated evidence goes in `docs/`).
 
 ---
 
@@ -171,6 +171,66 @@ real host — at which point the privacy URL is trivial.
 
 ---
 
+## Credential inventory & rotation
+
+Restored from the deleted spike `docs/research/06-security-privacy.md` §2. That file was a
+research spike, but this content is operational: it is the inventory of what has to be kept
+alive, and the recovery procedure if one of them is lost. Do not delete this section.
+
+### What we must store
+
+| Credential | Type | Lifetime | Sensitivity | Storage |
+|---|---|---|---|---|
+| RSA private key (4096) | **Long-lived app credential** | Years | **CRITICAL** — signs all API JWTs | OS keyring (libsecret) or age file (0600) |
+| Application ID (`kid`) | Public identifier | Permanent | Low | config/env |
+| `session_id` (per consent) | Consent handle | ≤180d | Medium | DB (protected by FDE) |
+| Access token (to EB) | Short-lived | 1h | Low | memory only |
+| Refresh token (from bank/EB) | Long-lived | ≤90d | **HIGH** | DB encrypted column (Fernet) or keyring |
+
+Live values live in `~/.config/lifeos/`, never inside this repository. See `SAFETY.md` rule 2.
+
+### Storage verdicts
+
+| Approach | Verdict |
+|---|---|
+| `.env` (600) | **Baseline for dev only** |
+| Docker secrets | Skip — Swarm-oriented, awkward in Compose |
+| **OS keyring (libsecret/gnome-keyring)** | **Recommended default** — encrypted at rest, session-bound, no file to manage |
+| SOPS/age file in git | Good fallback if keyring is unavailable headless |
+| Vault / Doppler | **Upgrade trigger** — multi-device or team use. Overkill for one user |
+
+### Bank credentials are never stored
+
+PSD2 uses OAuth2 Authorization Code with a redirect to bank SCA. The app never receives
+passwords, PINs, or eIDAS certificates. A compromise of the app does not yield transferable
+bank authority.
+
+**Architectural rule, regardless of provider:** if a bank ever appears that lacks a redirect
+flow, **refuse to implement credential-based fallback — fail loud.** Do not add a credential
+fallback path.
+
+### Rotation & revocation
+
+| Action | Procedure |
+|---|---|
+| Revoke consent | Bank UI → "connected apps" → revoke. App: `DELETE /sessions/{id}` + purge local row + token |
+| Rotate EB app JWT key | New RSA keypair → upload cert → update keyring → deploy. Old key invalid immediately |
+| Machine lost | Revoke all consents → rotate app key → re-encrypt backups → reprovision |
+
+### ⚠️ Unverified claim — do not treat as settled
+
+The original research asserted that **NL banks (Rabobank, Revolut, ABN AMRO, ING) all support
+redirect/OAuth and that no credential fallback exists for the NL market.** This was marked
+CONFIRMED but **was never verified against Enable Banking's ASPSP registry.**
+
+Enable Banking does support `decoupled` and other auth methods, and whether any NL bank uses
+them is exactly what `GET /aspsps?country=NL` reports via its `auth_methods` field.
+
+**Treat as LIKELY, not confirmed. Verify during the real consent flow.** The architectural
+mitigation above is unchanged and is the right response either way.
+
+---
+
 ## Cost & terms notes (for the record)
 
 - Enable Banking production **restricted mode is free**, no contract, per the ToS — *if it still
@@ -189,10 +249,8 @@ real host — at which point the privacy URL is trivial.
 |---|---|
 | `tools/probe_aspsps.py` | The probe. `keygen` / `verify` / `probe` |
 | `docs/legal/` | Privacy notice + terms, awaiting publication |
-| `docs/research/01-enable-banking-psd2.md` | Full research, incl. probe result addendum |
 | `docs/research/aspsps-NL-sandbox-2026-09-30.json` | Raw sandbox response (evidence) |
-| `docs/research/06-security-privacy.md` | Threat model, credential inventory |
-| `docs/ARCHITECTURE-PROPOSAL.md` §C | Connectivity strategy across all four sources |
+| `docs/adr/0002-import-provider-enum.md` | The v1 provider list, incl. the `/aspsps?country=NL` go/no-go |
 | `SAFETY.md` | **Read before any destructive command** |
 
 ## Beads

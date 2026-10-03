@@ -1,8 +1,11 @@
 """fingerprint.py — the Tier-3 content fingerprint.
 
-**FROZEN.** SHA-256 hash-pinned by `invariants.yaml` (`fingerprint_frozen`).
-Changing anything in this file invalidates every stored fingerprint and breaks
-replay, because replay must reproduce the same entry from the same raw_data.
+**FROZEN once shipped.** Changing anything in this file invalidates every stored
+fingerprint and breaks replay, because replay must reproduce the same entry from
+the same raw_data. It is guarded by the golden digest in
+`backend/finance/tests/unit/test_fingerprint.py`, not by a hash-pin gate — the
+deliberate rule is that a change here is a breaking data change and must be
+made on purpose.
 
     fingerprint = SHA256(
         lower(trim(collapse_ws(strip_markers(raw_description)))) || '|' ||
@@ -18,8 +21,8 @@ and one phantom duplicate.
 
 Constraints this file must keep, and why:
 
-- **stdlib only** (hashlib, re). A third-party normaliser would be a version the
-  pin does not capture.
+- **stdlib only** (hashlib, re). A third-party normaliser would add a version
+  this rule would not capture.
 - **no clock, no randomness, no dict/set iteration.** Same input, same digest,
   on any machine, in any order, forever.
 - **no imports from the rest of the package.** This file must remain readable

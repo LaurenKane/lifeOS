@@ -1,6 +1,6 @@
 """finance - the finance module.
 
-Layering, arrows pointing inward (docs/ARCHITECTURE-PROPOSAL.md section D):
+Layering, arrows pointing inward (ARCHITECTURE.md §3):
 
     api  ->  ingestion  ->  domain  ->  core
 

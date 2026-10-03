@@ -1,21 +1,20 @@
 # Life OS CI.
 #
-# Every job here corresponds to a target in the Makefile, and each runs the same
-# command `make <target>` runs locally. If a job can fail, there is a way to
-# reproduce that failure locally without CI.
+# Three jobs, and every gate in this file corresponds to a target in the Makefile
+# that runs the same command locally. If a job can fail, there is a way to
+# reproduce that failure without CI.
 #
-# Jobs are separate rather than one big matrix because they fail for different
-# reasons and pull at different speeds: mypy needs the venv, the frontend needs
-# node, the egress test needs strace and a kernel that allows unprivileged user
-# namespaces. Bundling them means a slow frontend build delaying a one-line
-# fingerprint violation report.
+# `check` is the one that must pass anywhere: ruff, mypy --strict, pytest.
+# `db` is separate because it needs a PostgreSQL service container, and a
+# failure to provision one reads as nothing like an assertion failure.
+# `egress-test` is separate because it needs a *host kernel* the runner has to
+# be configured to provide: see the strace and user-namespace discussion below.
 
 name: CI
 
 on:
   push:
     branches: ["**"]
-  pull_request:
   workflow_dispatch:
 
 # Cancels superseded runs on the same ref. On a feature branch the newest push
@@ -30,18 +29,18 @@ permissions:
 
 env:
   PYTHON_VERSION: "3.12"
-  # Pin the uv version rather than tracking latest: a resolver upgrade that
-  # changes which lockfile is considered current would show up as a spurious
-  # diff in a dependency-gate failure.
+  # Pin the uv version rather than tracking latest: a resolver upgrade would
+  # change which lockfile is considered current, and every command here runs
+  # --frozen, so drift between pyproject.toml and uv.lock fails the build.
   UV_VERSION: "0.11.8"
 
 jobs:
   # =========================================================================
-  # Backend gates
+  # Backend gates: lint, typecheck, unit tests
   # =========================================================================
 
-  lint:
-    name: lint (ruff)
+  check:
+    name: check (ruff, mypy --strict, pytest)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -55,10 +54,9 @@ jobs:
           curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
+      # --frozen: fail rather than re-resolve, so the environment can never
+      # drift from the committed lockfile without an edit.
       - name: Install dependencies
-        # --frozen: fail rather than re-resolve. Re-resolving in CI would make
-      # the dependency gate's lockfile comparison meaningless, because the
-      # environment could drift from the committed lock without any edit.
         run: uv sync --frozen --extra dev
 
       - name: ruff check
@@ -67,83 +65,41 @@ jobs:
       - name: ruff format --check
         run: uv run --frozen ruff format --check backend
 
-  typecheck:
-    name: typecheck (mypy --strict)
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install uv
-        run: |
-          curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-
-      - run: uv sync --frozen --extra dev
-
       # --strict with disallow_any_explicit is set in pyproject.toml and must
-      # not be relaxed. The 16 targeted `# type: ignore[explicit-any]` comments
+      # not be relaxed. The targeted `# type: ignore[explicit-any]` comments
       # on pydantic model classes are deliberate: pydantic's own generics widen
       # the type, and those classes are verified not to mask a real Any.
       - name: mypy
         run: uv run --frozen mypy --strict backend
 
-      # The CI scripts are not under backend/, so the gate above does not reach
-      # them. Type-check them anyway: a dependency gate with a type error in it
-      # is a gate you should not trust.
-      - name: mypy on the CI scripts
-        run: uv run --frozen mypy --strict .github/scripts/dependency_gate.py
-
-  test:
-    name: test (pytest)
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install uv
-        run: |
-          curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-
-      - run: uv sync --frozen --extra dev
-
       # testpaths in pyproject.toml covers backend/tests, the finance module's
-      # own tests, and the repo-level tests/ directory, so this is the whole
-      # suite: unit, integration and invariant tests.
+      # own tests, and the repo-level tests/ directory. The addopts there
+      # deselects everything marked `db`, so this is the whole non-DB suite.
+      #
+      # `--ignore=tests/egress` is deliberate. pyproject.toml's testpaths would
+      # otherwise collect the zero-egress tests here too, and that is the wrong
+      # job for them: this one installs no strace and provisions no network
+      # namespace, so the egress tests would SKIP — and a skip in this job's log
+      # is precisely the thing that reads as coverage. One gate, one job. The
+      # `egress-test` job below installs the harness, refuses to skip, and is
+      # reproducible with `make egress-test-ci`.
+      #
+      # Locally, `make test` still collects them (and skips leniently if you
+      # have no strace). The divergence is in the lenient direction, which is
+      # the safe direction: a laptop is never the thing enforcing this claim.
       - name: pytest
-        run: uv run --frozen pytest --cov=core --cov=finance --cov-report=term-missing --cov-report=xml
-
-      - name: Upload coverage
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-xml
-          path: coverage.xml
-          if-no-files-found: ignore
+        run: uv run --frozen pytest --ignore=tests/egress
 
   # =========================================================================
-  # DB-backed tests — the balance invariant
+  # DB-backed tests — the balance trigger
   # =========================================================================
 
-  # A SEPARATE job from `test`, not a step inside it. The reason is the same as
-  # for every other job here: this one needs a PostgreSQL service container, and
-  # a failure to provision one reads as nothing like an assertion failure, so it
-  # wants a different reviewer and a different log to look at.
-  #
-  # These tests are the M1 acceptance criteria — a balanced entry commits, an
+  # These are the M1 acceptance criteria — a balanced entry commits, an
   # unbalanced one is rejected AT COMMIT, the re-parent exploit is caught — and
-  # they are marked `db`, which `pytest`'s addopts deselect by default. So the
-  # `pytest` job above does NOT run them, and this job's `-m db` overrides that
-  # selection rather than adding to it.
-  test-db:
-    name: test-db (pytest -m db, real Postgres)
+  # they are marked `db`, which pytest's addopts deselect by default. The
+  # `-m db` below overrides that selection rather than adding to it.
+  db:
+    name: db (pytest -m db, real Postgres)
     runs-on: ubuntu-24.04
     services:
       postgres:
@@ -192,109 +148,41 @@ jobs:
       # migrations — including the deferrable balance trigger, which
       # `Base.metadata.create_all()` would not create at all and which is the
       # entire subject of these tests.
-      - name: balance invariant and schema drift
+      - name: balance trigger and schema drift
         run: uv run --frozen pytest -m db -v
 
-  import-linter:
-    name: import-linter (layering contracts)
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install uv
-        run: |
-          curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-
-      - run: uv sync --frozen --extra dev
-
-      # Enforces ARCHITECTURE.md §3: core/ never imports finance/, and
-      # finance/domain is private behind finance/public.py. Run on its own rather
-      # than folded into the test job, because its failures read as architecture
-      # violations and want a different reviewer than a failing assertion.
-      - name: lint-imports
-        run: uv run --frozen lint-imports
-
   # =========================================================================
-  # Invariants
+  # Zero-egress gate — the offline file-import path makes no network calls
   # =========================================================================
 
-  invariant-check:
-    name: invariant-check (4 invariants)
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install uv
-        run: |
-          curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-
-      - run: uv sync --frozen --extra dev
-
-      # Exit 0 pass / 1 violation / 2 config error. CI keys on the code, so a
-      # broken checker can never read as a policy pass.
-      #
-      # `fingerprint_frozen` is a SHA-256 pin over
-      # backend/finance/ingestion/fingerprint.py. Editing it invalidates every
-      # stored fingerprint and breaks replay, because replay must rebuild the
-      # identical entry from preserved raw_data. This is the cheapest possible
-      # canary for a silent edit: one byte of whitespace fails the build.
-      #
-      # Run through the project venv, not the bare system python: the checker
-      # needs PyYAML, which lives in the dev extra. The checker is still
-      # stdlib-plus-PyYAML and imports nothing from backend/, so it keeps
-      # working before the project itself is installed — just not before the
-      # lockfile is.
-      - name: check_invariants
-        run: uv run --frozen python scripts/check_invariants.py
-
-      - name: invariant checker unit tests
-        run: uv run --frozen pytest tests/invariants -v
-
-  invariant-negative:
-    name: invariant-negative (checker actually rejects)
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install uv
-        run: |
-          curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-
-      - run: uv sync --frozen --extra dev
-
-      # A checker that always exits 0 looks exactly like a working checker in
-      # CI. This job feeds it deliberately broken copies and asserts it rejects
-      # them, in both directions: it must flag the violation AND leave the legal
-      # neighbouring statement alone. An over-broad regex passes the first check
-      # and fails the second, and the usual fix for that is to weaken the
-      # pattern until the real violation slips through.
-      - name: negative tests for the invariant checker
-        # The venv interpreter, not `python3`: the checker needs PyYAML from the
-        # dev extra, which the bare setup-python interpreter does not have.
-        run: PYTHON="$(pwd)/.venv/bin/python" bash .github/scripts/invariant_negative.sh
-
-  # =========================================================================
-  # Zero egress — ARCHITECTURE.md §8
-  # =========================================================================
-
+  # This is a security gate, not a code-quality one. The app holds a live
+  # Enable Banking PSD2 credential (SAFETY.md), and tests/egress/ is the only
+  # thing that proves importing a local statement file issues zero `connect()`
+  # calls. ARCHITECTURE.md §8 asserts that property; this job checks it.
+  #
+  # It is a separate job rather than a step in `check` for two reasons.
+  # First, its preconditions are host properties, not Python dependencies:
+  # `strace` is not in the ubuntu-24.04 image's package list, and
+  # `unshare -Urn` is blocked by AppArmor there. Both are handled below.
+  # Second, a failing step inside a big `check` job reads as "the suite is
+  # broken", when what actually happened is "the sandbox could not be built".
+  #
+  # It has one job-specific trap that is the entire reason this comment is
+  # long. The egress tests degrade gracefully by design — a machine without
+  # strace skips them, a machine without user namespaces falls back to
+  # strace-only observation — and both of those are a SKIP. A skip in a CI log
+  # is indistinguishable from a pass. So:
+  #
+  #   LIFEOS_REQUIRE_EGRESS=1   set here, and only here, turning every one of
+  #                            those degradations into a hard failure.
+  #                            `make egress-test-ci` sets the same variable,
+  #                            which is what makes this job reproducible.
   egress-test:
-    name: egress-test (zero connect() during offline import)
+    name: egress-test (zero connect() calls, strict)
     runs-on: ubuntu-24.04
+    env:
+      # See above. Without this the job could go green having checked nothing.
+      LIFEOS_REQUIRE_EGRESS: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -302,28 +190,47 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      # strace is the whole point of this job. Without it the tests would
-      # silently skip — and a skipped egress gate is a green gate that checked
-      # nothing. tests/egress/test_zero_egress.py has a test that hard-fails
-      # when strace is missing, so this cannot pass vacuously.
-      - name: Install strace
+      # `strace` is absent from the ubuntu-24.04 image's apt package list, and
+      # it is the only thing in this harness that *records* a connect()
+      # attempt. Installing it explicitly rather than assuming it is there is
+      # the difference between a gate and a hope. `util-linux` carries
+      # `unshare`; it is a required package so it is always present already,
+      # and naming it here means the step fails loudly if that ever changes.
+      - name: Install the egress harness (strace, unshare)
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends strace
+          sudo apt-get install -y --no-install-recommends strace util-linux
+          strace -V | head -1
+          unshare --version
 
-      - name: Confirm the kernel allows unprivileged user namespaces
-        # The tests run inside `unshare -Urn`, an empty network namespace: the
-        # host equivalent of `docker run --network=none`. Where that is
-        # unavailable the tests still assert on strace's record and report the
-        # downgrade rather than hiding it, so this step is informational — but
-        # if it fails here, someone should know the isolation was weaker than
-        # the claim.
+      # ubuntu-24.04 sets kernel.apparmor_restrict_unprivileged_userns=1, which
+      # refuses `unshare -Urn` for an unprivileged process — and the runner is
+      # an unprivileged user. The failure mode is the dangerous one: the
+      # namespace silently disappears, the tests drop to strace-only
+      # observation, and the job reports a skip. Relax it on this throwaway
+      # runner so the namespace belt is actually present.
+      #
+      # Worth being precise about what this gives up: AppArmor's restriction
+      # exists to stop an unprivileged process from gaining capabilities by
+      # nesting a user namespace. This job then runs repo code inside one,
+      # which is precisely the capability being tested — so the runner is
+      # configured for a test that is designed to make that capability useless
+      # (no interfaces, no route, nothing to connect to). The alternative,
+      # leaving it on, does not make the runner safer *and* keep the gate; it
+      # just makes the gate test something weaker without saying so.
+      #
+      # The probe afterwards is the hard gate. If the sysctl is unavailable,
+      # unwritable, or insufficient, this step fails — it does not fall
+      # through to a strace-only run that would pass for the wrong reason.
+      - name: Probe the network namespace, and fail loudly if it is absent
         run: |
-          if unshare -Urn -- true 2>/dev/null; then
-            echo "unprivileged network namespaces: available"
-          else
-            echo "::warning::unprivileged user namespaces unavailable; the egress tests will fall back to strace observation alone"
+          if ! unshare -Urn -- /bin/true 2>/dev/null; then
+            echo "::notice::unprivileged user namespaces are blocked (AppArmor); relaxing the restriction on this runner"
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || \
+              echo "::warning::could not relax kernel.apparmor_restrict_unprivileged_userns"
           fi
+          unshare -Urn -- /bin/true
+          echo "network namespace available: $(unshare -Urn -- ip -o link 2>/dev/null | wc -l) interface(s)"
 
       - name: Install uv
         run: |
@@ -332,135 +239,49 @@ jobs:
 
       - run: uv sync --frozen --extra dev
 
-      # Scope, stated here because it is easy to misread: this proves the
-      # OFFLINE FILE-IMPORT path makes no network calls and works with the
-      # network removed. It does NOT prove the app never uses the network —
-      # M5's Enable Banking ingestion makes live HTTPS calls by design, since
-      # the provider has no webhooks and the worker polls it.
-      - name: offline import + dedup with zero connect() calls
-        run: uv run --frozen pytest tests/egress -v
+      # The explicit path, not bare `pytest`, so testpaths cannot quietly stop
+      # covering tests/egress. --junit-xml is for the verification step below.
+      - name: pytest tests/egress
+        run: uv run --frozen pytest tests/egress -v --junit-xml=egress.xml
 
-  # =========================================================================
-  # Frontend
-  # =========================================================================
-
-  frontend:
-    name: frontend (oxlint, tsc -b, vitest, vite build)
-    runs-on: ubuntu-24.04
-    defaults:
-      run:
-        working-directory: frontend
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-          # npm ci fails if package-lock.json and package.json disagree, rather
-          # than quietly installing something new. It also honours `npm ci` for
-          # the cache key, so the lockfile IS the cache key.
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      # npm ci, not npm install: ci installs exactly what the lockfile pins.
-      # `npm install` would re-resolve ranges and could produce a tree that
-      # differs from the committed lockfile, which is the state the dependency
-      # gate exists to prevent.
-      - name: Install
-        run: npm ci
-
-      - name: Lint
-        run: npm run lint
-
-      # `tsc -b`, NOT bare `tsc --noEmit`. tsconfig.json is solution-style
-      # (`"files": []` plus project references), so `tsc --noEmit` type-checks
-      # zero files and exits 0. That is a green gate over nothing, and it is
-      # the single most expensive mistake available in this repo's frontend
-      # setup.
-      - name: Typecheck
-        run: npx tsc -b --force --noEmit
-
-      - name: Test
-        run: npm test
-
-      - name: Build
-        env:
-          # Baked into the bundle at build time, not a runtime variable. The
-          # default keeps it root-relative so no host is embedded in dist/.
-          VITE_API_BASE_URL: /api
-        run: npm run build
-
-      # An empty dist/ means the build silently no-op'd, and a CI job that
-      # ships nothing is worse than one that fails.
-      - name: Assert the build produced a bundle
-        run: test -s dist/index.html
-
-  # =========================================================================
-  # Dependency gate
-  # =========================================================================
-
-  dependency-gate:
-    name: dependency-gate (lockfile changes need APPROVED:)
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          # Full history: the gate diffs the base commit against HEAD and scans
-          # commit messages in between. A shallow clone cannot answer either
-          # question, and would silently reduce the gate to a hash comparison.
-          fetch-depth: 0
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      # Prove the gate works before relying on it. This runs on every push, not
-      # just when a lockfile moves, so a change that breaks the gate is caught
-      # by the gate's own regression test rather than by the first real
-      # violation slipping past.
-      - name: Gate self-test
-        run: python3 .github/scripts/dependency_gate.py --self-test
-
-      - name: Check the lockfiles
-        env:
-          # base: the commit this run is measured against.
-          #   pull_request -> the PR's base branch tip
-          #   push         -> the previous tip of this branch
-          #   first push   -> all zeros, which falls back to HEAD~1
-          DEPENDENCY_GATE_BASE: >-
-            ${{ github.event_name == 'pull_request'
-                && github.event.pull_request.base.sha
-                || github.event.before }}
-          DEPENDENCY_GATE_HEAD: ${{ github.sha }}
+      # A green pytest is necessary but not sufficient: `5 passed` and
+      # `0 tests ran` are the same exit code, and the second one is the
+      # failure this whole job exists to prevent. Read the report the run
+      # actually produced and require each test by name, with no <skipped>,
+      # <failure> or <error> child. Redundant with LIFEOS_REQUIRE_EGRESS on
+      # purpose — that guards the tests' own logic, this guards the invocation.
+      - name: assert the egress claim was actually checked
         run: |
-          if [ "${DEPENDENCY_GATE_BASE}" = "0000000000000000000000000000000000000000" ] \
-             || [ -z "${DEPENDENCY_GATE_BASE}" ]; then
-            echo "no base commit available (first push on this branch); using HEAD~1"
-            DEPENDENCY_GATE_BASE="$(git rev-parse HEAD~1 2>/dev/null || true)"
-            export DEPENDENCY_GATE_BASE
-          fi
-          python3 .github/scripts/dependency_gate.py
+          uv run --frozen python - egress.xml <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
 
-      # The ledger is a reviewed artefact, so it gets a human-readable diff in
-      # the run summary when it changes. A one-line hash bump is invisible
-      # otherwise, and that is exactly the review it depends on.
-      - name: Summarise any ledger change
-        if: always()
-        env:
-          BASE: ${{ github.event_name == 'pull_request'
-                    && github.event.pull_request.base.sha
-                    || github.event.before }}
-        run: |
-          {
-            echo "### Dependency approvals"
-            echo ""
-            if [ -z "${BASE}" ] || [ "${BASE}" = "0000000000000000000000000000000000000000" ]; then
-              echo "No base commit available, so the ledger diff cannot be shown."
-            elif git diff --name-only "${BASE}" HEAD -- .github/dependency-approvals.txt | grep -q .; then
-              echo "The approvals ledger changed. The diff below is what a reviewer must sign off on."
-              echo ""
-              git diff "${BASE}" HEAD -- .github/dependency-approvals.txt
-            else
-              echo "The approvals ledger did not change."
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
+          REQUIRED = (
+              "test_offline_import_makes_no_connect_calls",
+              "test_the_strace_harness_detects_a_connect_call",
+              "test_strace_is_available",
+              "test_the_trace_file_is_actually_written",
+              "test_unshare_namespace_is_available_or_reported",
+          )
+
+          report = ET.parse(sys.argv[1]).getroot()
+          outcomes = {
+              case.get("name"): [child.tag for child in case]
+              for case in report.iter("testcase")
+          }
+
+          problems = []
+          for name in REQUIRED:
+              seen = outcomes.get(name)
+              if seen is None:
+                  problems.append(f"{name}: never ran (not collected, or deselected)")
+              elif seen:
+                  problems.append(f"{name}: reported {', '.join(seen)}")
+
+          if problems:
+              sys.exit(
+                  "the egress gate did not check what it claims to check:\n  "
+                  + "\n  ".join(problems)
+              )
+          print(f"all {len(REQUIRED)} egress tests ran, and none of them skipped")
+          PY

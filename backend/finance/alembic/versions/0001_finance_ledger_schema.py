@@ -1,9 +1,9 @@
 """0001 — the double-entry ledger schema, in full.
 
-Source of truth: docs/ARCHITECTURE-PROPOSAL.md section E, corrected against a
+Source of truth: docs/adr/0005-schema-ownership.md, corrected against a
 live PostgreSQL 17.11 instance. The corrections are load-bearing and each one is
 commented at the site it applies to, so the next reader does not "restore" the
-proposal's version by mistake.
+pre-correction design by mistake.
 
 Three decisions shape everything below.
 

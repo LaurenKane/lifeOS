@@ -106,4 +106,8 @@ deleted.
 - Bead `LifeOS-16` — this incident and the fixes.
 - `tools/rm_guard.py` — the guard mandated by Rule 3.
 - `tools/probe_aspsps.py` — `keygen` refuses to write inside the repo (Rule 2).
-- `docs/research/06-security-privacy.md` §2 — the credential inventory and rotation policy.
+- `docs/ENABLE-BANKING-SETUP.md` — the live credential workflow: where the key and the
+  `app_id` live, and how to record them the moment they are issued. Its
+  **"Credential inventory & rotation"** section is the authoritative list of what must be
+  kept alive (RSA key, app_id, session_id, refresh token), where each is stored, and the
+  revocation/rotation procedure if one is lost.

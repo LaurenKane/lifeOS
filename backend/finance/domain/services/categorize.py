@@ -1,6 +1,6 @@
 """categorize.py — the seven-layer categorization engine.
 
-ARCHITECTURE-PROPOSAL.md section I. Deterministic, with no LLM required for the
+ARCHITECTURE.md §10 (M3). Deterministic, with no LLM required for the
 core to work.
 
     1  exact user rules        category_rule, priority-ordered
@@ -230,7 +230,7 @@ def categorize_transaction(
             `finance.ingestion.fingerprint.normalize_description`, which also
             strips provider bookkeeping markers — injected rather than imported
             because `finance.domain` must not depend on `finance.ingestion`
-            (see `.importlinter` contract 6). Two copies of a normalisation rule
+            (ARCHITECTURE.md §3). Two copies of a normalisation rule
             is how a matcher starts disagreeing with itself, so the caller
             supplies it rather than this module redefining it.
 
