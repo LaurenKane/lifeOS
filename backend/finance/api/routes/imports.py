@@ -14,7 +14,11 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, ConfigDict
 
 from finance.api.schemas import Provider, ProviderInfo
-from finance.ingestion.adapters import AmexPdfAdapter
+from finance.ingestion.adapters import (
+    AmexPdfAdapter,
+    RabobankPdfAdapter,
+    RevolutPdfAdapter,
+)
 from finance.ingestion.adapters.base import ImportResult
 
 router = APIRouter(tags=["finance"], prefix="/imports")
@@ -63,13 +67,20 @@ V1_PROVIDERS: tuple[str, ...] = (
 )
 
 # provider -> the adapter and the file extension it accepts.
-# `enable_banking`, `manual`, `rabobank_pdf`, and `revolut_pdf` are absent on
-# purpose: the first two are not uploads, and the PDF adapters for Rabobank and
-# Revolut are not implemented yet (docs/research/11-real-export-verification.md
-# §5). They remain first-class providers so the schema can represent the files
-# the user actually has.
+#
+# `enable_banking` and `manual` are absent on purpose: the first arrives over its
+# API and the second is POSTed as JSON, and neither is an upload. Every remaining
+# v1 provider has an adapter, so nothing is advertised as importable that the app
+# cannot actually read (docs/adr/0002-import-provider-enum.md).
+#
+# All three PDF adapters share one extractor: `pdftotext -layout` from
+# poppler-utils, which the runtime image installs (backend/Dockerfile). Without
+# that binary an upload fails with an explicit "pdftotext is not installed"
+# reason rather than a zero-row import.
 _FILE_ADAPTERS: dict[str, tuple[type[FileAdapter], str]] = {
     "amex_pdf": (AmexPdfAdapter, ".pdf"),
+    "rabobank_pdf": (RabobankPdfAdapter, ".pdf"),
+    "revolut_pdf": (RevolutPdfAdapter, ".pdf"),
 }
 
 _IMPORT_METHODS: dict[str, str] = {

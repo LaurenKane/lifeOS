@@ -15,11 +15,9 @@ import datetime as dt
 import pytest
 
 from finance.ingestion.adapters import (
-    AmexCsvAdapter,
     AmexPdfAdapter,
     EnableBankingAdapter,
     ManualAdapter,
-    RevolutCsvAdapter,
 )
 from finance.ingestion.adapters.base import (
     AdapterParseError,
@@ -30,9 +28,6 @@ from finance.tests.fixtures import (
     ACCOUNT_ID,
     AIS_TRANSACTIONS,
     ais_transaction,
-    am_statement_csv,
-    make_csv,
-    synthetic_amex_csv,
 )
 
 
@@ -46,9 +41,7 @@ class TestAdapterContract:
     @pytest.mark.parametrize(
         "adapter_class",
         [
-            AmexCsvAdapter,
             AmexPdfAdapter,
-            RevolutCsvAdapter,
             EnableBankingAdapter,
             ManualAdapter,
         ],
@@ -63,9 +56,7 @@ class TestAdapterContract:
         """
         assert adapter_class.provider in {
             "enable_banking",
-            "amex_csv",
             "amex_pdf",
-            "revolut_csv",
             "manual",
         }
         assert adapter_class.import_method in {"api", "csv", "pdf", "manual"}
@@ -73,9 +64,7 @@ class TestAdapterContract:
     @pytest.mark.parametrize(
         "adapter_class",
         [
-            AmexCsvAdapter,
             AmexPdfAdapter,
-            RevolutCsvAdapter,
             EnableBankingAdapter,
             ManualAdapter,
         ],
@@ -88,8 +77,7 @@ class TestAdapterContract:
 
     def test_pdf_carries_the_noisiest_weight(self) -> None:
         """Column alignment, wrapped descriptions and page breaks."""
-        assert AmexPdfAdapter.confidence_weight < AmexCsvAdapter.confidence_weight
-        assert AmexCsvAdapter.confidence_weight < EnableBankingAdapter.confidence_weight
+        assert AmexPdfAdapter.confidence_weight < EnableBankingAdapter.confidence_weight
 
     @pytest.mark.parametrize(
         "adapter_class",
@@ -106,176 +94,6 @@ class TestAdapterContract:
         adapter = adapter_class()
         with pytest.raises(NotImplementedError):
             adapter.parse(b"")
-
-
-class TestAmexCsv:
-    def test_parses_a_synthetic_export(self) -> None:
-        result = AmexCsvAdapter().parse(synthetic_amex_csv(), account_id=ACCOUNT_ID)
-        assert result.record_count == 4
-        assert not result.failed
-        assert result.status == "completed"
-        assert result.provider == "amex_csv"
-
-    def test_positive_amounts_become_debits(self) -> None:
-        """Amex reports a debit as a positive magnitude.
-
-        Without the flip every purchase would land in the ledger as income, and
-        the totals would look plausible while being wrong.
-        """
-        result = AmexCsvAdapter().parse(synthetic_amex_csv(), account_id=ACCOUNT_ID)
-        assert all(record.amount_minor < 0 for record in result.records)
-        assert {r.amount_minor for r in result.records} == {-850, -1234, -410}
-
-    def test_ref_blocks_are_stripped_from_the_description(self) -> None:
-        """The bank reference is noise for matching purposes.
-
-        raw_data keeps it; only the normalised description drops it.
-        """
-        result = AmexCsvAdapter().parse(synthetic_amex_csv(), account_id=ACCOUNT_ID)
-        assert all("REF:" not in record.description for record in result.records)
-
-    def test_raw_data_preserves_the_original_description(self) -> None:
-        """Replay reads from raw_data, so it must not be normalised."""
-        result = AmexCsvAdapter().parse(synthetic_amex_csv(), account_id=ACCOUNT_ID)
-        assert any(
-            "REF:" in str(record.raw_data.get("description"))
-            for record in result.records
-        )
-
-    def test_no_stable_provider_id(self) -> None:
-        """The reason Amex needs Tier 3 at all.
-
-        Amex's own identifiers are documented to change between exports, so a
-        Tier-1 dedup on them produces a complete duplicate of every row on
-        re-import.
-        """
-        result = AmexCsvAdapter().parse(synthetic_amex_csv(), account_id=ACCOUNT_ID)
-        assert all(record.provider_txn_id is None for record in result.records)
-
-    def test_nothing_is_pending(self) -> None:
-        """The export is settled activity only."""
-        result = AmexCsvAdapter().parse(synthetic_amex_csv(), account_id=ACCOUNT_ID)
-        assert all(record.pending is False for record in result.records)
-
-    def test_line_numbers_track_the_file(self) -> None:
-        """Row 1 of the data is line 2, since the header is line 1."""
-        result = AmexCsvAdapter().parse(synthetic_amex_csv(), account_id=ACCOUNT_ID)
-        assert [record.line_number for record in result.records] == [2, 3, 4, 5]
-
-    def test_checksum_is_stable_across_identical_uploads(self) -> None:
-        """Two uploads of the same bytes are the same import.
-
-        This is what makes "I already imported this" answerable without diffing
-        file contents.
-        """
-        payload = synthetic_amex_csv()
-        first = AmexCsvAdapter().parse(payload, account_id=ACCOUNT_ID)
-        second = AmexCsvAdapter().parse(payload, account_id=ACCOUNT_ID)
-        assert first.source_checksum == second.source_checksum
-        assert first.source_checksum is not None
-        assert len(first.source_checksum) == 64
-
-    def test_account_is_supplied_by_the_caller(self) -> None:
-        """A CSV names no account, so the user picks it."""
-        result = AmexCsvAdapter().parse(synthetic_amex_csv(), account_id=ACCOUNT_ID)
-        assert all(record.account_id == ACCOUNT_ID for record in result.records)
-
-    def test_localised_headers(self) -> None:
-        """Amex localises its export per language and per vintage."""
-        payload = (
-            am_statement_csv([("14/03/2026", "JUMBO 4321", "8.50")])
-            .replace("Date", "Datum")
-            .replace("Description", "Omschrijving")
-        )
-        result = AmexCsvAdapter().parse(payload.encode(), account_id=ACCOUNT_ID)
-        assert result.record_count == 1
-        assert result.records[0].amount_minor == -850
-
-    def test_one_bad_row_does_not_abandon_the_file(self) -> None:
-        """A single malformed line in six months of rows must not cost the rest."""
-        payload = am_statement_csv(
-            [
-                ("14/03/2026", "JUMBO 4321", "8.50"),
-                ("not-a-date", "BROKEN ROW", "1.00"),
-                ("15/03/2026", "NS INTERCITY", "4.10"),
-            ]
-        )
-        result = AmexCsvAdapter().parse(payload.encode(), account_id=ACCOUNT_ID)
-        assert result.record_count == 2
-        assert len(result.failed) == 1
-        assert result.failed[0].line_number == 3
-        assert result.status == "partial"
-
-    def test_missing_header_is_reported_not_raised(self) -> None:
-        result = AmexCsvAdapter().parse(b"", account_id=ACCOUNT_ID)
-        assert result.record_count == 0
-        assert result.status == "failed"
-        assert "header" in str(result.failed[0])
-
-    def test_blank_lines_are_skipped_silently(self) -> None:
-        payload = am_statement_csv(
-            [
-                ("14/03/2026", "JUMBO 4321", "8.50"),
-                ("", "", ""),
-                ("15/03/2026", "NS", "4.10"),
-            ]
-        )
-        result = AmexCsvAdapter().parse(payload.encode(), account_id=ACCOUNT_ID)
-        assert result.record_count == 2
-        assert not result.failed
-
-    def test_bom_is_tolerated(self) -> None:
-        """Excel writes a UTF-8 BOM, and the first header would not match."""
-        result = AmexCsvAdapter().parse(
-            ("﻿" + am_statement_csv([("14/03/2026", "JUMBO 4321", "8.50")])).encode(),
-            account_id=ACCOUNT_ID,
-        )
-        assert result.record_count == 1
-
-
-class TestRevolutCsv:
-    def test_carries_the_stable_id(self) -> None:
-        """Tier 1 works for Revolut, unlike Amex."""
-        payload = make_csv([("2026-03-14", "JUMBO 4321", "8.50")])
-        result = RevolutCsvAdapter().parse(payload.encode(), account_id=ACCOUNT_ID)
-        assert result.record_count == 1
-        assert result.records[0].provider_txn_id == "txn-000001"
-
-    def test_thousands_separators_are_handled(self) -> None:
-        """Revolut writes "EUR 1,234.56".
-
-        Parsed as a string and stripped, never via float, so the minor-unit
-        conversion stays exact.
-        """
-        payload = make_csv([("2026-03-14", "BIG PURCHASE", "EUR 1,234.56")])
-        result = RevolutCsvAdapter().parse(payload.encode(), account_id=ACCOUNT_ID)
-        assert result.records[0].amount_minor == -123456
-
-    def test_pending_state_is_honoured(self) -> None:
-        """Unlike Amex, Revolut does export pending rows."""
-        payload = make_csv([("2026-03-14", "JUMBO 4321", "8.50")]).replace(
-            "completed", "pending"
-        )
-        result = RevolutCsvAdapter().parse(payload.encode(), account_id=ACCOUNT_ID)
-        assert result.records[0].pending is True
-
-    def test_cash_withdrawals_are_skipped(self) -> None:
-        """Moving your own money out of the account is not spending.
-
-        Counting it would show a withdrawal as an expense with nothing to buy.
-        """
-        payload = make_csv([("2026-03-14", "ATM WITHDRAWAL", "50.00")]).replace(
-            "card_payment", "cash_withdrawal"
-        )
-        result = RevolutCsvAdapter().parse(payload.encode(), account_id=ACCOUNT_ID)
-        assert result.record_count == 0
-        assert not result.failed
-
-    def test_unparseable_amount_is_reported_with_a_line_number(self) -> None:
-        payload = make_csv([("2026-03-14", "JUMBO 4321", "not-a-number")])
-        result = RevolutCsvAdapter().parse(payload.encode(), account_id=ACCOUNT_ID)
-        assert result.record_count == 0
-        assert result.failed[0].line_number == 2
 
 
 class TestEnableBanking:
@@ -601,14 +419,7 @@ class TestSharedShape:
 
     def test_all_adapters_produce_raw_records(self) -> None:
         records = (
-            AmexCsvAdapter().parse(synthetic_amex_csv(), account_id=ACCOUNT_ID).records
-            + RevolutCsvAdapter()
-            .parse(
-                make_csv([("2026-03-14", "JUMBO 4321", "8.50")]).encode(),
-                account_id=ACCOUNT_ID,
-            )
-            .records
-            + EnableBankingAdapter()
+            EnableBankingAdapter()
             .parse_payload([ais_transaction()], account_id=ACCOUNT_ID)
             .records
             + AmexPdfAdapter(text_extractor=lambda _p: TestAmexPdf.LINES)
@@ -626,8 +437,8 @@ class TestSharedShape:
             )
             .records
         )
-        # 4 Amex CSV + 1 Revolut CSV + 1 AIS + 3 PDF + 1 manual.
-        assert len(records) == 10
+        # 1 AIS + 3 PDF + 1 manual.
+        assert len(records) == 5
         for record in records:
             assert isinstance(record.amount_minor, int)
             assert len(record.currency) == 3
@@ -636,6 +447,6 @@ class TestSharedShape:
 
     def test_error_messages_name_the_provider(self) -> None:
         """A stack trace through three pipeline layers is not a useful error."""
-        error = AdapterParseError("bad row", line_number=4, provider="amex_csv")
-        assert "amex_csv" in str(error)
+        error = AdapterParseError("bad row", line_number=4, provider="amex_pdf")
+        assert "amex_pdf" in str(error)
         assert "line 4" in str(error)

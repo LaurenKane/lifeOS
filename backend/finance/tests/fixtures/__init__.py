@@ -17,9 +17,7 @@ export.
 
 from __future__ import annotations
 
-import csv
 import datetime as dt
-import io
 from typing import Final
 
 from finance.ingestion.identity import Candidate
@@ -105,71 +103,6 @@ def make_candidate(
         journal_entry_id=journal_entry_id,
         transfer_match_id=transfer_match_id,
     )
-
-
-def am_statement_csv(
-    rows: list[tuple[str, str, str]],
-) -> str:
-    """Amex-flavoured CSV: `Date,Description,Amount`, positive-is-debit.
-
-    Args:
-        rows: (date, description, amount) triples, written verbatim. Keep them
-            synthetic; do not paste a real export into a test.
-    """
-    buffer = io.StringIO()
-    writer = csv.writer(buffer)
-    writer.writerow(["Date", "Description", "Amount"])
-    for date_text, description, amount in rows:
-        writer.writerow([date_text, description, amount])
-    return buffer.getvalue()
-
-
-def make_csv(
-    rows: list[tuple[str, str, str]],
-    *,
-    currency_column: bool = False,
-) -> str:
-    """Revolut-flavoured CSV, with the stable `Id` column Tier 1 depends on."""
-    header = ["Id", "Type", "Description", "Date", "Amount", "State"]
-    if currency_column:
-        header.append("Currency")
-    buffer = io.StringIO()
-    writer = csv.writer(buffer)
-    writer.writerow(header)
-    for index, (date_text, description, amount) in enumerate(rows, start=1):
-        writer.writerow(
-            [
-                f"txn-{index:06d}",
-                "card_payment",
-                description,
-                date_text,
-                amount,
-                "completed",
-            ]
-        )
-    return buffer.getvalue()
-
-
-def make_revolut_csv(rows: list[tuple[str, str, str]]) -> str:
-    """Alias for `make_csv`, named for the provider it imitates."""
-    return make_csv(rows)
-
-
-def synthetic_amex_csv() -> bytes:
-    """A small, entirely invented Amex export.
-
-    Two identical EUR 3.20 coffees on one day, deliberately: that pair is what
-    the occurrence-index rule exists for, and it is the hardest case in the whole
-    design.
-    """
-    return am_statement_csv(
-        [
-            ("14/03/2026", f"JUMBO 4321 AMSTERDAM{_REF}", "8.50"),
-            ("14/03/2026", f"ALBERT HEIJN 1234{_REF}", "12.34"),
-            ("14/03/2026", f"ALBERT HEIJN 1234{_REF}", "12.34"),
-            ("15/03/2026", f"NS INTERCITY{_REF}", "4.10"),
-        ]
-    ).encode("utf-8")
 
 
 def synthetic_amex_pdf_text() -> list[str]:

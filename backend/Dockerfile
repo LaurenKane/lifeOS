@@ -1,4 +1,4 @@
-# backend/Dockerfile — Life OS API and worker.
+# backend/Dockerfile — Life OS API.
 #
 # Base images are DIGEST-PINNED, not tag-pinned. A tag like `python:3.12-slim`
 # is mutable: whoever controls the registry can change what "3.12-slim" points at
@@ -43,16 +43,24 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # ---------------------------------------------------------------------------
 FROM python:3.12-slim-bookworm@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb23564e AS runtime
 
-# libpq5, and nothing else.
+# libpq5 and poppler-utils.
 #
 # ADR 0004 moved pyproject.toml to `psycopg[binary]`, which bundles its own
-# libpq, so this install is no longer load-bearing — the wheel works without
-# it. It is kept deliberately: it is a few hundred KB, and the image keeps
-# working if the pin is ever reverted to bare `psycopg`, where psycopg 3 still
-# binds to the system libpq and the import otherwise fails at first use with
-# "no pq wrapper available". Drop this layer if image size starts to matter.
+# libpq, so the libpq5 install is no longer load-bearing — the wheel works
+# without it. It is kept deliberately: it is a few hundred KB, and the image
+# keeps working if the pin is ever reverted to bare `psycopg`, where psycopg 3
+# still binds to the system libpq and the import otherwise fails at first use
+# with "no pq wrapper available". Drop this layer if image size starts to
+# matter.
+#
+# poppler-utils IS load-bearing. `pdftotext -layout` is the text extraction the
+# three PDF adapters share (finance/ingestion/adapters/pdf_text.py), and it is
+# a system binary, not a pip package. Without this line every PDF upload fails
+# in the container with "pdftotext is not installed" while passing on a host
+# that happens to have poppler. The test suite cannot catch that, because it
+# exercises the host's binary rather than the image's.
 RUN apt-get update \
- && apt-get install --yes --no-install-recommends libpq5 \
+ && apt-get install --yes --no-install-recommends libpq5 poppler-utils \
  && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONUNBUFFERED=1 \

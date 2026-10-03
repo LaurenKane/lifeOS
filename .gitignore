@@ -37,7 +37,37 @@ backups/
 
 # Enable Banking probe keys (bead LifeOS-1) - never commit
 .eb-keys/
-/aspsps-*.json   # probe output at repo root; curated evidence under docs/research/ IS tracked
+/aspsps-*.json   # probe output at repo root; curated evidence under docs/ IS tracked
 
 # Deepwork session state (per-session working notes, not project content)
 .slim/
+
+# Real bank statements — NEVER commit these.
+#
+# They carry the account holder's real name and home address, the account IBAN,
+# a dozen counterparty IBANs, balances, and a full spending history. The remote
+# is a public GitHub URL, so a committed statement is a permanent public
+# disclosure that no later commit can take back. No redacted copy is committed
+# either: the user chose local reference over committed fixtures.
+#
+# The statements live in ~/Documents/Banking, OUTSIDE this working tree, and
+# backend/finance/tests/integration/test_real_statement_reconciliation.py reads
+# them from LIFEOS_STATEMENTS_DIR (default ~/Documents/Banking). The rules below
+# are the second line of defence, for the copy someone eventually drags in.
+#
+# They match on filename shape rather than on `*.pdf`, because three of the four
+# Rabobank files carry NO extension at all — the reconciliation tests find them
+# by PDF magic bytes for the same reason, and a rule that only matched `*.pdf`
+# would let the most identifiable of them straight through.
+**/Banking/
+**/Rabo/
+**/Rev/
+**/Amex/
+Rabo Banking details
+Rabo Banking details*
+rabobank-*.pdf
+rabobank-20??-??*
+account-statement_*.pdf
+account-statement_*
+# Amex names a file for the day it was generated: 2026-06-23.pdf.
+20??-??-??.pdf
