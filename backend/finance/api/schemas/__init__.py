@@ -36,6 +36,7 @@ __all__ = [
     "CategoryKind",
     "CategorySummary",
     "ImportRequest",
+    "ImportSummary",
     "ManualTransactionRequest",
     "ManualTransactionUpdate",
     "Provider",
@@ -183,6 +184,48 @@ class ProviderInfo(_Write):  # type: ignore[explicit-any]
     """Every supported import source, so a client does not hardcode the list."""
 
     providers: list[Provider]
+
+
+class ImportSummary(BaseModel):  # type: ignore[explicit-any]
+    """What one import produced. Read-only in practice, frozen to say so.
+
+    `frozen=True` and `extra="forbid"` stated here rather than inherited, because
+    the only base in this module is `_Write` and that is the wrong one: it is
+    mutable, and it exists for request bodies. A response model that could be
+    mutated in place is a contract nobody can rely on.
+
+    `created`, `duplicated` and `failed` are the counts that matter, and they
+    describe WHAT PERSISTED, not what the parser read. Those are different claims
+    and the difference is the whole reason this schema carries them separately
+    from `record_count`: a parser can return 40 rows with no failures while the
+    writer posts 39 of them and refuses one, because that one was a card payment
+    with no paying account (`docs/adr/0007-imported-card-payment-is-a-transfer
+    .md`). `record_count` is the parse; the three counts are the ledger.
+
+    They do not always sum to `record_count`. `created + duplicated + failed`
+    does — a row is in exactly one of the three — and a client that wants "did
+    everything land" should ask whether `created + duplicated` equals
+    `record_count`, not whether the status says `completed`.
+
+    `status` follows the same rule: it is the `import_batch.status` that was
+    written, so `partial` here means rows were persisted and some were not
+    posted, and `completed` means every parsed row is now in the ledger. The
+    frontend's imports slice consumes none of the three counts today, and nothing
+    in CI catches the drift (ARCHITECTURE.md §7) — which is worth stating
+    rather than leaving as a surprise.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    provider: str
+    import_method: str
+    status: str
+    record_count: int
+    source_checksum: str | None = None
+    created: int = 0
+    duplicated: int = 0
+    failed: int = 0
+    failures: list[str] = []
 
 
 class ImportRequest(_Write):  # type: ignore[explicit-any]

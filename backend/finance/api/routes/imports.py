@@ -1,27 +1,66 @@
-"""imports router — run an import.
+"""imports router — run an import, and persist what it parsed.
 
-M0 scope: accepts an upload, validates the provider/method pair, and reports
-what the adapter produced. The adapters themselves are complete and unit-tested
-(`finance.ingestion.adapters`); what is missing is persistence, which arrives
-with the M1 migrations.
+`POST /imports/file` is the real one: it accepts an upload, runs the adapter, and
+writes every row it parsed through `finance.api.writers`. `POST /imports` is the
+older M0 dry run and is kept, because a caller who wants to see what a file
+contains before committing to it is a legitimate question — but it persists
+nothing, and its summary carries zeros for `created`/`duplicated`/`failed`
+precisely so nobody can mistake it for an import that happened.
+
+The endpoint is `async def` and does its database work in a threadpool. A sync
+SQLAlchemy `Session` cannot be awaited, and running its statements directly on the
+event loop would block every other request for the length of a 7-year PDF parse.
+Same reason `finance.api.deps` exists.
 """
 
 from __future__ import annotations
 
-from typing import Protocol
+import base64
+import datetime as dt
+import gzip
+from collections.abc import Sequence
+from typing import Annotated, Protocol
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
-from pydantic import BaseModel, ConfigDict
+from core.datetime import parse_date
+from core.money import Currency, Money
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
-from finance.api.schemas import Provider, ProviderInfo
+from finance.api.deps import get_session
+from finance.api.schemas import ImportSummary, Provider, ProviderInfo
+from finance.api.writers import (
+    PostingRefused,
+    ReferenceNotFound,
+    finish_import_batch,
+    open_import_batch,
+    write_posted_transaction,
+    write_unposted_transaction,
+)
+from finance.domain.models.accounts import Account
+from finance.domain.models.importer import SourceRecord
 from finance.ingestion.adapters import (
     AmexPdfAdapter,
     RabobankPdfAdapter,
     RevolutPdfAdapter,
 )
 from finance.ingestion.adapters.base import ImportResult
+from finance.ingestion.dedupe import (
+    OccurrenceKey,
+    count_existing_occurrences,
+    fingerprint_account_scope,
+)
+from finance.ingestion.fingerprint import compute_fingerprint
+from finance.public import RawRecord, TransactionStatus
 
 router = APIRouter(tags=["finance"], prefix="/imports")
+
+#: Annotated rather than a default argument, for the reason stated in
+#: `routes/transactions.py`: ruff runs with `B` selected and `Depends(...)` in a
+#: default value is exactly what that rule is for. It also keeps `account_id` and
+#: `provider` free to be the query parameters they are on the wire.
+SessionDep = Annotated[Session, Depends(get_session)]
 
 # Largest statement we accept. A 7-year Amex PDF is a few MB; 64 MiB is generous
 # and keeps one request from exhausting the API container's memory.
@@ -40,19 +79,6 @@ class FileAdapter(Protocol):
     def parse(
         self, payload: bytes, account_id: int | None = None, filename: str | None = None
     ) -> ImportResult: ...
-
-
-class ImportSummary(BaseModel):  # type: ignore[explicit-any]
-    """What one import produced. Read-only in practice, frozen to say so."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    provider: str
-    import_method: str
-    status: str
-    record_count: int
-    source_checksum: str | None = None
-    failures: list[str] = []
 
 
 # Canonical v1 provider list. Source of truth for the backend schema, the
@@ -105,28 +131,14 @@ def _provider_info(kind: str) -> Provider:
 _PROVIDERS: tuple[Provider, ...] = tuple(_provider_info(kind) for kind in V1_PROVIDERS)
 
 
-@router.post("", summary="Upload a statement for import", response_model=ImportSummary)
-async def upload_import_file(
-    file: UploadFile = File(...),
-    provider: str = "amex_pdf",
-    account_id: int | None = None,
-) -> ImportSummary:
-    """Accept a statement file and parse it.
+async def _read_upload(file: UploadFile, *, provider: str) -> tuple[bytes, str]:
+    """Validate the provider/extension pair and read the bytes.
 
-    Args:
-        file: The uploaded statement.
-        provider: Which adapter to run. Must match the file extension.
-        account_id: The local account to attribute rows to. A file names no
-            account, so the user picks one and the caller passes it in. None
-            when the upload has not been attributed to an account yet — which is
-            honest, where the previous `""` default claimed to be an id.
-
-    Returns:
-        A summary: provider, counts, checksum, and per-row failures.
-
-    Raises:
-        HTTPException: 400 for an unknown provider, a mismatched extension, or a
-            provider that is not uploadable; 413 when the upload is too large.
+    Shared by the dry run and the persisting import so the two cannot disagree
+    about what counts as an acceptable upload. The provider checks come FIRST:
+    "manual entries are POSTed as JSON" is a more useful answer than a confusing
+    parse failure, and saying so before reading 60 MB out of the request is also
+    cheaper.
     """
     # Manual entries are typed field by field, and Enable Banking arrives over
     # its API. Neither is an upload, and saying so is more useful than a
@@ -143,7 +155,7 @@ async def upload_import_file(
     if provider not in _FILE_ADAPTERS:
         raise HTTPException(status_code=400, detail=f"Unknown provider {provider!r}")
 
-    adapter_class, extension = _FILE_ADAPTERS[provider]
+    _, extension = _FILE_ADAPTERS[provider]
     filename = file.filename or ""
     if extension and not filename.lower().endswith(extension):
         raise HTTPException(
@@ -153,8 +165,40 @@ async def upload_import_file(
     payload = await file.read()
     if len(payload) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="File too large")
+    return payload, filename
 
-    adapter = adapter_class()
+
+@router.post(
+    "",
+    summary="Parse a statement WITHOUT writing it",
+    response_model=ImportSummary,
+)
+async def dry_run_import(
+    file: UploadFile = File(...),
+    provider: str = "amex_pdf",
+    account_id: int | None = None,
+) -> ImportSummary:
+    """Accept a statement file, parse it, and write NOTHING.
+
+    Args:
+        file: The uploaded statement.
+        provider: Which adapter to run. Must match the file extension.
+        account_id: The local account to attribute rows to. A file names no
+            account, so the user picks one and the caller passes it in. None
+            when the upload has not been attributed to an account yet — which is
+            honest, where the previous `""` default claimed to be an id.
+
+    Returns:
+        A summary of what the file CONTAINS. Nothing is written: `created`,
+        `duplicated` and `failed` are all zero, and this endpoint does not open an
+        `import_batch`. Use `POST /imports/file` to persist.
+
+    Raises:
+        HTTPException: 400 for an unknown provider, a mismatched extension, or a
+            provider that is not uploadable; 413 when the upload is too large.
+    """
+    payload, filename = await _read_upload(file, provider=provider)
+    adapter = _FILE_ADAPTERS[provider][0]()
     result = adapter.parse(payload, account_id=account_id, filename=filename)
     return ImportSummary(
         provider=result.provider,
@@ -163,6 +207,566 @@ async def upload_import_file(
         record_count=result.record_count,
         source_checksum=result.source_checksum,
         failures=[str(failure) for failure in result.failed],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Persisting an import
+# ---------------------------------------------------------------------------
+
+#: The message every unattributable row carries. `source_record.account_id` is
+#: NOT NULL (migration 0001), so a row nobody can attribute cannot be written at
+#: all — and Revolut's PDF emits `account_id=None` for rows from a section other
+#: than the caller's, by design (`revolut_pdf.py` says so). The row is counted as
+#: failed rather than dropped, because a silently dropped row is a statement that
+#: does not reconcile and a user with no way to tell which one.
+_UNATTRIBUTED = (
+    "Not written: this row names no account, and source_record.account_id is "
+    "NOT NULL. Pass account_id on the upload, or supply "
+    "section_account_ids so the adapter can attribute it."
+)
+
+#: A flagged card payment's message. Actionable, and deliberately does NOT guess
+#: a paying account: picking an arbitrary asset account is a coin flip that
+#: decides where the user's money went, which is the same reason
+#: `resolve_default_counter_account` refuses two same-named accounts
+#: (`docs/adr/0007-imported-card-payment-is-a-transfer.md`).
+_CARD_PAYMENT = (
+    "This row is a monthly card payment, so it is a TRANSFER (a card liability "
+    "paid from an asset) rather than an expense, and the statement does not say "
+    "which account paid it. It is stored unposted until that account is "
+    "registered; posting it as an expense would record debt repayment as "
+    "spending, and that entry would balance, commit and be permanent. See "
+    "docs/adr/0007-imported-card-payment-is-a-transfer.md."
+)
+
+
+def _gzip_b64(payload: bytes) -> str:
+    """The uploaded bytes, gzipped and base64'd, for `import_batch.raw_payload`.
+
+    JSONB cannot hold bytes, and `raw_payload` is documented as "gzipped if
+    large; NEVER removed" — it is what a replay reads. base64 is used rather than
+    hex because a PDF compresses to roughly a third and hex would double that
+    again; the column is text, so both are equally lossy on nothing.
+
+    `mtime=0` so the SAME file produces the SAME stored value. Without it gzip
+    embeds the current time, so two imports of identical bytes would differ, and
+    "compare `raw_payload` to the file the user uploaded" — the obvious
+    verification — would report a difference for no reason at all.
+    """
+    return base64.b64encode(gzip.compress(payload, mtime=0)).decode("ascii")
+
+
+def _posting_date(record: RawRecord) -> dt.date | None:
+    """The provider's SECOND date, lifted out of `raw_data` and parsed.
+
+    `raw_posting_date` differs from `raw_date` on 42 of the 121 rows in the real
+    Amex statements, so collapsing them loses a real fact. It lives in `raw_data`
+    as a STRING (`amex_pdf.py` writes `post_date.isoformat()`), and the column is
+    a DATE — so it has to be parsed on the way in, or it is silently NULL.
+
+    A value that will not parse is None, not an exception: one malformed row in a
+    7-year PDF must not abandon the other 4000, and the raw string is already
+    preserved verbatim in `raw_data`.
+    """
+    raw = record.raw_data.get("raw_posting_date")
+    if raw is None or isinstance(raw, bool):
+        return None
+    # `RawRecord.raw_data` is declared `str | int | float | bool | None`, so mypy
+    # narrows a `dt.date` out of that union as unreachable and `warn_unreachable`
+    # complains about the `return`. The declared type is narrower than what an
+    # adapter may actually put in a JSON object, and an adapter that put a real
+    # `date` there would otherwise have it stringified into `'2026-06-01'` — which
+    # `parse_date` happens to accept, but only by luck of the format.
+    #
+    # So the value is re-widened to `object` before the check rather than
+    # silenced, which makes the runtime behaviour the type describes.
+    wide: object = raw
+    if isinstance(wide, dt.date):
+        return wide
+    try:
+        return parse_date(str(wide))
+    except ValueError:
+        return None
+
+
+def _money(record: RawRecord) -> Money:
+    """This row as `Money`, with the exponent from the CURRENCY TABLE.
+
+    `RawRecord.amount_minor` is already minor units, so the integer is taken
+    verbatim and never rescaled here — the adapter made that decision once, at
+    parse time, where it had the statement in front of it.
+
+    What is NOT taken verbatim is the exponent. `normalize_currency` hardcodes
+    `decimals=2`, so a JPY or BTC `Money` built on the pre-database path is 100x
+    (or 10^6x) wrong before it reaches a writer, and `build_expense_legs` divides
+    by it to produce `amount_base`. The table is the authority; this is spelled
+    out because it is the one number in this file that is a lookup rather than a
+    value, and a reader will otherwise assume it came from the statement.
+    """
+    return Money(amount=record.amount_minor, currency=Currency(code=record.currency))
+
+
+def _occurrence_keys(records: Sequence[RawRecord]) -> list[OccurrenceKey]:
+    """Each row's dedup key, in the row's own order.
+
+    Built from `record.description`, which the adapters have ALREADY normalised
+    (`normalize_description`) — so this normalises nothing again. Normalising twice
+    is not idempotent in general and a second pass here would make the key disagree
+    with the fingerprint the stored rows were written under.
+    """
+    return [
+        OccurrenceKey(
+            account_id=record.account_id,
+            normalized_description=record.description,
+            amount_minor=record.amount_minor,
+            currency=record.currency,
+            booked_date=record.booked_date,
+        )
+        for record in records
+    ]
+
+
+def _already_stored(session: Session, digest: bytes) -> bool:
+    """Is there a `source_record` with exactly this Tier-3 fingerprint?
+
+    A POINT LOOKUP, and it has to be one. `lookup_fingerprint` takes an iterable
+    of candidates and walks it in Python, so using it here would mean reading every
+    stored fingerprint on the account (or worse, in the whole table) for every row
+    of the file — O(rows x stored), which on a 121-row statement against seven
+    years of history is tens of thousands of comparisons inside one transaction.
+
+    `uq_sr_fingerprint` is a UNIQUE index on the digest alone, so a point lookup
+    against it is both the fast answer and the exact one.
+
+    **No `IdentityResolver` here, and that is deliberate.** Tier 2 merges at
+    >= 0.85 and is Enable-Banking-only (`identity.py:381-393`); running it over a
+    PDF path would merge genuine separate purchases into whatever pending row
+    happened to be nearby, and a merge is silent. Tier 1 needs a provider key and
+    there is none on any v1 PDF path, so the resolver's `resolve()` collapses to
+    Tier 3 here anyway — this is that Tier 3, said plainly rather than reached by
+    accident.
+    """
+    found = session.scalar(
+        select(SourceRecord.id).where(SourceRecord.fingerprint == digest).limit(1)
+    )
+    return found is not None
+
+
+def _stored_occurrence_keys(
+    session: Session, keys: Sequence[OccurrenceKey]
+) -> list[OccurrenceKey]:
+    """Content-keys for every stored row on the accounts in this batch.
+
+    **A CONSISTENCY ASSERTION ONLY. It is never used to compute an occurrence
+    index**, and that is not an oversight — see the note below. Its one job is to
+    be compared against the content-only ranks the writer used, so a drift between
+    the two shows up as a failure instead of as silently renumbered rows.
+
+    The index has to be the CONTENT-ONLY within-batch rank from
+    `assign_occurrence_indices`, and both of these were simulated against
+    re-importing `[K, K, L]`:
+
+        stored_count + rank:  re-import -> created=2, duplicated=1  WRONG
+        content-only rank:     re-import -> created=0, duplicated=3  RIGHT
+
+    The difference is what `stored_count` does. Adding the number of stored rows
+    makes the index depend on TABLE STATE rather than on the file's contents, so
+    the first re-import shifts the index of every later row and the second one
+    shifts them again — which means re-importing the same statement keeps
+    rewriting it instead of recognising it. The index has to be a function of the
+    file alone.
+
+    The cost of that choice is that `count_existing_occurrences` CANNOT reproduce
+    a global ROW_NUMBER: a probe that is content-only has no way to know which of
+    two identical stored rows an incoming row "would have" been. That is why this
+    is an assertion and not a computation. The known consequence is documented on
+    the writer below.
+    """
+    accounts = {key.account_id for key in keys if key.account_id is not None}
+    if not accounts:
+        return []
+    rows = session.execute(
+        select(
+            SourceRecord.account_id,
+            SourceRecord.raw_description,
+            SourceRecord.raw_amount,
+            SourceRecord.raw_currency,
+            SourceRecord.raw_date,
+        ).where(SourceRecord.account_id.in_(accounts))
+    ).all()
+    return [
+        OccurrenceKey(
+            account_id=account_id,
+            normalized_description=description,
+            amount_minor=amount,
+            currency=currency.strip(),
+            booked_date=booked,
+        )
+        for account_id, description, amount, currency, booked in rows
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Persisting an import
+# ---------------------------------------------------------------------------
+
+
+def _persist(
+    session: Session,
+    *,
+    result: ImportResult,
+    payload: bytes,
+    filename: str,
+    account_id: int | None,
+    records: Sequence[RawRecord],
+) -> tuple[str, int, int, int, list[str]]:
+    """Write every row the adapter produced.
+
+    Returns:
+        `(status, created, duplicated, failed, reasons)` — see the Returns section.
+
+    ONE `session.begin()` around everything, and it is the handler's job — see
+    `finance.api.deps` for why the COMMIT that the deferrable balance trigger can
+    reject has to happen while a status code can still be produced. So a refusal
+    on row 40 rolls back rows 1-39 rather than leaving half a statement in the
+    ledger.
+
+    **KNOWN LIMITATION, inherited and not fixable here.** If batch A holds two
+    identical rows and an overlapping batch B holds one of them, B's row is
+    treated as the FIRST. There is no way to tell which of A's rows B meant: the
+    rows are identical, so the question has no answer in the data. This is a
+    property of content-only indexing, not a defect introduced by it, and
+    resolving it would need a provider id that the v1 PDF paths do not supply.
+
+    Returns:
+        `(status, created, duplicated, failed, reasons)`. `status` is what was
+        PERSISTED, never what the parser thought it read — see the note on
+        `_batch_status`.
+
+    Raises:
+        HTTPException: 404 when `account_id` names no account. Every OTHER
+            per-row problem is not raised: it is stored on the row or counted as
+            failed, because one bad row must not abandon a 121-row statement.
+    """
+    reasons: list[str] = []
+
+    if account_id is not None:
+        # 404 rather than letting the first row's INSERT raise a
+        # ForeignKeyViolation as a 500. Checked once, BEFORE the batch opens, so a
+        # request for a nonexistent account leaves no batch behind at all.
+        if session.get(Account, account_id) is None:
+            raise HTTPException(status_code=404, detail=f"No account {account_id}")
+
+    with session.begin():
+        batch_id = open_import_batch(
+            session,
+            provider=result.provider,
+            import_method=result.import_method,
+            status="processing",
+            account_id=account_id,
+            source_filename=filename or result.source_filename,
+            source_checksum=result.source_checksum,
+            raw_payload=_gzip_b64(payload),
+            stats={"record_count": result.record_count},
+        )
+
+        created = 0
+        duplicated = 0
+        failed = 0
+
+        # ── The occurrence index, and the one thing it must not depend on ──
+        #
+        # `assign_occurrence_indices` needs `NormalizedRecord`s, which carry more
+        # than this path wants to build (and would re-normalise the description,
+        # putting the key at odds with the fingerprint). The ranks are reproduced
+        # here by walking the rows in `line_number` order and counting within each
+        # content-key — the same algorithm, spelled out, because it is load-bearing
+        # and a reader needs to see that it reads CONTENT and not table state.
+        #
+        # Re-importing [K, K, L] therefore gives K->1, K->2, L->1 both times.
+        ranks = _content_only_ranks(records)
+
+        stored_keys = _stored_occurrence_keys(session, _occurrence_keys(records))
+
+        for record, rank in zip(records, ranks, strict=True):
+            money = _money(record)
+
+            # An unattributable row cannot be written at all — the column is NOT
+            # NULL — so it is a per-row failure, not a skip.
+            # `source_record.account_id` is NOT NULL, so an unattributable row
+            # cannot be written at all. That is a per-row failure, not a skip.
+            row_account = record.account_id
+            if row_account is None:
+                failed += 1
+                reasons.append(f"line {record.line_number}: {_UNATTRIBUTED}")
+                continue
+
+            digest = bytes.fromhex(
+                compute_fingerprint(
+                    raw_description=record.description,
+                    raw_amount=record.amount_minor,
+                    raw_currency=record.currency,
+                    raw_date=record.booked_date.isoformat(),
+                    account_id=fingerprint_account_scope(row_account),
+                    occurrence_index=rank,
+                )
+            )
+
+            # ── Tier 3, as a POINT LOOKUP, before anything else ──
+            #
+            # Before the card-payment dispatch on purpose: a card payment that was
+            # already stored unposted MUST count as a duplicate on re-import, not
+            # be stored a second time. Re-importing a statement has to be
+            # non-destructive in every state, not only the posted one.
+            if _already_stored(session, digest):
+                duplicated += 1
+                continue
+
+            # ── A card payment NEVER reaches the expense resolver ──
+            #
+            # `docs/adr/0007-imported-card-payment-is-a-transfer.md`. The equity
+            # requirement lives in `resolve_default_counter_account`, NOT in
+            # `build_expense_legs`, so a card payment sent through the manual
+            # default does NOT reliably raise — with an active `Expenses (system)`
+            # account present it books against equity, which balances, commits and
+            # is permanent. 4 of the 121 real Amex rows are card payments.
+            if record.raw_data.get("is_card_payment") is True:
+                write_unposted_transaction(
+                    session,
+                    batch_id=batch_id,
+                    account_id=row_account,
+                    description=record.description,
+                    amount=money,
+                    booked_date=record.booked_date,
+                    raw_data=dict(record.raw_data),
+                    error_message=_CARD_PAYMENT,
+                    raw_posting_date=_posting_date(record),
+                    occurrence_index=rank,
+                    provider_txn_id=record.provider_txn_id,
+                    status=TransactionStatus.PENDING,
+                )
+                failed += 1
+                reasons.append(f"line {record.line_number}: {_CARD_PAYMENT}")
+                continue
+
+            try:
+                write_posted_transaction(
+                    session,
+                    batch_id=batch_id,
+                    funding_account_id=row_account,
+                    description=record.description,
+                    amount=money,
+                    booked_date=record.booked_date,
+                    raw_data=dict(record.raw_data),
+                    raw_posting_date=_posting_date(record),
+                    occurrence_index=rank,
+                    provider_txn_id=record.provider_txn_id,
+                )
+            except ReferenceNotFound as exc:
+                # The account existed a moment ago and does not now. Refusing the
+                # whole import is the honest answer: continuing would write a
+                # statement that is silently shorter.
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            except PostingRefused as exc:
+                # Per row, not per batch: one unpostable row must not abandon the
+                # other hundred. The row is still STORED — the parse was right and
+                # the evidence is worth keeping — with the reason on it.
+                write_unposted_transaction(
+                    session,
+                    batch_id=batch_id,
+                    account_id=row_account,
+                    description=record.description,
+                    amount=money,
+                    booked_date=record.booked_date,
+                    raw_data=dict(record.raw_data),
+                    error_message=f"Not posted: {exc}",
+                    raw_posting_date=_posting_date(record),
+                    occurrence_index=rank,
+                    provider_txn_id=record.provider_txn_id,
+                    status=TransactionStatus.PENDING,
+                )
+                failed += 1
+                reasons.append(f"line {record.line_number}: {exc}")
+                continue
+            created += 1
+
+        status = _batch_status(created=created, duplicated=duplicated, failed=failed)
+        stats: dict[str, object] = {
+            "record_count": result.record_count,
+            "created": created,
+            "duplicated": duplicated,
+            "failed": failed,
+            "parse_failed": len(result.failed),
+        }
+        finish_import_batch(session, batch_id=batch_id, status=status, stats=stats)
+
+    # ── The consistency assertion, after the rows are in ──
+    #
+    # `count_existing_occurrences` is checked HERE and never used to compute an
+    # index. It cannot reproduce a global ROW_NUMBER while the probe is
+    # content-only: see `_stored_occurrence_keys` for why, and what was simulated.
+    # What it can do is prove the two agree about the file, so a future change to
+    # `_content_only_ranks` that breaks the correspondence fails here instead of
+    # quietly renumbering every stored fingerprint.
+    _assert_ranks_agree(records, ranks, stored_keys)
+
+    return status, created, duplicated, failed, reasons
+
+
+def _content_only_ranks(records: Sequence[RawRecord]) -> list[int]:
+    """The 1-based rank of each row among content-identical rows in THIS file.
+
+    `assign_occurrence_indices` computes exactly this, over `NormalizedRecord`s.
+    It is reimplemented here rather than called because building those would mean
+    running `normalize_record` — which calls `normalize_description` a second time
+    on text the adapter already normalised, and whose `Money` carries the
+    hardcoded 2-decimal exponent this path deliberately does not use.
+
+    The algorithm is one loop over the rows in `line_number` order, counting within
+    each content key, writing each row's rank back to its own position — which is
+    what `assign_occurrence_indices` does, and the reason the indices depend only
+    on the file's contents and not on the order the caller happened to pass rows
+    in. Re-importing `[K, K, L]` gives `1, 2, 1` every time, which is what makes a
+    second import of the same statement recognise every row as a duplicate.
+
+    Ties on `line_number` fall back to position, for the same reason: synthetic
+    rows that share one line number must still get a defined answer.
+    """
+    keys = _occurrence_keys(records)
+    order = sorted(range(len(records)), key=lambda i: (records[i].line_number, i))
+    counts: dict[OccurrenceKey, int] = {}
+    ranks = [0] * len(records)
+    for position in order:
+        key = keys[position]
+        counts[key] = counts.get(key, 0) + 1
+        ranks[position] = counts[key]
+    return ranks
+
+
+def _batch_status(*, created: int, duplicated: int, failed: int) -> str:
+    """What the batch status says about what PERSISTED.
+
+    **Never `ImportResult.status`.** That is parse-derived: it says `completed`
+    when the parser produced rows and reported no failures, which is exactly the
+    claim that a silently short statement must not make. A file of 40 rows where 39
+    posted and one card payment was stored unposted is `partial`, whatever the
+    adapter thought.
+
+    `failed` when nothing landed at all — a batch that created no rows and
+    recognised no duplicates recorded no work, and calling that `partial` would
+    understate it.
+    """
+    if created == 0 and duplicated == 0:
+        return "failed"
+    if failed:
+        return "partial"
+    return "completed"
+
+
+def _assert_ranks_agree(
+    records: Sequence[RawRecord],
+    ranks: Sequence[int],
+    stored_keys: Sequence[OccurrenceKey],
+) -> None:
+    """Prove the content-only ranks match `count_existing_occurrences`.
+
+    An ASSERTION, not a computation, and the asymmetry is the point: a content-only
+    probe can count how many stored rows match a row on every component but index,
+    but it cannot know which of two identical stored rows this one "would have"
+    been. So this checks the weaker, still-useful claim — that the count of
+    identical stored rows is at least the rank this row was given, i.e. no row is
+    assigned an index beyond the evidence — and leaves the global `ROW_NUMBER`
+    unreproduced, which no probe of this shape can reproduce.
+
+    Failure is a bug in `_content_only_ranks`, and the message says so rather than
+    letting a shifted index quietly invalidate every fingerprint already stored.
+    """
+    keys = _occurrence_keys(records)
+    for index, (key, rank) in enumerate(zip(keys, ranks, strict=True)):
+        matching = count_existing_occurrences(stored_keys, key)
+        if matching < rank:
+            msg = (
+                f"row {records[index].line_number} was assigned occurrence "
+                f"index {rank} but only {matching} identical rows are stored, so "
+                "the index is not reproducible from stored data and every "
+                "fingerprint from this file on would be wrong"
+            )
+            raise RuntimeError(msg)
+
+
+@router.post(
+    "/file",
+    summary="Upload a statement and persist it",
+    response_model=ImportSummary,
+)
+async def import_file(
+    session: SessionDep,
+    file: UploadFile = File(...),
+    provider: str = "amex_pdf",
+    account_id: int | None = None,
+) -> ImportSummary:
+    """Accept a statement file, parse it, and WRITE what it parsed.
+
+    Everything `POST /imports` reports, plus the rows in the ledger: one
+    `import_batch`, and per row either a `source_record` with a balanced
+    `journal_entry` or a `source_record` with no entry and an `error_message`
+    saying why. All in one transaction.
+
+    **Re-importing the same file is safe and is the design, not an accident.**
+    Every row's Tier-3 fingerprint is probed before it is written, so a second
+    upload of the same statement creates nothing and duplicates everything. That is
+    why the occurrence index is derived from the file's CONTENTS and never from how
+    many similar rows happen to be stored: an index that moved with table state
+    would make every re-import rewrite the file instead of recognising it.
+
+    `async def` with the work in a threadpool. A sync SQLAlchemy `Session` cannot
+    be awaited, and issuing its statements on the event loop would stall every
+    other request for the length of a 7-year PDF parse.
+
+    Args:
+        session: From `finance.api.deps`. The handler owns the transaction.
+        file: The uploaded statement.
+        provider: Which adapter to run. Must match the file extension.
+        account_id: The local account to attribute rows to. Without it, rows
+            whose own `account_id` is None cannot be written at all
+            (`source_record.account_id` is NOT NULL) and are counted as failed.
+
+    Returns:
+        What persisted: `created`, `duplicated` and `failed`, plus the failures
+        themselves. `status` is the batch status — `partial` when some row did not
+        land, which is the normal outcome for an Amex statement until card
+        payments can be attributed.
+
+    Raises:
+        HTTPException: 400 for an unknown provider, a mismatched extension, or a
+            provider that is not uploadable; 404 for an `account_id` that names no
+            account; 413 when the upload is too large.
+    """
+    payload, filename = await _read_upload(file, provider=provider)
+    adapter = _FILE_ADAPTERS[provider][0]()
+    result = await run_in_threadpool(
+        adapter.parse, payload, account_id=account_id, filename=filename
+    )
+    status, created, duplicated, failed, reasons = await run_in_threadpool(
+        _persist,
+        session,
+        result=result,
+        payload=payload,
+        filename=filename,
+        account_id=account_id,
+        records=result.records,
+    )
+    return ImportSummary(
+        provider=result.provider,
+        import_method=result.import_method,
+        status=status,
+        record_count=result.record_count,
+        source_checksum=result.source_checksum,
+        created=created,
+        duplicated=duplicated,
+        failed=failed,
+        failures=reasons,
     )
 
 
