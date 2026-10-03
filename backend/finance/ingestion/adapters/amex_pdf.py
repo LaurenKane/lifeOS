@@ -523,9 +523,9 @@ def _finish(
     pending: _PendingRow, account_id: int | None
 ) -> RawRecord | AdapterParseError:
     """Turn a pending row into a record, or explain why it cannot be one."""
-    description = redact_ibans(
-        redact_card_numbers(pending.description_source.strip())
-    ) or ""
+    description = (
+        redact_ibans(redact_card_numbers(pending.description_source.strip())) or ""
+    )
     if not pending.amount_text:
         return AdapterParseError(
             "row has no amount", pending.line_number, AmexPdfAdapter.provider
