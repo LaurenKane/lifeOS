@@ -35,8 +35,11 @@ services:
       # pg_trgm and the two module schemas. Required by ARCHITECTURE.md §E and
       # by the fact that Alembic's own version table lives in a schema.
       #
-      # Inline via a Compose `configs` entry so this file stays the single
-      # source of truth for the stack — no separate init SQL to forget to copy.
+      # The SQL itself lives in backend/db_bootstrap.sql, not here. It is
+      # "everything that must run before any migration", so a test fixture
+      # creating its own database has to be able to run the identical
+      # statements - which it cannot do if they are inline YAML.
+      #
       # Runs once, on first initialisation of an empty data directory.
       - source: db_bootstrap
         target: /docker-entrypoint-initdb.d/10-pg_trgm.sql
@@ -54,6 +57,19 @@ services:
     # guessable password for no benefit.
     expose:
       - "5432"
+    ports:
+      # Loopback only, high port, and ONLY for the DB-backed test suite.
+      # `make test-db` runs pytest in the host venv, and a container port that
+      # is `expose`-only is unreachable from the host - the fixture would have
+      # to run inside the compose network, and the tests would stop being
+      # runnable with a plain `pytest -m db`.
+      #
+      # The host port is NOT 5432 for the reason the comment above gives, and
+      # that is not negotiable on this machine: 5432 is already taken by an
+      # unrelated container, and stealing it would break that stack. Hence the
+      # 55432 default. `127.0.0.1:` binds loopback only, so nothing on the LAN
+      # can reach a throwaway development database with a guessable password.
+      - "127.0.0.1:${LIFEOS_TEST_DB_PORT:-55432}:5432"
     # NOT `user:`-pinned. The official entrypoint must start as root to chown
     # the data directory and then drops to the `postgres` uid via gosu, so the
     # database server itself is always non-root (uid 999). Forcing
@@ -188,33 +204,10 @@ services:
 # ---------------------------------------------------------------------------
 configs:
   db_bootstrap:
-    content: |
-      -- ARCHITECTURE.md §E: trigram indexes over merchant/payee names.
-      -- Run once by the postgres entrypoint, before any application start.
-      CREATE EXTENSION IF NOT EXISTS pg_trgm;
-
-      -- One database, one schema per module. These two are containers for a
-      -- module's tables; nothing here decides what goes inside them — M1
-      -- (bead LifeOS-6) owns the tables, the deferrable balance trigger and the
-      -- raw_data_immutable trigger.
-      --
-      -- Created HERE rather than by an Alembic migration, for one concrete
-      -- reason: Alembic cannot create its own bookkeeping table inside a schema
-      -- that does not exist. Both env.py files set `version_table_schema`, so
-      -- `alembic upgrade head` emits `CREATE TABLE core.alembic_version` and
-      -- fails with InvalidSchemaName before a single revision runs. Left to M1,
-      -- its first migration would be unable to execute at all.
-      --
-      -- IF NOT EXISTS throughout, so this is safe to re-run.
-      CREATE SCHEMA IF NOT EXISTS core;
-      CREATE SCHEMA IF NOT EXISTS finance;
-
-      -- The application role owns its schemas, so M1's migrations can create
-      -- tables in them. This is only the ownership half; `no_cross_schema_fk`
-      -- also wants grants that forbid cross-schema references, and those arrive
-      -- with M1 alongside the tables they protect.
-      GRANT ALL ON SCHEMA core TO lifeos;
-      GRANT ALL ON SCHEMA finance TO lifeos;
+    # The statements, and the reasons for them, are in the file — not inline
+    # here — so that a test fixture can run exactly the same bootstrap against a
+    # database that did not come from this compose stack.
+    file: ./backend/db_bootstrap.sql
 
 # ---------------------------------------------------------------------------
 # Volumes

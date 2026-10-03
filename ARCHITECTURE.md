@@ -95,27 +95,47 @@ life-os/
 
 | Name                | What it forbids                                                                 | How enforced (static check / manifest / hash pin) | Checker location |
 |---|---|---|---|
-| `raw_data_immutable` | `source_record.raw_data` or `.raw_description` ever UPDATE/DELETE | Python static check + CI guard; DB trigger written in M1 | `scripts/check_invariants.py` |
-| `no_cross_schema_fk` | FKs crossing Postgres schemas (e.g. `finance` → `health`) | Static scan of migration SQL in `scripts/check_invariants.py`, plus Postgres grants/role setup | CI job `check-invariants` |
+| `raw_data_immutable` | `source_record.raw_data` or `.raw_description` ever UPDATE/DELETE | Python static check + CI guard + **DB trigger (M1)** | `scripts/check_invariants.py` |
+| `no_cross_schema_fk` | FKs crossing Postgres schemas (e.g. `finance` → `health`) | Static scan of migration SQL only — the `GRANT`s in the bootstrap do **not** enforce this | CI job `check-invariants` |
 | `migrations_immutable` | Applied Alembic revisions ever edited in place | Manifest hash comparison (alembic heads vs recorded) | CI job `check-invariants` |
 | `fingerprint_frozen` | `backend/finance/ingestion/fingerprint.py` SHA-256 hash changed | Hash pinned in `invariants.yaml`; CI fails on drift | CI job `check-invariants` |
 
-**Not among them, deliberately.** The per-account-type balance identity
-(`checking`/`savings`: `prev + credits − debits = closing`; `credit_card`:
-`Vorig + Debiteringen − Crediteringen = Nieuw`) is an arithmetic identity over *parsed rows*, and the
-right-hand side lives in the uploaded statement rather than in this repo. `scripts/check_invariants.py`
-supports only `forbid_regex`, `hash` and `manifest` — none of which execute a parse. It is therefore
-a **required adapter acceptance test**, not an invariant entry; `invariants.yaml` carries a comment
-pointing at it. Rationale and rejected alternatives:
+**Not among them, deliberately.** The per-account-type balance identity is an arithmetic identity
+over *parsed rows* whose right-hand side lives in the uploaded statement, not in this repo, and no
+checker kind available (`forbid_regex`, `hash`, `manifest`) executes a parse. It is a **required
+adapter acceptance test**, not an invariant entry. Full rationale:
 `docs/adr/0003-import-decisions-real-export.md` Decision 2.
 
 ---
 
 ## 5. M0 / M1 boundary
 
-**M0 (now):** Repo skeleton, Docker Compose (db/api/worker/frontend), Alembic, `ARCHITECTURE.md`, `invariants.yaml`, CI with invariant + egress checks. Static checkers exist; DB-level triggers are not yet written.
+**M0 (done):** Repo skeleton, Docker Compose (db/api/worker/frontend), Alembic, `ARCHITECTURE.md`,
+`invariants.yaml`, CI with invariant + egress checks. Static checkers only — no DB-level triggers.
 
-**M1 (bead LifeOS-6):** Schema migrations the checkers police — the `raw_data_immutable` DB trigger, the `assert_journal_entry_balances()` deferred trigger, the `no_cross_schema_fk` grant enforcement — are written in M1. A future agent must not think the ledger is already protected at the DB level; the M0 CI gates prevent obvious breakage, but the real guards come online in M1.
+**M1 (bead LifeOS-6, landed 2026-10-03):** revision `0001_finance_ledger_schema.py` is applied to
+the dev database and hash-pinned in `scripts/migrations.lock.json`; every balance case was verified
+against a live Postgres 17 *before* the pin was recorded. Before M1 the ledger was **not** protected
+at the DB level. It now enforces: a journal entry sums to zero **at commit**; an entry has ≥2 legs
+including the zero-leg case; re-parenting a line re-checks *both* ends so it cannot orphan an entry;
+`raw_data`/`raw_description` never change; nothing lands in the wrong schema. Every table is in
+schema `finance`, `core` holding only `alembic_version`.
+
+Three traps, each verified by execution rather than assumed:
+
+- **The check is deferred** (`DEFERRABLE INITIALLY DEFERRED`; per-row would reject the first leg of
+  every valid entry) and uses a ±0.005 tolerance on `amount_base` rather than `<> 0`, which would
+  reject a valid entry carrying an FX residual. EUR-base only — `account_nature` has no
+  income/expense, so no single currency can sum to zero.
+- **The triggers are not a complete integrity boundary.** `TRUNCATE` bypasses them, `AUTOCOMMIT`
+  reverts the check to per-row, and `SET CONSTRAINTS ALL IMMEDIATE` breaks multi-line writes. Every
+  journal write belongs in an explicit transaction.
+- **Two invariants are enforced by a weaker mechanism than their name implies.** `raw_data_immutable`
+  is trigger-enforced (a row trigger cannot reject an *identical-value* assignment, so a privilege
+  layer is deferred); `no_cross_schema_fk` is enforced by the regex, not by grants.
+
+Rationale: `docs/adr/0006-balance-trigger-and-db-invariants.md`,
+`docs/adr/0005-schema-ownership.md`.
 
 ---
 
@@ -127,7 +147,12 @@ pointing at it. Rationale and rejected alternatives:
 
 ## 7. Type contract
 
-TS types are generated from FastAPI's OpenAPI spec at build time via `scripts/generate_types.py`. **There is no shared-types package** (versioning headache). CI fails if the spec changed without regeneration. The frontend `api/generated/` directory is regenerated-only — hand-editing is forbidden.
+**There is no shared-types package** (versioning headache). TS types are *intended* to be generated
+from FastAPI's OpenAPI spec via `scripts/generate_types.py`, with `frontend/src/api/generated/`
+regenerated-only — but that script currently emits a fixed 6-line skeleton and no real type, so the
+frontend API layer is hand-written and zod-validated at runtime. Treat codegen as unimplemented: a
+change to a Pydantic contract is not currently caught by CI, and a zod schema that disagrees with
+the server rejects the whole response array rather than one field.
 
 ---
 

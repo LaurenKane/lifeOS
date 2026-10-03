@@ -53,7 +53,21 @@ from finance.ingestion.dedupe import (
 from finance.ingestion.fingerprint import compute_fingerprint
 from finance.ingestion.normalize import normalize_record
 
-ACCOUNT_ID = "acc-egress-001"
+# Invented, and shaped like the BIGSERIAL M1 hands out. No real account id.
+ACCOUNT_ID = 1001
+
+
+def fingerprint_scope(account_id):
+    """Render an int account id as the string the pinned fingerprint wants.
+
+    ``finance.ingestion.fingerprint`` is SHA-256 hash-pinned, joins its parts
+    with ``"|"`` and coerces nothing, so it only accepts a ``str``. An
+    unresolved account becomes ``""`` and never ``str(None)``, which would put
+    the literal ``"None"`` in the scope key and collide every unattributed row
+    into one fingerprint. Duplicated here rather than imported because the
+    traced child process deliberately has nothing but ``backend`` on its path.
+    """
+    return "" if account_id is None else str(account_id)
 
 
 def extract_lines(payload):
@@ -102,11 +116,11 @@ def main():
                 raw_amount=record.amount.amount,
                 raw_currency=record.amount.currency.code,
                 raw_date=record.booked_date.isoformat(),
-                account_id=record.account_id,
+                account_id=fingerprint_scope(record.account_id),
                 occurrence_index=index,
             ),
             account_id=record.account_id,
-            source_record_id="sr-{{}}".format(position),
+            source_record_id=position,
         )
         for position, (record, index) in enumerate(zip(records, indices), 1)
     ]

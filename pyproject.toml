@@ -83,3 +83,15 @@ explicit_package_bases = false
 testpaths = ["backend/tests", "backend/finance/tests", "tests"]
 # backend/ is the import root, so `core` and `finance` are top-level packages.
 pythonpath = ["backend"]
+# DB-backed tests are OPT-IN, and `make test` stays Docker-free.
+#
+# `-m` has pytest's `store` action, so a `-m db` on the command line replaces
+# this value rather than adding to it. That is the whole mechanism: `make test`
+# runs `pytest` and deselects everything marked `db`; `make test-db` runs
+# `pytest -m db` and runs only those. Nothing here starts a database.
+addopts = "-m 'not db'"
+# Without this, `-m db` warns about an unknown mark, and a typo'd marker name
+# would silently select nothing - a green gate over zero tests.
+markers = [
+    "db: requires a real Postgres. Run `make test-db` (and `make up-db` first); it builds a throwaway lifeos_test database from the real migrations.",
+]

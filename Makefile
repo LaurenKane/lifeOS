@@ -32,6 +32,10 @@ NPM ?= npm
 # --- host ports --------------------------------------------------------------
 API_PORT ?= 8000
 FRONTEND_PORT ?= 8080
+# Loopback-published port for the compose `db` service, so the DB-backed tests
+# can run in the host venv. NOT 5432, which is taken by an unrelated container on
+# this machine; see docker-compose.yml for the full reasoning.
+LIFEOS_TEST_DB_PORT ?= 55432
 
 .PHONY: help
 help: ## List available targets
@@ -59,7 +63,7 @@ setup-db: up-db ## Start just the database and wait for it to be healthy
 dev: up ## Start the full stack, then run the Vite dev server (:5173) in the foreground
 	@echo
 	@echo "stack: http://localhost:$(FRONTEND_PORT)   vite: http://localhost:5173"
-	cd $(FRONTEND_DIR) && VITE_API_BASE_URL=$${VITE_API_BASE_URL:-http://localhost:$(API_PORT)/api} $(NPM) run dev
+	cd $(FRONTEND_DIR) && LIFEOS_DEV_API=http://127.0.0.1:$(API_PORT) VITE_API_BASE_URL=$${VITE_API_BASE_URL:-/api} $(NPM) run dev
 
 # The database is `expose`-only, never published, on purpose: host port 5432 is
 # already taken by an unrelated container on this machine, and a published
@@ -72,9 +76,14 @@ dev: up ## Start the full stack, then run the Vite dev server (:5173) in the for
 dev-backend: ## Run api and worker in the foreground (rebuilds first)
 	$(COMPOSE) up --build api worker
 
+# `/api`, not `http://localhost:$(API_PORT)/api`: the dev server proxies /api to
+# the API (see frontend/vite.config.ts). backend/main.py registers no CORS
+# middleware, so a cross-origin base URL is blocked by the browser whatever the
+# server replies — the proxy is what makes the dev server able to talk to the API
+# at all, and it is the same same-origin path nginx takes in the compose stack.
 .PHONY: dev-frontend
 dev-frontend: ## Run the Vite dev server (:5173) against the compose API
-	cd $(FRONTEND_DIR) && VITE_API_BASE_URL=$${VITE_API_BASE_URL:-http://localhost:$(API_PORT)/api} $(NPM) run dev
+	cd $(FRONTEND_DIR) && LIFEOS_DEV_API=http://127.0.0.1:$(API_PORT) VITE_API_BASE_URL=$${VITE_API_BASE_URL:-/api} $(NPM) run dev
 
 # ===========================================================================
 # Docker stack
@@ -106,9 +115,13 @@ logs: ## Tail logs for the whole stack
 shell: ## Open a shell in the api container
 	$(COMPOSE) exec api /bin/bash
 
+# PGOPTIONS pins the same search_path the application engine and both Alembic
+# environments pin (config.pg_connect_args). Without it a human in psql gets
+# "relation does not exist" for tables that plainly exist, because psql
+# defaults to public and every table lives in finance.
 .PHONY: db-shell
-db-shell: ## Open a psql shell
-	$(COMPOSE) exec db psql -U $${POSTGRES_USER:-lifeos} -d $${POSTGRES_DB:-lifeos}
+db-shell: ## Open a psql shell with the application's search_path
+	$(COMPOSE) exec -e PGOPTIONS='-csearch_path=finance,public' db psql -U $${POSTGRES_USER:-lifeos} -d $${POSTGRES_DB:-lifeos}
 
 # The only target that removes data, and it is named for that. `down -v` drops
 # the Postgres volume; there is no way to reach it by accident, because `down`
@@ -141,12 +154,44 @@ import-linter: ## Enforce the layering contracts in .importlinter
 	$(UV_RUN) lint-imports
 
 .PHONY: test
-test: ## Run the whole pytest suite
+test: ## Run the whole pytest suite (no Docker, no database)
 	$(UV_RUN) pytest
 
 .PHONY: test-backend
 test-backend: ## Run the backend tests only
 	$(UV_RUN) pytest backend/tests -q
+
+# The DB-backed suite. It is NOT part of `test`, and that is the point: `test`
+# stays runnable with no Docker at all, and these tests only run when asked for
+# by name.
+#
+# `-m db` on the command line OVERRIDES the `-m 'not db'` in pytest's addopts
+# (pytest's `store` action: the last `-m` wins), so this selects the database
+# tests and nothing else. It is the selection mechanism - there is no plugin and
+# no second config file.
+#
+# The URL is assembled here rather than left to the shell, from the same
+# throwaway local defaults docker-compose.yml uses, and it points at the
+# `postgres` maintenance database: the fixture creates and migrates its own
+# `lifeos_test` and never touches the database named in this URL. The password
+# is the same default compose already ships - see the credentials note at the top
+# of that file.
+#
+# Run `make up-db` first. It is not a prerequisite on purpose: the tests also run
+# against a database that is not this compose stack (the CI job's service
+# container), and a target that silently started a second Postgres would hide
+# which one the tests were actually talking to.
+#
+# `make ci` deliberately does NOT depend on this target. `ci` is the gate that
+# must run anywhere; folding a database in would mean it cannot.
+.PHONY: test-db
+test-db: ## Run the DB-backed tests (-m db) against a real Postgres
+	LIFEOS_TEST_DATABASE_URL="postgresql://$${POSTGRES_USER:-lifeos}:$${POSTGRES_PASSWORD:-lifeos}@127.0.0.1:$(LIFEOS_TEST_DB_PORT)/postgres" \
+	  $(UV_RUN) pytest -m db -v
+
+.PHONY: test-offline
+test-offline: ## Run every test that needs no database (the same set as `test`)
+	$(UV_RUN) pytest -m 'not db'
 
 .PHONY: test-frontend
 test-frontend: ## Run the frontend vitest suite
@@ -218,24 +263,28 @@ migrate: ## Apply Alembic migrations for core and finance, inside the api contai
 	$(COMPOSE) run --rm -T --workdir /app/backend api /bin/sh -c 'set -eu; \
 	  for schema in core finance; do \
 	    echo "==> migrating schema: $$schema"; \
-	    ini=$$(mktemp); \
-	    sed "s|^sqlalchemy.url[[:space:]]*=.*|sqlalchemy.url = $$LIFEOS_DATABASE_URL|" \
-	      "$$schema/alembic.ini" > "$$ini"; \
-	    alembic -c "$$ini" upgrade head; \
+	    alembic -c "$$schema/alembic.ini" upgrade head; \
 	  done'
 
-# The temporary ini copy below carries exactly one thing: the substituted
-# database URL. env.py reads sqlalchemy.url from the ini and does not consult
-# LIFEOS_DATABASE_URL, so there is nowhere else to inject it.
+# No temporary ini, no sed. env.py reads the URL from get_settings()
+# (LIFEOS_DATABASE_URL, which compose already sets to the `db` service) and
+# pins search_path through config.pg_connect_args, so the committed .ini files
+# run as-is. What this target used to do — substitute a URL into a mktemp copy
+# of each .ini — was an out-of-band channel that could drift from config.py, and
+# it existed only because env.py read sqlalchemy.url from the .ini and nothing
+# else. That is no longer true.
 #
-# It used to carry the [loggers], [handlers] and [formatters] sections too. That
-# was a workaround, and it is gone. As committed, both .ini files declared
-# `formatter = generic` under [handler_console] and `handlers = console` under
-# [logger_root] but omitted the registries that logging.config.fileConfig()
-# indexes by those literal names, so `alembic upgrade head` died with
-# `KeyError: 'formatters'` before it ever opened a connection. Those three
-# sections are now declared in the committed files, so the committed ini runs
-# as-is (LifeOS-gsy). Do not reintroduce the prepend here.
+# It ALSO used to prepend the [loggers]/[handlers]/[formatters] sections to
+# that copy, because the committed .ini files declared `formatter = generic`
+# and `handlers = console` without the registries logging.config.fileConfig()
+# indexes by those literal names — so `alembic upgrade head` died with
+# `KeyError: 'formatters'` before opening a connection. All three sections are
+# declared in the committed files now. Do not reintroduce the prepend.
+#
+# `migrate-status` below still sed-substitutes into a temporary .ini. That
+# substitution is now dead: env.py overwrites sqlalchemy.url from
+# get_settings() in online mode, so the substituted value is ignored. It still
+# runs correctly; it is simply no longer the place the URL comes from.
 .PHONY: migrate-status
 migrate-status: ## Show current Alembic revision for both schemas
 	$(COMPOSE) run --rm -T --workdir /app/backend api /bin/sh -c 'set -eu; \
@@ -264,7 +313,7 @@ dependency-gate-selftest: ## Prove the dependency gate blocks an unapproved lock
 # ===========================================================================
 
 .PHONY: ci
-ci: lint typecheck import-linter test check-invariants test-invariants invariant-negative egress-test frontend dependency-gate-selftest ## Run every CI gate locally
+ci: lint typecheck import-linter test test-db check-invariants test-invariants invariant-negative egress-test frontend dependency-gate-selftest ## Run every CI gate locally (needs Docker + `make up-db`)
 	@echo
 	@echo "All gates passed."
 

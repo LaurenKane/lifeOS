@@ -128,6 +128,73 @@ jobs:
           path: coverage.xml
           if-no-files-found: ignore
 
+  # =========================================================================
+  # DB-backed tests — the balance invariant
+  # =========================================================================
+
+  # A SEPARATE job from `test`, not a step inside it. The reason is the same as
+  # for every other job here: this one needs a PostgreSQL service container, and
+  # a failure to provision one reads as nothing like an assertion failure, so it
+  # wants a different reviewer and a different log to look at.
+  #
+  # These tests are the M1 acceptance criteria — a balanced entry commits, an
+  # unbalanced one is rejected AT COMMIT, the re-parent exploit is caught — and
+  # they are marked `db`, which `pytest`'s addopts deselect by default. So the
+  # `pytest` job above does NOT run them, and this job's `-m db` overrides that
+  # selection rather than adding to it.
+  test-db:
+    name: test-db (pytest -m db, real Postgres)
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        # NOT pinned by digest, unlike docker-compose.yml, and that asymmetry is
+        # deliberate. A compose service here holds a development database that
+        # someone may be looking at; a CI service container is created empty for
+        # one job and destroyed with the runner. Pinning it would fail CI on an
+        # unrelated upstream tag rotation, in a job nobody can reproduce locally,
+        # for a database that is thrown away either way. The version itself
+        # matches compose's `postgres:17-alpine`, which IS what makes a local
+        # `make test-db` a reproduction of this job.
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: lifeos
+          POSTGRES_PASSWORD: lifeos
+          POSTGRES_DB: lifeos
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd "pg_isready -U lifeos -d lifeos"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Points at the `postgres` maintenance database on purpose: the fixture
+      # creates and migrates its own `lifeos_test` and never touches the database
+      # named here. Role name matches the `GRANT ... TO lifeos` in
+      # backend/db_bootstrap.sql.
+      LIFEOS_TEST_DATABASE_URL: postgresql://lifeos:lifeos@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - run: uv sync --frozen --extra dev
+
+      # The fixture builds lifeos_test from backend/db_bootstrap.sql and then
+      # runs `alembic upgrade head` for core and finance, so this runs the REAL
+      # migrations — including the deferrable balance trigger, which
+      # `Base.metadata.create_all()` would not create at all and which is the
+      # entire subject of these tests.
+      - name: balance invariant and schema drift
+        run: uv run --frozen pytest -m db -v
+
   import-linter:
     name: import-linter (layering contracts)
     runs-on: ubuntu-24.04
