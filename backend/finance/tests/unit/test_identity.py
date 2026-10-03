@@ -15,7 +15,7 @@ from decimal import Decimal
 
 import pytest
 
-from finance.ingestion.dedupe import ExistingFingerprint
+from finance.ingestion.dedupe import ExistingFingerprint, fingerprint_account_scope
 from finance.ingestion.fingerprint import compute_fingerprint
 from finance.ingestion.identity import (
     AUTO_LINK_THRESHOLD,
@@ -26,7 +26,11 @@ from finance.ingestion.identity import (
     trigram_similarity,
 )
 
-ACCOUNT = "acc-synthetic-001"
+# Invented, and shaped like the BIGSERIAL M1 hands out.
+ACCOUNT = 1001
+
+# A second account, so cross-account cases are distinguishable by value.
+OTHER_ACCOUNT = 2002
 
 
 def _date(value: str) -> dt.date:
@@ -74,7 +78,7 @@ class TestTier1ProviderId:
         """
         resolver = IdentityResolver()
         decision = resolver.resolve(
-            account_id="acc-other",
+            account_id=OTHER_ACCOUNT,
             description="Jumbo 4321",
             amount_minor=-850,
             currency="EUR",
@@ -136,7 +140,7 @@ class TestTier2PendingToBooked:
         decision = self._resolve(
             [
                 Candidate(
-                    source_record_id="sr-1",
+                    source_record_id=5001,
                     account_id=ACCOUNT,
                     amount_minor=-850,
                     booked_date=_date("2026-03-15"),
@@ -151,7 +155,7 @@ class TestTier2PendingToBooked:
         assert decision.tier == 2
         assert decision.is_duplicate
         assert not decision.needs_review
-        assert decision.source_record_id == "sr-1"
+        assert decision.source_record_id == 5001
         assert decision.journal_entry_id == 42
         assert decision.confidence >= AUTO_LINK_THRESHOLD
 
@@ -165,7 +169,7 @@ class TestTier2PendingToBooked:
         decision = self._resolve(
             [
                 Candidate(
-                    source_record_id="sr-1",
+                    source_record_id=5001,
                     account_id=ACCOUNT,
                     amount_minor=-850,
                     booked_date=_date("2026-03-15"),
@@ -189,7 +193,7 @@ class TestTier2PendingToBooked:
         decision = self._resolve(
             [
                 Candidate(
-                    source_record_id="sr-1",
+                    source_record_id=5001,
                     account_id=ACCOUNT,
                     amount_minor=-850,
                     booked_date=_date("2026-03-15"),
@@ -209,7 +213,7 @@ class TestTier2PendingToBooked:
         decision = self._resolve(
             [
                 Candidate(
-                    source_record_id="sr-1",
+                    source_record_id=5001,
                     account_id=ACCOUNT,
                     amount_minor=-852,
                     booked_date=_date("2026-03-15"),
@@ -225,7 +229,7 @@ class TestTier2PendingToBooked:
         decision = self._resolve(
             [
                 Candidate(
-                    source_record_id="sr-1",
+                    source_record_id=5001,
                     account_id=ACCOUNT,
                     amount_minor=-851,
                     booked_date=_date("2026-03-15"),
@@ -247,7 +251,7 @@ class TestTier2PendingToBooked:
         stored_later = self._resolve(
             [
                 Candidate(
-                    source_record_id="sr-1",
+                    source_record_id=5001,
                     account_id=ACCOUNT,
                     amount_minor=-850,
                     booked_date=_date("2026-03-18"),
@@ -260,7 +264,7 @@ class TestTier2PendingToBooked:
         stored_earlier_by_one = self._resolve(
             [
                 Candidate(
-                    source_record_id="sr-1",
+                    source_record_id=5001,
                     account_id=ACCOUNT,
                     amount_minor=-850,
                     booked_date=_date("2026-03-14"),
@@ -273,7 +277,7 @@ class TestTier2PendingToBooked:
         stored_earlier_by_two = self._resolve(
             [
                 Candidate(
-                    source_record_id="sr-1",
+                    source_record_id=5001,
                     account_id=ACCOUNT,
                     amount_minor=-850,
                     booked_date=_date("2026-03-13"),
@@ -286,7 +290,7 @@ class TestTier2PendingToBooked:
         stored_far_later = self._resolve(
             [
                 Candidate(
-                    source_record_id="sr-1",
+                    source_record_id=5001,
                     account_id=ACCOUNT,
                     amount_minor=-850,
                     booked_date=_date("2026-03-19"),
@@ -309,7 +313,7 @@ class TestTier2PendingToBooked:
         decision = self._resolve(
             [
                 Candidate(
-                    source_record_id="sr-1",
+                    source_record_id=5001,
                     account_id=ACCOUNT,
                     amount_minor=-850,
                     booked_date=_date("2026-03-15"),
@@ -326,8 +330,8 @@ class TestTier2PendingToBooked:
         decision = self._resolve(
             [
                 Candidate(
-                    source_record_id="sr-1",
-                    account_id="acc-other",
+                    source_record_id=5001,
+                    account_id=OTHER_ACCOUNT,
                     amount_minor=-850,
                     booked_date=_date("2026-03-15"),
                     description="Jumbo 4321 Amsterdam",
@@ -346,7 +350,7 @@ class TestTier2PendingToBooked:
         single = self._resolve(
             [
                 Candidate(
-                    source_record_id="sr-a",
+                    source_record_id=5001,
                     account_id=ACCOUNT,
                     amount_minor=-850,
                     booked_date=_date("2026-03-15"),
@@ -360,7 +364,7 @@ class TestTier2PendingToBooked:
         ambiguous = self._resolve(
             [
                 Candidate(
-                    source_record_id="sr-a",
+                    source_record_id=5001,
                     account_id=ACCOUNT,
                     amount_minor=-850,
                     booked_date=_date("2026-03-15"),
@@ -369,7 +373,7 @@ class TestTier2PendingToBooked:
                     merchant_alias_id=7,
                 ),
                 Candidate(
-                    source_record_id="sr-b",
+                    source_record_id=5002,
                     account_id=ACCOUNT,
                     amount_minor=-850,
                     booked_date=_date("2026-03-15"),
@@ -390,7 +394,7 @@ class TestTier2PendingToBooked:
         """
         candidates = [
             Candidate(
-                source_record_id="sr-b",
+                source_record_id=5002,
                 account_id=ACCOUNT,
                 amount_minor=-850,
                 booked_date=_date("2026-03-15"),
@@ -398,7 +402,7 @@ class TestTier2PendingToBooked:
                 status="pending",
             ),
             Candidate(
-                source_record_id="sr-a",
+                source_record_id=5001,
                 account_id=ACCOUNT,
                 amount_minor=-850,
                 booked_date=_date("2026-03-15"),
@@ -408,7 +412,7 @@ class TestTier2PendingToBooked:
         ]
         first = self._resolve(candidates)
         second = self._resolve(list(reversed(candidates)))
-        assert first.source_record_id == second.source_record_id == "sr-a"
+        assert first.source_record_id == second.source_record_id == 5001
 
     def test_score_is_a_decimal_not_a_float(self) -> None:
         """Reproducible to the bit.
@@ -419,7 +423,7 @@ class TestTier2PendingToBooked:
         decision = self._resolve(
             [
                 Candidate(
-                    source_record_id="sr-1",
+                    source_record_id=5001,
                     account_id=ACCOUNT,
                     amount_minor=-850,
                     booked_date=_date("2026-03-15"),
@@ -444,11 +448,11 @@ class TestTier3Fingerprint:
                 raw_amount=-850,
                 raw_currency="EUR",
                 raw_date="2026-03-14",
-                account_id=ACCOUNT,
+                account_id=fingerprint_account_scope(ACCOUNT),
                 occurrence_index=1,
             ),
             "account_id": ACCOUNT,
-            "source_record_id": "sr-1",
+            "source_record_id": 5001,
             "journal_entry_id": 42,
         }
         params.update(overrides)
@@ -503,7 +507,7 @@ class TestTier3Fingerprint:
         assert not second.is_duplicate
 
     def test_cross_account_never_matches(self) -> None:
-        decision = self._resolve([self._stored(account_id="acc-other")])
+        decision = self._resolve([self._stored(account_id=OTHER_ACCOUNT)])
         assert not decision.is_duplicate
 
     def test_fingerprint_is_echoed_on_a_new_row(self) -> None:
@@ -531,7 +535,7 @@ class TestTierOrdering:
             known_txn_ids=[(ACCOUNT, "eb-ref-1")],
             candidates=[
                 Candidate(
-                    source_record_id="sr-other",
+                    source_record_id=5002,
                     account_id=ACCOUNT,
                     amount_minor=-850,
                     booked_date=_date("2026-03-14"),
@@ -554,7 +558,7 @@ class TestTierOrdering:
             booked_date=_date("2026-03-15"),
             candidates=[
                 Candidate(
-                    source_record_id="sr-pending",
+                    source_record_id=5001,
                     account_id=ACCOUNT,
                     amount_minor=-850,
                     booked_date=_date("2026-03-15"),
@@ -620,7 +624,7 @@ class TestThresholds:
             booked_date=_date("2026-03-15"),
             candidates=[
                 Candidate(
-                    source_record_id="sr-1",
+                    source_record_id=5001,
                     account_id=ACCOUNT,
                     amount_minor=-850,
                     booked_date=_date("2026-03-15"),
@@ -658,7 +662,7 @@ class TestResolverIsStateless:
 def test_all_statuses_are_accepted_as_candidates(status: str) -> None:
     """Tier 2 narrows on `is_pending`, it does not require it."""
     candidate = Candidate(
-        source_record_id="sr-1",
+        source_record_id=5001,
         account_id=ACCOUNT,
         amount_minor=-850,
         booked_date=_date("2026-03-15"),

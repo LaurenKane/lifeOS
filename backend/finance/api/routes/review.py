@@ -56,11 +56,13 @@ def list_review_queue() -> list[PublicTransactionSummary]:
     summary="Decide a review item",
     response_model=TransactionSummary,
 )
-def decide(record_id: str, decision: ReviewDecision) -> TransactionSummary:
+def decide(record_id: int, decision: ReviewDecision) -> TransactionSummary:
     """Record CONFIRM, REJECT or IGNORE for one queued transaction.
 
     `decision` is a path parameter constrained to the enum, so an unknown value
-    is a 422 rather than a silently-ignored string.
+    is a 422 rather than a silently-ignored string. `record_id` is typed `int`
+    for the same reason: a malformed id is a 422, not a 404 from a lookup that
+    could never have matched.
 
     Raises:
         HTTPException: 404 when no such record is queued.

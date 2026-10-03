@@ -45,7 +45,7 @@ class ManualEntry:
     def __init__(
         self,
         *,
-        account_id: str,
+        account_id: int,
         description: str,
         amount: str | int,
         currency: str,

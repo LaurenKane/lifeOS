@@ -28,10 +28,16 @@ def _date(value: str) -> dt.date:
     return dt.date.fromisoformat(value)
 
 
+# Invented journal_line and account ids, shaped like the BIGSERIALs M1 hands
+# out. The outbound side lives on CHECKING, the counterparty on CARD.
+CHECKING: int = 1001
+CARD: int = 1002
+
+
 def line(
     *,
-    entry_id: str = "je-out",
-    account_id: str = "checking",
+    entry_id: int = 5001,
+    account_id: int = CHECKING,
     amount_minor: int = -5000,
     currency: str = "EUR",
     booked_date: str = "2026-03-15",
@@ -57,7 +63,7 @@ class TestWindow:
     def test_same_day_is_inside(self) -> None:
         assert is_transfer_pair(
             line(booked_date="2026-03-15"),
-            line(account_id="card", amount_minor=5000, booked_date="2026-03-15"),
+            line(account_id=CARD, amount_minor=5000, booked_date="2026-03-15"),
         )
 
 
@@ -65,28 +71,28 @@ class TestRules:
     def test_same_account_is_not_a_transfer(self) -> None:
         """Moving money within one account is a reclassification, not a transfer."""
         assert not is_transfer_pair(
-            line(account_id="checking"), line(account_id="checking", amount_minor=5000)
+            line(account_id=CHECKING), line(account_id=CHECKING, amount_minor=5000)
         )
 
     def test_same_sign_is_not_a_transfer(self) -> None:
         """Two debits are two spends, however similar."""
         assert not is_transfer_pair(
-            line(amount_minor=-5000), line(account_id="card", amount_minor=-5000)
+            line(amount_minor=-5000), line(account_id=CARD, amount_minor=-5000)
         )
 
     def test_zero_amount_is_not_a_transfer(self) -> None:
         """A zero leg carries no direction, so there is nothing to match."""
         assert not is_transfer_pair(
-            line(amount_minor=0), line(account_id="card", amount_minor=0)
+            line(amount_minor=0), line(account_id=CARD, amount_minor=0)
         )
 
     def test_exact_offset_is_a_transfer(self) -> None:
-        assert is_transfer_pair(line(), line(account_id="card", amount_minor=5000))
+        assert is_transfer_pair(line(), line(account_id=CARD, amount_minor=5000))
 
     def test_one_cent_tolerance(self) -> None:
         """Documented: ABS(L1 + L2) <= 1 minor unit."""
-        assert is_transfer_pair(line(), line(account_id="card", amount_minor=4999))
-        assert not is_transfer_pair(line(), line(account_id="card", amount_minor=4998))
+        assert is_transfer_pair(line(), line(account_id=CARD, amount_minor=4999))
+        assert not is_transfer_pair(line(), line(account_id=CARD, amount_minor=4998))
 
     def test_cross_currency_tolerance_is_wider(self) -> None:
         """50 minor units, for an FX spread.
@@ -98,11 +104,11 @@ class TestRules:
         assert CROSS_CURRENCY_TOLERANCE_MINOR == 50
         assert is_transfer_pair(
             line(),
-            line(account_id="card", amount_minor=4950, currency="USD"),
+            line(account_id=CARD, amount_minor=4950, currency="USD"),
         )
         assert not is_transfer_pair(
             line(),
-            line(account_id="card", amount_minor=4950, currency="EUR"),
+            line(account_id=CARD, amount_minor=4950, currency="EUR"),
         )
 
     def test_cross_currency_beyond_tolerance_is_refused(self) -> None:
@@ -113,17 +119,17 @@ class TestRules:
         """
         assert not is_transfer_pair(
             line(),
-            line(account_id="card", amount_minor=4500, currency="USD"),
+            line(account_id=CARD, amount_minor=4500, currency="USD"),
         )
 
     def test_already_matched_lines_are_excluded(self) -> None:
         """A line can belong to at most one transfer pair."""
         assert not is_transfer_pair(
-            line(already_matched=True), line(account_id="card", amount_minor=5000)
+            line(already_matched=True), line(account_id=CARD, amount_minor=5000)
         )
         assert not is_transfer_pair(
             line(),
-            line(account_id="card", amount_minor=5000, already_matched=True),
+            line(account_id=CARD, amount_minor=5000, already_matched=True),
         )
 
     @pytest.mark.parametrize("days_later", [0, 1, 2, 3])
@@ -131,7 +137,7 @@ class TestRules:
         assert is_transfer_pair(
             line(),
             line(
-                account_id="card",
+                account_id=CARD,
                 amount_minor=5000,
                 booked_date=f"2026-03-{15 + days_later:02d}",
             ),
@@ -140,7 +146,7 @@ class TestRules:
     @pytest.mark.parametrize("inbound_date", ["2026-03-19", "2026-03-20"])
     def test_outside_window_later(self, inbound_date: str) -> None:
         assert not is_transfer_pair(
-            line(), line(account_id="card", amount_minor=5000, booked_date=inbound_date)
+            line(), line(account_id=CARD, amount_minor=5000, booked_date=inbound_date)
         )
 
     @pytest.mark.parametrize("inbound_date", ["2026-03-14", "2026-03-13"])
@@ -151,13 +157,13 @@ class TestRules:
         anything before that is not.
         """
         outbound = line(booked_date="2026-03-15")
-        candidate = line(account_id="card", amount_minor=5000, booked_date=inbound_date)
+        candidate = line(account_id=CARD, amount_minor=5000, booked_date=inbound_date)
         assert is_transfer_pair(outbound, candidate) == (inbound_date == "2026-03-14")
 
 
 class TestMatchResult:
     def test_exact_same_day_is_auto(self) -> None:
-        match = transfer_match(line(), line(account_id="card", amount_minor=5000))
+        match = transfer_match(line(), line(account_id=CARD, amount_minor=5000))
         assert match is not None
         assert match.confidence == Decimal("0.95")
         assert match.is_auto
@@ -172,7 +178,7 @@ class TestMatchResult:
         """
         match = transfer_match(
             line(),
-            line(account_id="card", amount_minor=5000, booked_date="2026-03-17"),
+            line(account_id=CARD, amount_minor=5000, booked_date="2026-03-17"),
         )
         assert match is not None
         assert match.confidence == Decimal("0.85")
@@ -186,7 +192,7 @@ class TestMatchResult:
         an FX conversion this module deliberately does not perform.
         """
         match = transfer_match(
-            line(), line(account_id="card", amount_minor=5000, currency="USD")
+            line(), line(account_id=CARD, amount_minor=5000, currency="USD")
         )
         assert match is not None
         assert match.match_method == "auto_card_payment"
@@ -194,19 +200,17 @@ class TestMatchResult:
 
     def test_no_match_returns_none(self) -> None:
         assert (
-            transfer_match(line(), line(account_id="card", amount_minor=5000))
-            is not None
+            transfer_match(line(), line(account_id=CARD, amount_minor=5000)) is not None
         )
         assert (
-            transfer_match(line(), line(account_id="checking", amount_minor=5000))
-            is None
+            transfer_match(line(), line(account_id=CHECKING, amount_minor=5000)) is None
         )
 
     def test_entry_ids_are_carried_through(self) -> None:
         match = transfer_match(
-            line(entry_id="je-a"),
-            line(entry_id="je-b", account_id="card", amount_minor=5000),
+            line(entry_id=5001),
+            line(entry_id=5002, account_id=CARD, amount_minor=5000),
         )
         assert match is not None
-        assert match.outbound == "je-a"
-        assert match.inbound == "je-b"
+        assert match.outbound == 5001
+        assert match.inbound == 5002

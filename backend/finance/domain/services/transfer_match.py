@@ -49,8 +49,8 @@ class JournalLineRef:
     stay pure.
     """
 
-    entry_id: str
-    account_id: str
+    entry_id: int
+    account_id: int
     amount_minor: int
     currency: str
     booked_date: dt.date
@@ -61,8 +61,8 @@ class JournalLineRef:
 class TransferMatch:
     """A confirmed transfer pair."""
 
-    outbound: str
-    inbound: str
+    outbound: int
+    inbound: int
     match_method: str
     confidence: Decimal
 

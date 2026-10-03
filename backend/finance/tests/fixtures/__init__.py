@@ -20,6 +20,7 @@ from __future__ import annotations
 import csv
 import datetime as dt
 import io
+from typing import Final
 
 from finance.ingestion.identity import Candidate
 from finance.ingestion.normalize import (
@@ -31,6 +32,7 @@ from finance.ingestion.normalize import (
 __all__ = [
     "ACCOUNT_ID",
     "AIS_TRANSACTIONS",
+    "SOURCE_RECORD_ID",
     "ais_transaction",
     "am_statement_csv",
     "make_candidate",
@@ -41,8 +43,12 @@ __all__ = [
     "synthetic_amex_pdf_text",
 ]
 
-# Invented. No account number is a real one.
-ACCOUNT_ID = "acc-synthetic-001"
+# Invented, and shaped like what M1 will actually hand out: a BIGSERIAL.
+# No account number is a real one, and no real one is a real BIGSERIAL either.
+ACCOUNT_ID: Final = 1001
+
+# The same for a stored source_record row.
+SOURCE_RECORD_ID: Final = 5001
 
 # A bank-style description with a trailing reference, as providers send it.
 _REF = "REF:000000123456"
@@ -54,7 +60,7 @@ def make_record(
     amount_minor: int = -850,
     currency: str = "EUR",
     booked_date: str = "2026-03-14",
-    account_id: str = ACCOUNT_ID,
+    account_id: int | None = ACCOUNT_ID,
     line_number: int = 1,
     provider_txn_id: str | None = None,
     pending: bool = False,
@@ -75,8 +81,8 @@ def make_record(
 
 def make_candidate(
     *,
-    source_record_id: str = "sr-001",
-    account_id: str = ACCOUNT_ID,
+    source_record_id: int = SOURCE_RECORD_ID,
+    account_id: int | None = ACCOUNT_ID,
     amount_minor: int = -850,
     description: str = "Jumbo 4321",
     booked_date: str = "2026-03-14",

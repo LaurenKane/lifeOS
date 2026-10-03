@@ -32,5 +32,5 @@
 #
 # Format: `<sha256>  <path>` (two spaces). Comments start with `#`.
 
-c53ab909e666846a664f064e4fdb0f384f9b3990b6a0944709ff11f3486fd2ec  uv.lock
+04eb9a5cfeb060e03ad424aedf37e62c7932a67750b2f19173c65554c38ff194  uv.lock
 2098039027d767db5cdc73beb531bbfe19e5cfbd2b1846fa8bad79d364d0bcf9  frontend/package-lock.json

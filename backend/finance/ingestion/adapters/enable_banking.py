@@ -167,7 +167,7 @@ class EnableBankingAdapter(ImportAdapter):
         self,
         transactions: list[dict[str, object]],
         *,
-        account_id: str,
+        account_id: int | None,
         entry_reference: str | None = None,
         line_offset: int = 0,
     ) -> ImportResult:
@@ -175,7 +175,8 @@ class EnableBankingAdapter(ImportAdapter):
 
         Args:
             transactions: The `transactions` array from an AIS response.
-            account_id: The local account the provider account is linked to.
+            account_id: The local account the provider account is linked to,
+                or None when the link has not been resolved yet.
             entry_reference: The account's `entryReference` for this fetch. Used
                 as a fallback id and to detect the "both rows carry an equal
                 provider id" Tier-1 exact-match case.
@@ -207,7 +208,7 @@ class EnableBankingAdapter(ImportAdapter):
         self,
         transaction: dict[str, object],
         *,
-        account_id: str,
+        account_id: int | None,
         entry_reference: str | None,
         line_number: int,
     ) -> RawRecord | None:

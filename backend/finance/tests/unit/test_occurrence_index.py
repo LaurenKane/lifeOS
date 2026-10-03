@@ -19,11 +19,12 @@ from finance.ingestion.dedupe import (
     OccurrenceKey,
     assign_occurrence_indices,
     count_existing_occurrences,
+    fingerprint_account_scope,
     lookup_fingerprint,
 )
 from finance.ingestion.fingerprint import compute_fingerprint
 from finance.ingestion.normalize import NormalizedRecord
-from finance.tests.fixtures import make_record
+from finance.tests.fixtures import ACCOUNT_ID, make_record
 
 
 class TestAssignOccurrenceIndex:
@@ -52,8 +53,8 @@ class TestAssignOccurrenceIndex:
     def test_different_accounts_are_unrelated(self) -> None:
         """The same coffee on two cards is two transactions."""
         records = [
-            make_record(description="Albert Heijn 1234", account_id="acc-a"),
-            make_record(description="Albert Heijn 1234", account_id="acc-b"),
+            make_record(description="Albert Heijn 1234", account_id=1001),
+            make_record(description="Albert Heijn 1234", account_id=2002),
         ]
         assert assign_occurrence_indices(records) == [1, 1]
 
@@ -140,7 +141,7 @@ class TestFingerprintLookup:
             "raw_amount": -320,
             "raw_currency": "EUR",
             "raw_date": "2026-03-14",
-            "account_id": "acc-synthetic-001",
+            "account_id": fingerprint_account_scope(ACCOUNT_ID),
             "occurrence_index": 1,
         }
         params.update(overrides)
@@ -149,19 +150,19 @@ class TestFingerprintLookup:
     def test_match_is_found(self) -> None:
         stored = ExistingFingerprint(
             fingerprint=self._fp(),
-            account_id="acc-synthetic-001",
-            source_record_id="sr-1",
+            account_id=ACCOUNT_ID,
+            source_record_id=5001,
         )
         found = lookup_fingerprint(
             existing=[stored],
-            account_id="acc-synthetic-001",
+            account_id=ACCOUNT_ID,
             raw_description="Albert Heijn 1234",
             raw_amount=-320,
             raw_currency="EUR",
             raw_date="2026-03-14",
         )
         assert found is not None
-        assert found.source_record_id == "sr-1"
+        assert found.source_record_id == 5001
 
     def test_second_occurrence_does_not_match_the_first(self) -> None:
         """The property that makes re-importing a file non-destructive.
@@ -172,12 +173,12 @@ class TestFingerprintLookup:
         """
         stored = ExistingFingerprint(
             fingerprint=self._fp(occurrence_index=1),
-            account_id="acc-synthetic-001",
-            source_record_id="sr-1",
+            account_id=ACCOUNT_ID,
+            source_record_id=5001,
         )
         second = lookup_fingerprint(
             existing=[stored],
-            account_id="acc-synthetic-001",
+            account_id=ACCOUNT_ID,
             raw_description="Albert Heijn 1234",
             raw_amount=-320,
             raw_currency="EUR",
@@ -188,11 +189,11 @@ class TestFingerprintLookup:
 
     def test_cross_account_never_matches(self) -> None:
         stored = ExistingFingerprint(
-            fingerprint=self._fp(), account_id="acc-other", source_record_id="sr-1"
+            fingerprint=self._fp(), account_id=2002, source_record_id=5001
         )
         found = lookup_fingerprint(
             existing=[stored],
-            account_id="acc-synthetic-001",
+            account_id=ACCOUNT_ID,
             raw_description="Albert Heijn 1234",
             raw_amount=-320,
             raw_currency="EUR",
@@ -204,9 +205,71 @@ class TestFingerprintLookup:
         assert (
             lookup_fingerprint(
                 existing=[],
-                account_id="acc-synthetic-001",
+                account_id=ACCOUNT_ID,
                 raw_description="x",
                 raw_amount=-1,
+                raw_currency="EUR",
+                raw_date="2026-03-14",
+            )
+            is None
+        )
+
+
+class TestFingerprintAccountScope:
+    """How an `int | None` account id becomes the pinned function's `str`.
+
+    `compute_fingerprint` is SHA-256 hash-pinned, joins its parts with `"|"`
+    and coerces nothing, so this conversion is the one place where the id
+    crosses into the hash. Getting it wrong does not raise: it silently
+    changes which rows collide.
+    """
+
+    def test_a_resolved_account_is_its_decimal_id(self) -> None:
+        assert fingerprint_account_scope(1001) == "1001"
+
+    def test_an_unresolved_account_is_empty_never_the_word_none(self) -> None:
+        """`str(None)` would put "None" in the scope key.
+
+        That is a real, stable-looking account id, so two unrelated purchases
+        from two different unattributed rows would fingerprint-match and one
+        would be swallowed as a duplicate of the other.
+        """
+        assert fingerprint_account_scope(None) == ""
+        assert fingerprint_account_scope(None) != "None"
+
+    def test_two_accounts_never_share_a_fingerprint(self) -> None:
+        """The property the scope key exists to preserve."""
+        first = compute_fingerprint(
+            raw_description="Albert Heijn 1234",
+            raw_amount=-320,
+            raw_currency="EUR",
+            raw_date="2026-03-14",
+            account_id=fingerprint_account_scope(1001),
+            occurrence_index=1,
+        )
+        second = compute_fingerprint(
+            raw_description="Albert Heijn 1234",
+            raw_amount=-320,
+            raw_currency="EUR",
+            raw_date="2026-03-14",
+            account_id=fingerprint_account_scope(2002),
+            occurrence_index=1,
+        )
+        assert first != second
+
+    def test_an_unresolved_account_still_resolves(self) -> None:
+        """None is a legitimate state, not an error.
+
+        A row can land before it is attributed to an account, and the pipeline
+        still has to fingerprint it — raising here would fail the whole batch
+        over a fact the batch is allowed to be missing.
+        """
+        assert (
+            lookup_fingerprint(
+                existing=[],
+                account_id=None,
+                raw_description="Albert Heijn 1234",
+                raw_amount=-320,
                 raw_currency="EUR",
                 raw_date="2026-03-14",
             )

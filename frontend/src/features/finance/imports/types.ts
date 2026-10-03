@@ -9,7 +9,7 @@ import { z } from "zod";
  * Provider enum: v1 source of truth is backend/finance/api/routes/imports.py
  * V1_PROVIDERS. See docs/adr/0002-import-provider-enum.md. */
 export const ImportBatchSchema = z.object({
-  id: z.string(),
+  id: z.number().int(),
   provider: z.enum([
     "enable_banking",
     "amex_pdf",

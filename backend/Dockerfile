@@ -45,12 +45,12 @@ FROM python:3.12-slim-bookworm@sha256:392307d22300de8b5986851a12d9176dfc0fc073e6
 
 # libpq5, and nothing else.
 #
-# pyproject.toml pins bare `psycopg`, not `psycopg[binary]`/`psycopg[c]`. The
-# pure-Python implementation of psycopg 3 still binds to the system libpq — with
-# neither the C extension nor a bundled libpq present, the import fails with
-# "no pq wrapper available", and every database operation dies at first use.
-# Installing the shared library is smaller than adding a wheel variant to
-# pyproject.toml, and it is this file's job rather than a dependency change.
+# ADR 0004 moved pyproject.toml to `psycopg[binary]`, which bundles its own
+# libpq, so this install is no longer load-bearing — the wheel works without
+# it. It is kept deliberately: it is a few hundred KB, and the image keeps
+# working if the pin is ever reverted to bare `psycopg`, where psycopg 3 still
+# binds to the system libpq and the import otherwise fails at first use with
+# "no pq wrapper available". Drop this layer if image size starts to matter.
 RUN apt-get update \
  && apt-get install --yes --no-install-recommends libpq5 \
  && rm -rf /var/lib/apt/lists/*

@@ -2,5 +2,8 @@
   "_comment": "Applied-migration manifest for the migrations_immutable invariant. Only APPLIED revisions belong here; a migration file absent from this map is by definition unapplied and is therefore allowed. Format: {repo-relative path: sha256_hex}.",
   "_shape": "{revisions: {<repo-relative path>: <sha256_hex>}}",
   "_m0_note": "Intentionally empty: no migrations have been applied. M1 (bead LifeOS-6) writes the real schema migrations. --update re-hashes existing entries but never adds new ones, because a migration becomes applied only once it is actually applied to the database.",
-  "revisions": {}
+  "revisions": {
+    "backend/finance/alembic/versions/0001_finance_ledger_schema.py": "93d628af3aa7e1bf2785433dc7f42258b550371dd0e850c6c6ceed737908cec7"
+  },
+  "_m1_note": "M1 (bead LifeOS-6): 0001_finance_ledger_schema is applied to the dev database and every acceptance case was verified against it. --update re-hashes existing entries but never adds new ones, so this entry was added deliberately once the revision was confirmed applied."
 }

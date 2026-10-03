@@ -1,7 +1,13 @@
-/* Utility: cn — className merger (tailwind-aware).
- * Passes through to clsx/daisyui under the hood; here we provide a
- * tiny hand-rolled version to avoid an extra dependency.
+/* Utility: cn — className merger.
+ *
+ * Hand-rolled in six lines on purpose: `clsx` and `tailwind-merge` are not
+ * dependencies of this project, and adding them would change
+ * package-lock.json, which CI gates on an approved-dependency ledger. Later
+ * classes win, which is what every call site here relies on.
+ *
+ * Accepts the falsy values a conditional class produces (`condition && "x"`
+ * evaluates to `false`, and `x?.y` to `undefined`) so a call site never has to
+ * filter before calling.
  */
-export const cn = (...classes: string[]) => {
-  return classes.filter((c) => c && typeof c === "string").join(" ");
-};
+export const cn = (...classes: Array<string | false | null | undefined>): string =>
+  classes.filter((c): c is string => typeof c === "string" && c !== "").join(" ");

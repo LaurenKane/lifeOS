@@ -34,7 +34,7 @@ class FileAdapter(Protocol):
     """
 
     def parse(
-        self, payload: bytes, account_id: str = "", filename: str | None = None
+        self, payload: bytes, account_id: int | None = None, filename: str | None = None
     ) -> ImportResult: ...
 
 
@@ -98,7 +98,7 @@ _PROVIDERS: tuple[Provider, ...] = tuple(_provider_info(kind) for kind in V1_PRO
 async def upload_import_file(
     file: UploadFile = File(...),
     provider: str = "amex_pdf",
-    account_id: str = "",
+    account_id: int | None = None,
 ) -> ImportSummary:
     """Accept a statement file and parse it.
 
@@ -106,7 +106,9 @@ async def upload_import_file(
         file: The uploaded statement.
         provider: Which adapter to run. Must match the file extension.
         account_id: The local account to attribute rows to. A file names no
-            account, so the user picks one and the caller passes it in.
+            account, so the user picks one and the caller passes it in. None
+            when the upload has not been attributed to an account yet — which is
+            honest, where the previous `""` default claimed to be an id.
 
     Returns:
         A summary: provider, counts, checksum, and per-row failures.
