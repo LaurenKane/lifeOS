@@ -95,7 +95,7 @@ returning `float` — rather than preventing any.
 
 ## 4. Integrity rules, and what actually enforces them
 
-There is no invariant checker. There are database triggers and tests. If a rule
+There is no static invariant checker. There are database triggers and tests. If a rule
 below is not enforced by one of those two, it is enforced by nothing but review,
 and the table says so.
 
@@ -103,7 +103,7 @@ and the table says so.
 |---|---|---|---|
 | `raw_data_immutable` | `source_record.raw_data` or `.raw_description` ever UPDATE/DELETE | **DB row trigger**, asserted by `pytest -m db` (`test_balance_db.py`) | M1 |
 | balance identity | a journal entry that does not sum to zero at commit; an entry with <2 legs; a re-parented line | **DB constraint trigger**, asserted by `pytest -m db` | M1 |
-| schema ownership | FKs crossing Postgres schemas (e.g. `finance` → `health`) | Review only. The `GRANT`s in the bootstrap do **not** enforce it | — |
+| schema ownership | FKs crossing Postgres schemas (e.g. `finance` → `health`) | **DB event trigger** `trg_no_cross_schema_fk` on `ddl_command_end` (installed by `backend/db_bootstrap.sql`), asserted by `pytest -m db` (`test_no_cross_schema_fk_db.py`) | LifeOS-ceu |
 | `fingerprint_frozen` | `backend/finance/ingestion/fingerprint.py` changed | The golden digest in `backend/finance/tests/unit/test_fingerprint.py` | M1 |
 
 `migrations_immutable` — applied Alembic revisions must never be edited in place —
@@ -144,7 +144,9 @@ Three traps, each verified by execution rather than assumed:
   journal write belongs in an explicit transaction.
 - **Two rules are enforced by a weaker mechanism than their name implies.** `raw_data_immutable`
   is trigger-enforced (a row trigger cannot reject an *identical-value* assignment, so a privilege
-  layer is deferred); `no_cross_schema_fk` is enforced by nothing at all — see §4.
+  layer is deferred); `no_cross_schema_fk` is enforced by the `trg_no_cross_schema_fk` event
+  trigger on `ddl_command_end` — which a superuser can drop, so it binds cooperating writers,
+  not an attacker holding the role — see §4.
 
 Rationale: `docs/adr/0006-balance-trigger-and-db-invariants.md`,
 `docs/adr/0005-schema-ownership.md`.

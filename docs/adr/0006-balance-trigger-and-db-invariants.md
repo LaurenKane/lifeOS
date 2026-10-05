@@ -51,12 +51,15 @@ mechanism that does satisfy it is column privileges: `REVOKE UPDATE ON source_re
 `GRANT UPDATE (status, journal_entry_id, error_message, occurrence_index)`. Note that
 `REVOKE UPDATE (raw_data)` alone is a **silent no-op** while the role holds table-level `UPDATE`.
 
-### 5. `no_cross_schema_fk` is enforced by a regex, not by grants
+### 5. `no_cross_schema_fk` is enforced by an event trigger, not by grants
 
 `ARCHITECTURE.md` §4 promises "Postgres grants/role setup" as the DB-level half. It is not one:
 `GRANT ALL ON SCHEMA core TO lifeos` plus `GRANT ALL ON SCHEMA finance TO lifeos` means a role
-owning both can create a cross-schema foreign key freely. The regex in `invariants.yaml` is the
-actual enforcement.
+owning both can create a cross-schema foreign key freely — and `lifeos` is a superuser, so a
+USAGE revoke would bind nobody either. The actual enforcement is the `trg_no_cross_schema_fk`
+event trigger on `ddl_command_end`, installed by `backend/db_bootstrap.sql`: it aborts any DDL
+that creates a cross-schema FK, in the DDL's own transaction, superuser included. (An earlier
+static regex in `invariants.yaml` claimed this job; it was deleted in commit `8bdfd57`.)
 
 ## Decision
 
