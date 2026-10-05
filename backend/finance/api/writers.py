@@ -891,14 +891,10 @@ def _find_posted_expense_counterparts(
             .where(Account.account_nature == "equity")
         )
     )
-    return [
-        _CardPaymentLegRef(*row) for row in candidates if row[1] in equity_entries
-    ]
+    return [_CardPaymentLegRef(*row) for row in candidates if row[1] in equity_entries]
 
 
-def _real_line_in_entry(
-    session: Session, *, entry_id: int, account_id: int
-) -> int:
+def _real_line_in_entry(session: Session, *, entry_id: int, account_id: int) -> int:
     """The one real (non-synthesized) line of `entry_id` on `account_id`."""
     line_id = session.scalar(
         select(JournalLine.id)
@@ -1088,9 +1084,7 @@ def _rewrite_posted_expense_as_card_payment(
         raise PostingRefused(f"Journal entry {entry_id} vanished mid-rewrite")
     entry.is_transfer = True
 
-    card_line_id = _real_line_in_entry(
-        session, entry_id=entry_id, account_id=card.id
-    )
+    card_line_id = _real_line_in_entry(session, entry_id=entry_id, account_id=card.id)
     return _attach_card_payment_source(
         session,
         batch_id=batch_id,
@@ -1374,9 +1368,7 @@ def write_card_payment(
     stored = Money(amount=amount.amount, currency=currency)
     card_credit = Money(amount=abs(amount.amount), currency=currency)
     if card_credit.amount == 0:
-        raise PostingRefused(
-            "A zero-amount card payment has no double-entry meaning."
-        )
+        raise PostingRefused("A zero-amount card payment has no double-entry meaning.")
     rate = _base_rate(session, currency_row.code, booked_date)
 
     ctx = _CardPaymentContext(
