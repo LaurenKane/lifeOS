@@ -1,165 +1,239 @@
 @import "tailwindcss";
 
-/* Tailwind v4 is configured in CSS. The `@theme` block below maps the
- * shadcn design tokens in :root onto real Tailwind utilities, so
- * `bg-background`, `text-muted-foreground`, `border-border` etc. resolve
- * to the CSS variables instead of being dropped as unknown classes.
- *
- * Money is never formatted as a float (ARCHITECTURE.md §6) — any future
- * amount display must format integer minor units using the currency's
- * decimal exponent. */
+/* ═══════════════════════════════════════════════════════════════════════════
+   THE WORLD — the Dutch payment slip.
 
-/* ── Palette ───────────────────────────────────────────────────────────────
- * The look is "ledger paper": a warm off-white ground, near-black warm ink,
- * hairline rules instead of boxes, and one ink-blue for anything actionable.
- * The shadcn token NAMES are unchanged (components.json, and every existing
- * page, keep working) — only the values are re-valued, so the design system
- * is extended rather than replaced.
+   Two brand fills of EQUAL rank (acid lime, pale cyan). A warm green-tinged
+   off-white ground. Softened near-black ink. One radius token, 6px. One neutral
+   grotesque throughout, and a monospace that every figure is set in.
+
+   Flatness is load-bearing. There is no shadow token anywhere in this file, and
+   that is deliberate rather than an omission: colour fills do all the separating,
+   and a surface that needs to separate from its neighbour gets a different fill.
+   The one exception is a hairline INSIDE a panel, where a rule separates two
+   fields of the same form — which is what a printed bankgier does, and is not a
+   panel edge.
+
+   TOKEN NAMES ARE UNCHANGED, VALUES ARE RE-VALUED. `components.json`, every
+   feature page and every existing test keep working; only the world underneath
+   them is different. The new names (`--ground`, `--panel`, `--lime`, `--cyan`)
+   exist alongside as explicit aliases, and the Overview page uses those because
+   it is naming surfaces rather than inheriting them.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Type ──────────────────────────────────────────────────────────────────
+ * TWO faces, both vendored under `public/fonts/` as variable woff2 and both
+ * licensed OFL — the licence text ships beside each file, which is what the
+ * self-hosting policy in LifeOS-1km requires. NOTHING is fetched at runtime: no
+ * Google Fonts, no CDN, no `@import` from a URL. A downloaded font would break
+ * the offline guarantee (ARCHITECTURE.md §9), so they are files this application
+ * already serves itself.
  *
- * Two extra colours do work the base palette cannot: `--money-out` and
- * `--money-in`. An amount's direction is carried by its sign glyph FIRST and
- * by colour second, so the colour is never the only signal.
+ * THE PROSE FACE IS CHOSEN: Work Sans, x/cap 0.52. It was decided by looking at
+ * both candidates rendered on the real page at 390 and 1440, not by reading a
+ * spec — the lower, wider x-height sits under the display figure without crowding
+ * the small labels, where the alternative's 0.73 competed with a page that
+ * already carries a monospace figure face. There is no toggle, because there is
+ * no decision left to make, and shipping a control would imply otherwise. The
+ * rejected face's woff2 and its licence text have been REMOVED from
+ * `public/fonts/` rather than left in the bundle: an unused font is shipped
+ * weight for no reader, and a licence for a font we do not ship is clutter.
+ *
+ * Figures were never part of that choice. Every amount is JetBrains Mono because a
+ * column of money that does not align on the decimal point is a broken ledger
+ * (ARCHITECTURE.md §6) — which is also why this page reads as two voices rather
+ * than as one face used two ways.
  */
-:root {
-  --background: oklch(0.984 0.006 85);
-  --foreground: oklch(0.235 0.014 75);
-  --muted: oklch(0.955 0.008 88);
-  --muted-foreground: oklch(0.505 0.016 75);
-  --border: oklch(0.893 0.011 85);
-  --input: oklch(0.855 0.013 85);
-  --ring: oklch(0.62 0.09 248);
-  --primary: oklch(0.3 0.035 258);
-  --primary-foreground: oklch(0.985 0.005 90);
-  --secondary: oklch(0.945 0.009 88);
-  --secondary-foreground: oklch(0.3 0.035 258);
-  --accent: oklch(0.94 0.028 248);
-  --accent-foreground: oklch(0.28 0.04 258);
-  --destructive: oklch(0.51 0.16 27);
-  --destructive-foreground: oklch(0.985 0.005 90);
-
-  /* Direction of money. Both are checked against `--background` for
-   * contrast at body size; neither replaces the sign. */
-  --money-out: oklch(0.48 0.155 28);
-  --money-in: oklch(0.42 0.085 158);
-
-  /* Text selection. The same 18% of the theme's ink in both worlds, so the
-   * wash sits quietly over whatever it lands on without the text underneath
-   * having to change. */
-  --selection: oklch(0.235 0.014 75 / 0.18);
-
-  --radius: 0.375rem;
+@font-face {
+  font-family: "LifeOS Sans";
+  src: url("/fonts/worksans-var.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
 }
 
-.dark {
-  --background: oklch(0.19 0.014 265);
-  --foreground: oklch(0.955 0.008 90);
-  --muted: oklch(0.245 0.016 265);
-  --muted-foreground: oklch(0.71 0.014 265);
-  --border: oklch(0.31 0.018 265);
-  --input: oklch(0.36 0.02 265);
-  --ring: oklch(0.66 0.09 248);
-  --primary: oklch(0.93 0.01 90);
-  --primary-foreground: oklch(0.24 0.02 265);
-  --secondary: oklch(0.27 0.018 265);
-  --secondary-foreground: oklch(0.95 0.008 90);
-  --accent: oklch(0.3 0.04 258);
-  --accent-foreground: oklch(0.94 0.02 250);
-  --destructive: oklch(0.66 0.16 25);
-  --destructive-foreground: oklch(0.19 0.014 265);
-  --money-out: oklch(0.72 0.13 28);
-  --money-in: oklch(0.76 0.11 158);
+@font-face {
+  font-family: "LifeOS Mono";
+  src: url("/fonts/jetbrainsmono-var.woff2") format("woff2");
+  font-weight: 400 800;
+  font-style: normal;
+  font-display: swap;
+}
 
-  /* Paper on a dark ground rather than ink: the same wash, inverted, because
-   * `--foreground` here is already near-white. */
-  --selection: oklch(0.955 0.008 90 / 0.22);
+:root {
+  /* ── Surfaces ─────────────────────────────────────────────────────────────
+   * Ground and panel are 2–3% apart in lightness, which is enough to read as two
+   * surfaces and not enough to read as two colours. That difference is the
+   * ENTIRE separation mechanism for the app's neutral panels, which is why there
+   * is no shadow to compensate with. */
+  --ground: #f1f3e6;
+  --panel: #fdfef8;
+
+  /* ── Ink ─────────────────────────────────────────────────────────────────
+   * Near-black, never `#000`. Warm (oklch hue ≈ 90°) so the lime and the cyan
+   * both sit against something rather than punching a hole. */
+  --ink: #282828;
+
+  /* ── The two brand fills ─────────────────────────────────────────────────
+   * Lime is 0.95 lightness — the lightest thing on the page by a wide margin.
+   * That is the whole reason dark ink is the correct pairing on it: 13.1:1.
+   * Cyan is a step darker and takes the same ink at 11.2:1. */
+  --lime: #e7fe54;
+  --cyan: #c0e7ec;
+
+  /* Secondary ink, TINTED FROM THE SURFACE IT SITS ON. A neutral grey dropped
+   * onto a saturated fill reads as dirt, and measures worse as well — these were
+   * picked per surface rather than chosen once and reused:
+   *   --ink-quiet   6.3:1 ground · 7.0:1 panel
+   *   --lime-ink    6.3:1 lime
+   *   --cyan-ink    5.3:1 cyan
+   * The `-deep` pair is the dimmer third tier on a saturated fill:
+   *   8.9:1 lime · 8.7:1 cyan */
+  --ink-quiet: #5b5851;
+  --ink-quieter: #6d6a60;
+  --lime-ink: #565c38;
+  --lime-ink-deep: #40461f;
+  --cyan-ink: #385f64;
+  --cyan-ink-deep: #1d4a4f;
+
+  /* Direction of money. Re-valued for this world: both clear 4.5:1 on ground,
+   * panel, lime AND cyan, so one token is safe on every surface this app paints.
+   * The SIGN still carries direction first (see `Amount` in primitives.tsx);
+   * colour is the second signal and never the only one. */
+  --money-in: #004b20;
+  --money-out: #721212;
+
+  /* A hairline INSIDE a panel — between two fields of one form, never a panel
+   * edge. `oklch()` because a hairline wants a lightness and a lightness wants
+   * to be one number. */
+  --rule: oklch(0.84 0.014 114 / 0.75);
+
+  /* Focus. Ink, always. An ink ring is the only ring guaranteed to clear 3:1
+   * against all four surfaces this app paints — lime, cyan, ground, panel —
+   * without becoming a second accent colour. */
+  --ring: #282828;
+
+  /* Text selection. An explicit alpha, never `color-mix()`: the build's
+   * Lightning CSS pass rewrites color-mix into an `@supports` block and degrades
+   * the fallback to the OPAQUE colour, which here would put ink text on an ink
+   * ground. A literal alpha needs no fallback at all. 20% of ink reads as a
+   * heavier wash on paper and on lime alike, and the text underneath never has
+   * to change colour. */
+  --selection: oklch(0.2768 0.01 90 / 0.2);
+
+  /* The single radius token. 6px on cards AND controls, per the reference
+   * measurement — the reference's own 8–12% card radii and stadium pills were
+   * both rejected. Nothing here is fully rounded except genuinely circular
+   * things: an account avatar, a progress ring. */
+  --radius: 6px;
+
+  /* ── Prose face ───────────────────────────────────────────────────────────
+   * One face, decided. There is no `[data-prose]` override and no fallback
+   * stack to speak of: the vendored woff2 is declared above and it is the same
+   * origin this app is served from, so it cannot fail to arrive the way a
+   * network font can. The `ui-sans-serif` tail stays only as a last resort for
+   * a glyph the file does not carry. */
+  --font-prose: "LifeOS Sans", ui-sans-serif, system-ui, sans-serif;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-muted: var(--muted);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-border: var(--border);
-  --color-input: var(--input);
+  /* New explicit names. */
+  --color-ground: var(--ground);
+  --color-panel: var(--panel);
+  --color-ink: var(--ink);
+  --color-lime: var(--lime);
+  --color-cyan: var(--cyan);
+  --color-lime-ink: var(--lime-ink);
+  --color-lime-ink-deep: var(--lime-ink-deep);
+  --color-cyan-ink: var(--cyan-ink);
+  --color-cyan-ink-deep: var(--cyan-ink-deep);
+  --color-rule: var(--rule);
+
+  /* The two dimmer inks, so `placeholder:text-ink-quieter` and
+     `text-ink-quiet` both resolve. `--ink-quieter` is the third tier on a
+     neutral surface and the hover state of the scrollbar thumb. */
+  --color-ink-quiet: var(--ink-quiet);
+  --color-ink-quieter: var(--ink-quieter);
+
+  /* The shadcn names, re-valued. Same tokens, new world — this is what keeps
+   * the five existing pages and their tests working untouched. */
+  --color-background: var(--ground);
+  --color-foreground: var(--ink);
+  --color-muted: oklch(0.955 0.012 114);
+  --color-muted-foreground: var(--ink-quiet);
+  --color-border: var(--rule);
+  --color-input: var(--rule);
   --color-ring: var(--ring);
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-secondary: var(--secondary);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-destructive: var(--destructive);
-  --color-destructive-foreground: var(--destructive-foreground);
+  --color-primary: var(--ink);
+  --color-primary-foreground: var(--panel);
+  --color-secondary: var(--lime);
+  --color-secondary-foreground: var(--ink);
+  --color-accent: var(--cyan);
+  --color-accent-foreground: var(--ink);
+  --color-destructive: var(--money-out);
+  --color-destructive-foreground: var(--panel);
   --color-money-out: var(--money-out);
   --color-money-in: var(--money-in);
 
-  --radius-sm: calc(var(--radius) - 2px);
+  /* Every radius step is the SAME 6px. There is one radius token in this app
+   * and Tailwind's scale is not the place to keep a second opinion about it, so
+   * `rounded`, `rounded-md` and `rounded-xl` all resolve to it. */
+  --radius-sm: var(--radius);
   --radius-md: var(--radius);
-  --radius-lg: calc(var(--radius) + 2px);
-  --radius-xl: calc(var(--radius) + 6px);
+  --radius-lg: var(--radius);
+  --radius-xl: var(--radius);
+  --radius-2xl: var(--radius);
 
-  /* Display: a serif, so headings read like a printed statement rather than
-   * a dashboard. Body: the platform UI face. Amounts: a monospace face, so
-   * digits are the same width and a column of them lines up by eye. All
-   * three are system stacks — nothing is fetched at runtime. */
-  --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua",
-    Georgia, "Times New Roman", serif;
-  --font-ui: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
-    "Helvetica Neue", Arial, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+  --font-sans: var(--font-prose);
+  /* There is no serif anywhere in this world, so the display voice IS the prose
+   * voice. The token survives because five pages still ask for it. */
+  --font-display: var(--font-prose);
+  --font-mono: "LifeOS Mono", ui-monospace, SFMono-Regular, Menlo, Consolas,
     "Liberation Mono", monospace;
 }
 
 @layer base {
   * {
-    border-color: var(--border);
+    border-color: var(--rule);
   }
 
   body {
-    background-color: var(--background);
-    color: var(--foreground);
-    font-family: var(--font-ui);
-    font-feature-settings: "cv05", "ss01";
+    background-color: var(--ground);
+    color: var(--ink);
+    font-family: var(--font-prose);
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    /* Both vendored faces carry the full weight axis, so the browser should
+     * never be synthesising a bold it was not given. */
+    font-synthesis-weight: none;
   }
 
-  /* Keyboard focus must be obvious on a paper background: a 2px ink ring,
-   * not the browser default, which disappears against `--border`. */
+  /* Keyboard focus: a 2px ink ring with a 2px offset. It has to clear the fill it
+   * is drawn on, and ink clears all four. The offset matters more than usual here
+   * because three of the four surfaces are light fills sitting on a light ground —
+   * a flush ring would vanish into the panel it is drawn inside. */
   :focus-visible {
     outline: 2px solid var(--ring);
     outline-offset: 2px;
   }
 
-  /* The caret is Ledger Ink in the light world — the only accent in the
-   * system, spent on the one thing the reader is actively typing into. In the
-   * dark theme `--primary` is already inverted to paper, so the same
-   * declaration stays legible on the dark ground without a second token. */
+  /* The caret is ink on every surface, for the same reason the ring is. */
   body {
-    caret-color: var(--primary);
+    caret-color: var(--ink);
   }
 
-  /* Selection is a warm wash of the ink rather than the browser's blue, so a
-   * highlighted sentence reads as heavier ink on paper instead of a foreign
-   * sticker. The text stays `--foreground` on top of it, which is what keeps it
-   * legible in both themes.
-   *
-   * Spelled as an explicit alpha rather than `color-mix(... transparent)`: the
-   * build's Lightning CSS pass rewrites color-mix into an `@supports` block and
-   * degrades the fallback to the *opaque* colour, which here would put ink text
-   * on an ink ground. A literal alpha needs no fallback at all. */
   ::selection {
     background-color: var(--selection);
-    color: var(--foreground);
+    color: var(--ink);
   }
 
-  /* Scrollbars are surfaces the browser draws, so they belong to the palette
-   * too. `--border` is the only colour used here — a rule-coloured thumb on a
-   * transparent track reads as paper, where a grey chrome bar would read as an
-   * operating-system overlay sitting on top of the document. Firefox takes the
-   * two-value form; the rest get the pseudo-elements. */
+  /* Scrollbars are surfaces the browser draws, so they belong to the palette. A
+   * quiet ink thumb on a transparent track reads as paper; a grey chrome bar
+   * reads as an operating-system overlay sitting on top of the document. The
+   * radius is the system's own 6px token — nothing in this app is a pill. */
   * {
     scrollbar-width: thin;
-    scrollbar-color: var(--border) transparent;
+    scrollbar-color: var(--ink-quieter) transparent;
   }
 
   ::-webkit-scrollbar {
@@ -172,88 +246,95 @@
   }
 
   ::-webkit-scrollbar-thumb {
-    background-color: var(--border);
-    /* The radius is the system's own 0.375rem base rather than a pill: nothing
-     * in this world is fully rounded. */
+    background-color: var(--ink-quieter);
     border-radius: var(--radius);
-    /* Padding the thumb with a transparent border gives it a hairline look
+    /* A transparent border with `content-box` gives the thumb a hairline look
      * without shrinking its hit area. */
     border: 2px solid transparent;
     background-clip: content-box;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background-color: var(--input);
+    background-color: var(--ink-quiet);
   }
 }
 
 @layer components {
-  /* Form controls. Four rules instead of repeating a 6-class string on every
-   * input in the app. */
+  /* Form controls. Four rules instead of repeating a class string on every input
+   * in the app. No border: the field is separated by its own fill. */
   .field {
-    @apply w-full rounded-md border border-input bg-background px-2.5 py-2 text-sm
-      text-foreground placeholder:text-muted-foreground/70;
+    @apply w-full rounded-md bg-panel px-2.5 py-2 text-sm text-ink
+      placeholder:text-ink-quieter;
   }
 
   .field:disabled {
-    @apply cursor-not-allowed bg-muted text-muted-foreground;
+    @apply cursor-not-allowed bg-ground text-ink-quieter;
   }
 
+  /* The primary action is INK on the ground. Not a third brand colour: the two
+   * fills are the two things being reported, and an ink button is the one element
+   * on the page that is neither of them. */
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-md border px-3 py-2
-      text-sm font-medium transition-colors duration-150 disabled:pointer-events-none
-      disabled:opacity-45;
+    @apply inline-flex items-center justify-center gap-2 rounded-md px-3 py-2
+      text-sm font-medium transition-colors duration-150
+      disabled:pointer-events-none disabled:opacity-45;
   }
 
   .btn-primary {
-    @apply border-transparent bg-primary text-primary-foreground hover:opacity-90;
+    @apply bg-ink text-panel hover:bg-ink-quiet;
   }
 
   .btn-quiet {
-    @apply border-border bg-background text-foreground hover:bg-muted;
+    @apply bg-panel text-ink hover:bg-ground;
   }
 
   .btn-danger {
-    @apply border-destructive/40 bg-background text-destructive hover:bg-destructive/10;
+    @apply bg-money-out/10 text-money-out hover:bg-money-out/20;
   }
 
-  /* Small caps label. It is NOT a kicker above a heading — the page header
-   * deliberately has none. It names a real thing: a field label, a notice's
-   * tone, a status chip, the masthead's `Ledger` sub-label. */
+  /* A small-caps FIELD LABEL. It is NOT a kicker above a heading: there is no
+   * eyebrow above any heading in this world, and a label that repeats a
+   * heading's own words is a second voice for the eye to land on first. What it
+   * does label is a real thing — a field, a column head, the tone of a notice. */
   .eyebrow {
-    @apply font-ui text-[0.6875rem] font-semibold uppercase tracking-[0.14em]
-      text-muted-foreground;
+    @apply font-sans text-[0.6875rem] font-semibold uppercase tracking-[0.14em]
+      text-ink-quiet;
   }
 }
 
 /* ── Motion ────────────────────────────────────────────────────────────────
- * ONE authored moment: everything that arrives on a page rises and settles,
- * so a list that lands all at once reads as a flash instead of a document.
- * There is no second animation and nothing animates on scroll — a page that
- * moves when you scroll past it stops being a document you are reading.
+ * ONE authored moment on the Overview surface: the review stub's fill travelling
+ * between its two states. That is the one transition here that is a DECISION
+ * rather than a response — hovering a link is a reaction, and a page that
+ * animates every hover stops being a document.
  *
- * What varies is AMPLITUDE, not choreography. The same keyframes and the same
- * easing serve two jobs that are not the same job:
+ * It is a fill change and not a transform, because the fill IS the state and a
+ * reader has to be able to watch it happen. The perforated profile lives on the
+ * MASK below and never animates, so the shape says "stub" before the colour says
+ * anything at all — which is the brief's whole point.
  *
- *   `.rise`      the page's own arrival — one element per route, the heading
- *                settling onto the sheet. Travels furthest and takes longest,
- *                because it is the loudest entrance in the system and is
- *                allowed exactly one.
- *   `.rise-row`  a list entry — dozens of them, so each travels half as far and
- *                lands sooner. The per-row delay is set from JS
- *                (`style.animationDelay`) and capped there, so a 200-row list
- *                does not take four seconds to become readable.
- *
- * Travel stays on the Y axis and fade on opacity on purpose: this is a paper
- * world, and a scale, a blur or a colour shift on arrival would read as
- * something being *presented* rather than a sheet being laid down. What makes
- * the moment feel authored is the stagger and the two amplitudes, not extra
- * properties to animate.
- *
- * `prefers-reduced-motion` is honoured by dropping the animation entirely
- * rather than shortening it — a user who asked for no motion gets none.
- */
-@keyframes rise-in {
+ * `prefers-reduced-motion` drops it entirely rather than shortening it: a user
+ * who asked for no motion gets none, and the perforation stays exactly where it
+ * is. */
+@keyframes stub-fill-travel {
+  from {
+    background-color: var(--stub-fill-from);
+  }
+  to {
+    background-color: var(--stub-fill-to);
+  }
+}
+
+.stub-fill-travel {
+  animation: stub-fill-travel 520ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* The arriving row. Two amplitudes off one keyframe: the page's own arrival
+ * travels furthest, a row in a list travels half as far and lands sooner, so a
+ * long list arrives as a cascade instead of a queue. This is the incumbent
+ * pages' entrance and stays deliberately plain — it is not the Overview's
+ * authored moment, and the Overview does not use it. */
+@keyframes row-rise {
   from {
     opacity: 0;
     transform: translateY(var(--rise-distance, 6px));
@@ -266,39 +347,74 @@
 
 .rise,
 .rise-row {
-  animation-name: rise-in;
+  animation-name: row-rise;
   animation-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1);
   animation-fill-mode: both;
 }
 
-/* The page's arrival. */
 .rise {
   --rise-distance: 8px;
   animation-duration: 520ms;
 }
 
-/* A list entry. */
 .rise-row {
   --rise-distance: 4px;
   animation-duration: 380ms;
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .stub-fill-travel,
   .rise,
   .rise-row {
     animation: none;
   }
+  /* TRANSITIONS AS WELL AS ANIMATIONS. The block above only knew about the three
+     authored entrances, and a transition added later would have inherited the
+     default and gone unnoticed. The disclosure chevron is the one that exists: a
+   * 150ms rotation, which is small, and which a reader who has asked for less
+   * motion should not get anyway. A rotation is not an entrance — it is the state
+   * of a control responding to being operated — so it does not displace the
+   * perforation as the page's one authored motion moment. */
+  summary svg {
+    transition: none;
+  }
 }
 
-/* Paper grain. One fixed, non-interactive layer over the whole viewport so
- * the ground is not a flat fill. `pointer-events: none` keeps it out of the
- * way of every click; the SVG is a data URI, so nothing is fetched. */
-body::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  pointer-events: none;
-  opacity: 0.035;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+/* ── The perforation ───────────────────────────────────────────────────────
+ * ONE perforated edge in this app, on the review stub. It is not a motif: it is
+ * reserved for panels that represent a detachable, dismissible thing — a review
+ * stub, an import stub — and nowhere else, so that when it appears it means
+ * something.
+ *
+ * A repeating notch profile cut out of the panel's own top edge. One mask layer:
+ * a transparent disc tiled horizontally along a full-height band whose top sits
+ * at the panel's top edge, so each disc is a semicircular bite. No second layer
+ * and no compositing, because a composited mask is where the notch count starts
+ * depending on the panel's width in ways that are very hard to see and very easy
+ * to ship broken.
+ *
+ * Masked rather than an image so the panel keeps a REAL background colour, which
+ * matters here because the fill IS the state — cyan when the queue is clear, lime
+ * when there is something to clear — and a sprite could not change colour. */
+.stub-edge {
+  --notch: 6px;
+  --notch-pitch: 15px;
+  -webkit-mask-image: radial-gradient(
+    circle var(--notch) at 50% 0,
+    transparent 0,
+    transparent var(--notch),
+    #000 calc(var(--notch) + 0.5px)
+  );
+  -webkit-mask-size: var(--notch-pitch) 100%;
+  -webkit-mask-repeat: repeat-x;
+  -webkit-mask-position: top left;
+  mask-image: radial-gradient(
+    circle var(--notch) at 50% 0,
+    transparent 0,
+    transparent var(--notch),
+    #000 calc(var(--notch) + 0.5px)
+  );
+  mask-size: var(--notch-pitch) 100%;
+  mask-repeat: repeat-x;
+  mask-position: top left;
 }

@@ -259,10 +259,16 @@ class TestPendingThenBooked:
     def test_booked_row_updates_the_pending_one_in_place(self) -> None:
         """Never a second entry, never delete-and-reinsert.
 
-        That is BankingSync's `MergePatch` behaviour, which is correct and worth
-        copying as a behaviour. Creating a second entry would double the
-        transaction; deleting and reinserting would discard the user's category
-        and any comment attached to it.
+        That is BankingSync's `MergePatch` **behaviour**, which is correct and
+        worth having. Creating a second entry would double the transaction;
+        deleting and reinserting would discard the user's category and any
+        comment attached to it.
+
+        A behaviour is not copyrightable and no code was taken from BankingSync,
+        which is AGPL-3.0. See `docs/adr/0008-licence-policy.md`: reading an AGPL
+        project for design is permitted, copying its source is not, and the
+        permitted-reference project here is Actual Budget (MIT, attribution
+        required). This comment describes what to do, not an implementation.
         """
         decision = self._resolver().resolve(
             account_id=ACCOUNT_ID,

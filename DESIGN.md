@@ -1,314 +1,332 @@
 ---
 name: LifeOS
-description: Many banks, one ledger — a confluence of accounts resolved into a single quiet statement.
+description: A flat, two-colour ledger for one person's own money, where the number is the page.
 colors:
-  ledger-ink: "oklch(0.3 0.035 258)"
-  ink-focus: "oklch(0.62 0.09 248)"
-  paper: "oklch(0.984 0.006 85)"
-  paper-tint: "oklch(0.955 0.008 88)"
-  ink: "oklch(0.235 0.014 75)"
-  ink-soft: "oklch(0.505 0.016 75)"
-  rule: "oklch(0.893 0.011 85)"
-  rule-strong: "oklch(0.855 0.013 85)"
-  money-out: "oklch(0.48 0.155 28)"
-  money-in: "oklch(0.42 0.085 158)"
-  alarm: "oklch(0.51 0.16 27)"
-  accent-wash: "oklch(0.94 0.028 248)"
-  selection: "oklch(0.235 0.014 75 / 0.18)"
+  ground: "#f1f3e6"
+  panel: "#fdfef8"
+  ink: "#282828"
+  ink-quiet: "#5b5851"
+  ink-quieter: "#6d6a60"
+  lime: "#e7fe54"
+  lime-ink: "#565c38"
+  lime-ink-deep: "#40461f"
+  cyan: "#c0e7ec"
+  cyan-ink: "#385f64"
+  cyan-ink-deep: "#1d4a4f"
+  money-in: "#004b20"
+  money-out: "#721212"
+  rule: "oklch(0.84 0.014 114 / 0.75)"
 typography:
-  display:
-    fontFamily: "\"Iowan Old Style\", \"Palatino Linotype\", Palatino, \"Book Antiqua\", Georgia, \"Times New Roman\", serif"
-    fontSize: "1.875rem"
-    fontWeight: 400
-    lineHeight: 1.25
-    letterSpacing: "-0.025em"
-  title:
-    fontFamily: "\"Iowan Old Style\", \"Palatino Linotype\", Palatino, \"Book Antiqua\", Georgia, \"Times New Roman\", serif"
-    fontSize: "1.125rem"
-    fontWeight: 400
-    lineHeight: 1.4
-    letterSpacing: "-0.025em"
-  body:
-    fontFamily: "ui-sans-serif, system-ui, -apple-system, \"Segoe UI\", Roboto, \"Helvetica Neue\", Arial, sans-serif"
-    fontSize: "0.875rem"
-    fontWeight: 400
-    lineHeight: 1.625
+  figure:
+    fontFamily: "LifeOS Mono, ui-monospace, SFMono-Regular, Menlo, monospace"
+    fontSize: "3.5rem"
+    fontWeight: 500
+    lineHeight: 1
+    letterSpacing: "-0.02em"
+  figure-small:
+    fontFamily: "LifeOS Mono, ui-monospace, SFMono-Regular, Menlo, monospace"
+    fontSize: "1.375rem"
+    fontWeight: 500
+    lineHeight: 1.2
+    letterSpacing: "-0.01em"
   label:
-    fontFamily: "ui-sans-serif, system-ui, -apple-system, \"Segoe UI\", Roboto, \"Helvetica Neue\", Arial, sans-serif"
+    fontFamily: "LifeOS Sans, ui-sans-serif, system-ui, sans-serif"
     fontSize: "0.6875rem"
     fontWeight: 600
-    lineHeight: 1.4
+    lineHeight: 1.2
     letterSpacing: "0.14em"
-  amount:
-    fontFamily: "ui-monospace, SFMono-Regular, \"SF Mono\", Menlo, Consolas, \"Liberation Mono\", monospace"
+  heading:
+    fontFamily: "LifeOS Sans, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "1.0625rem"
+    fontWeight: 600
+    lineHeight: 1.3
+    letterSpacing: "normal"
+  body:
+    fontFamily: "LifeOS Sans, ui-sans-serif, system-ui, sans-serif"
     fontSize: "0.875rem"
     fontWeight: 400
-    lineHeight: 1.625
+    lineHeight: 1.45
+    letterSpacing: "normal"
+  fine:
+    fontFamily: "LifeOS Sans, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "0.75rem"
+    fontWeight: 400
+    lineHeight: 1.5
+    letterSpacing: "normal"
 rounded:
-  hair: "0.125rem"
-  sm: "0.25rem"
-  chip: "0.3rem"
-  md: "0.375rem"
-  lg: "0.4375rem"
-  xl: "0.75rem"
+  token: "6px"
 spacing:
-  hair: "0.125rem"
-  tight: "0.25rem"
-  snug: "0.5rem"
-  base: "0.75rem"
-  row: "0.875rem"
-  relaxed: "1rem"
-  loose: "1.5rem"
-  section: "2rem"
-  page: "2.5rem"
-  deep: "6rem"
+  unit: "4px"
+  panel-inset: "24px"
+  panel-gap: "24px"
 components:
-  button-primary:
-    backgroundColor: "{colors.ledger-ink}"
-    textColor: "{colors.paper}"
-    rounded: "{rounded.md}"
-    padding: "0.5rem 0.75rem"
-  button-quiet:
-    backgroundColor: "{colors.paper}"
+  panel-lime:
+    backgroundColor: "{colors.lime}"
     textColor: "{colors.ink}"
-    rounded: "{rounded.md}"
-    padding: "0.5rem 0.75rem"
-  button-danger:
-    backgroundColor: "{colors.paper}"
-    textColor: "{colors.alarm}"
-    rounded: "{rounded.md}"
-    padding: "0.5rem 0.75rem"
-  field:
-    backgroundColor: "{colors.paper}"
+    rounded: "{rounded.token}"
+    padding: "{spacing.panel-inset}"
+  panel-cyan:
+    backgroundColor: "{colors.cyan}"
     textColor: "{colors.ink}"
-    rounded: "{rounded.md}"
-    padding: "0.5rem 0.625rem"
-  panel:
-    backgroundColor: "{colors.paper}"
-    rounded: "{rounded.lg}"
-  notice:
-    backgroundColor: "{colors.paper-tint}"
+    rounded: "{rounded.token}"
+    padding: "{spacing.panel-inset}"
+  panel-quiet:
+    backgroundColor: "{colors.panel}"
     textColor: "{colors.ink}"
-    rounded: "{rounded.md}"
-  amount-in:
-    textColor: "{colors.money-in}"
-    typography: "{typography.amount}"
-  amount-out:
-    textColor: "{colors.money-out}"
-    typography: "{typography.amount}"
-  masthead:
-    backgroundColor: "{colors.paper}"
+    rounded: "{rounded.token}"
+    padding: "{spacing.panel-inset}"
+  panel-demo-warning:
+    backgroundColor: "{colors.ink}"
+    textColor: "{colors.lime}"
+    rounded: "{rounded.token}"
+    padding: "16px 24px"
+  stub-review-pending:
+    backgroundColor: "{colors.lime}"
     textColor: "{colors.ink}"
-    height: "3.5rem"
+    rounded: "{rounded.token}"
+    height: "auto"
+  stub-review-clear:
+    backgroundColor: "{colors.cyan}"
+    textColor: "{colors.ink}"
+    rounded: "{rounded.token}"
+    height: "auto"
+  bar-mark:
+    backgroundColor: "{colors.ink}"
+    height: "2px"
+  focus-ring:
+    backgroundColor: "{colors.ink}"
 ---
 
 # Design System: LifeOS
 
 ## Overview
 
-**Creative North Star: "The Confluence"**
+**Creative North Star: "The Payment Slip"**
 
-LifeOS gathers money that lives in scattered places — a Rabobank current account, a Revolut balance, an Amex card statement, a PDF exported by hand — and nets all of it into one double-entry ledger whose balance rule is enforced by the database itself. The interface is that confluence made visible: several currents arriving at one page and resolving into a single, quiet, trustworthy statement. When a reader sees a transaction, they should be able to trust that five different ingestion paths and three different banks produced it and it still balances.
+A bankgier is a form whose entire purpose is to get one number trusted. It gets there with boxed
+fields, one prominent amount box, and a perforated stub for the part you keep. LifeOS borrows that
+grammar, not the artefact: the page opens on a number, everything else is a field beside it, and
+the one thing asking for a decision is a tear-off stub.
 
-The world is **warm and calm**. The ground is warm off-white paper, not white and not grey; the ink is warm near-black, never pure black. Nothing on the page is louder than it needs to be. There is no gradient, no glass, no glow, no pill-shaped chrome, and no shadow that lifts a card off the surface. Restraint is not the absence of design here — restraint *is* the design. A reader should feel they are looking at a well-kept document rather than a dashboard.
+The world replaced an earlier one — warm cream ground, a Palatino-class display serif, hairline
+rules. That world is retired. Two things are worth keeping from why it went: the serif was chosen
+to satisfy the offline guarantee, and this world satisfies that guarantee more honestly, by
+self-hosting a face instead of asking the platform for one.
 
-Depth comes from **paper**, not from elevation. Surfaces separate with a 1px hairline in a warm grey, the way a ruled ledger page separates a heading from its entries. The single shadow in the system is a whisper on the Panel: a zero-blur 1px top-light that reads as the cut edge of a sheet catching light, plus a 3px settle underneath. That is the entire vocabulary.
-
-Money is treated as the most serious thing on the page. Amounts are set in a monospace face with tabular figures so a column lines up on the decimal point and a flipped sign cannot hide in a crowd. Direction is carried by the sign glyph **first** and colour second, because colour alone is not a signal that survives a monochrome print, a screen reader, or colour-blind vision.
-
-**Key Characteristics:**
-
-- Warm paper ground, warm near-black ink, hairline rules instead of boxes.
-- Serif for anything that names a thing; platform sans for prose; monospace for money.
-- One accent — Ledger Ink — spent only on things you can act on.
-- Motion is a single authored moment: the page's blocks arrive in a short cascade.
-- Nothing is fetched at runtime. The app must run with the network switched off.
+This is an **Operate** surface. The visitor comes to read a figure and, once a month, to clear a
+queue. Expression never obstructs the task, and the primary figure is always the largest thing on
+the screen.
 
 ## Colors
 
-A warm-neutral paper palette with exactly one cool accent, and two semantic colours reserved for the direction of money.
+### Ground and surfaces
 
-### Primary
+| Token | Value | Use |
+|---|---|---|
+| `--ground` | `#f1f3e6` | The page. A warm off-white with a green cast, so an acid lime sits *in* the family instead of fighting it. |
+| `--panel` | `#fdfef8` | A raised surface. 2–3% lighter and warmer than the ground — **that difference is the entire elevation system.** |
 
-- **Ledger Ink** (oklch 0.3 0.035 258): the only actionable colour in the system. Primary buttons, the active navigation underline, the focus ring's darker sibling. It appears on ≤10% of any screen. Its rarity is the point — if Ledger Ink is everywhere, it means nothing.
-- **Focus Ink** (oklch 0.62 0.09 248): the keyboard focus ring, lifted in lightness from Ledger Ink so it reads against both the paper ground and the ink-blue it sits near.
+### Brand fills — equal rank
 
-### Neutral
+| Token | Value | Use |
+|---|---|---|
+| `--lime` | `#e7fe54` | A whole panel. Answers *how much*. |
+| `--cyan` | `#c0e7ec` | A whole panel. Answers *where it went*. |
 
-- **Paper** (oklch 0.984 0.006 85): the ground. Warm off-white — hue 85 is a cream, not a grey. Used for the page, panels, and every input.
-- **Paper Tint** (oklch 0.955 0.008 88): the recessed surface — hover states, disabled fields, segmented-control tracks.
-- **Ink** (oklch 0.235 0.014 75): body text. Warm near-black at hue 75; never `#000`, which reads as a hole in warm paper.
-- **Ink Soft** (oklch 0.505 0.016 75): secondary text, labels, hints. Same warm hue as Ink so muted text looks like lighter ink rather than grey paint.
-- **Rule** (oklch 0.893 0.011 85): every hairline — borders, row dividers, the masthead's bottom edge.
-- **Rule Strong** (oklch 0.855 0.013 85): input strokes, one step darker than Rule so a field reads as an input rather than as a divider.
+**The rule that makes these work: a brand colour is a filled region, never a hairline.** Lime is
+never a 1px rule, a border, a link underline or a small dot. It is an area you can point at. On a
+typical page lime fills one panel and cyan fills one or two; the equality is in the world, not in
+the panel count on any given screen.
 
-### Semantic Money
+### Ink
 
-- **Money Out** (oklch 0.48 0.155 28): a burnt red, not a fire-engine red. Checked against Paper for contrast at body size.
-- **Money In** (oklch 0.42 0.085 158): a deep green, deliberately desaturated so a column of them does not shimmer.
-- **Alarm** (oklch 0.51 0.16 27): destructive actions and error notices. Distinct from Money Out on purpose — spending is not an error.
+`--ink` `#282828` is softened near-black, never `#000`. On lime and cyan, secondary text is tinted
+from that surface's own hue — `--lime-ink` `#565c38`, `--lime-ink-deep` `#40461f`,
+`--cyan-ink` `#385f64`, `--cyan-ink-deep` `#1d4a4f`. **Never drop neutral grey onto a saturated
+fill.**
 
-### Accent Wash
+Body greys on the ground: `--ink-quiet` `#5b5851`, `--ink-quieter` `#6d6a60`.
 
-- **Accent Wash** (oklch 0.94 0.028 248): a barely-there ink-blue for selected or emphasised regions. A tint of Ledger Ink, not a second accent.
+### Money
 
-### Named Rules
+`--money-in` `#004b20`, `--money-out` `#721212`. Deep, desaturated, and reserved for direction of
+travel. A balance takes neither.
 
-**The One Ink Rule.** Ledger Ink appears only on something the reader can act on — a button, a link, the active nav item, a focus ring. Never on a heading, a container, or a large area. If a screen is mostly ink-blue, the accent has stopped being an accent.
+### Named rules
 
-**The Sign First Rule.** The direction of money is carried by the sign glyph before it is carried by colour. Colour is the second signal, never the only one. This is why the `Amount` component renders a screen-reader-only "money out"/"money in" — the `−` is read aloud as a dash by some readers, and no one should have to infer direction from a hue.
-
-**The Warm Neutral Rule.** Every neutral in this system carries hue 75–88. A pure grey, a pure black, or a blue-grey neutral breaks the paper illusion and makes the page feel like a generic admin panel.
+- **Lime and cyan are never adjacent in one column.** Two saturated fields stacked read as a
+  stripe, not a hierarchy. When a second saturated panel would land next to another, use
+  `--panel`.
+- **Never a hairline in a brand colour.** The only rule on the page is `--rule`, and it is a
+  neutral at 75% alpha.
+- **Selection is an explicit alpha, never `color-mix`.** Lightning CSS wraps `color-mix` in
+  `@supports` and degrades the fallback to opaque, which would put ink text on an ink ground.
+- **Contrast floors are load-bearing, not aspirational:** body ≥ 4.5:1, large text ≥ 3:1. The
+  lowest measured value in the shipped Overview is 5.31:1 on cyan.
 
 ## Typography
 
-**Display Font:** Iowan Old Style (with Palatino Linotype, Palatino, Book Antiqua, Georgia, Times New Roman)
-**Body Font:** the platform UI sans (ui-sans-serif, system-ui, Segoe UI, Roboto)
-**Label/Mono Font:** the platform monospace (ui-monospace, SFMono-Regular, SF Mono, Menlo)
+**Two faces, both self-hosted, no third.**
 
-**Character:** A serif that behaves like a printed statement against a sans that disappears. The serif names things — page titles, panel headings, the wordmark — so that the structure of the document is legible before a single word is read. The sans carries prose and labels and is never asked to be interesting. The monospace carries money, and only money; it is never used as a costume for "technical".
+- **Prose: `LifeOS Sans`** — Work Sans, variable, `100 900`. x/cap 0.52. It was chosen over Inter
+  (x/cap 0.73) after both were rendered on the real page at 390 and 1440: the lower x-height reads
+  lower and wider and does not crowd small labels, and it leaves the numbers to the mono.
+- **Figures: `LifeOS Mono`** — JetBrains Mono, variable, `400 800`. **Every monetary figure on every
+  surface uses this, without exception.**
 
-### Hierarchy
+**Why figures are mono and must stay that way.** A ledger is read down a column, not across a
+row. Proportional figures make decimal points wander and destroy the ability to scan magnitudes.
+This is a functional requirement and it outranks any typographic preference. The reference this
+world came from set all currency proportionally with no mono anywhere; that was the one place it
+was wrong for this product.
 
-- **Display** (400, 1.875rem, 1.25, −0.025em): the page title only. One per screen, set in the serif at `leading-tight`.
-- **Title** (400, 1.125rem, tracking −0.025em): a Panel's own heading, in the serif. The second level of naming.
-- **Body** (400, 0.875rem, 1.625): prose and descriptions at a generous leading. Hold the measure to roughly 65–75 characters; `max-w-2xl` on the page header is what enforces it today.
-- **Label** (600, 0.6875rem, 0.14em, uppercase): the eyebrow — field labels, notice tone names, navigation, status chips, and the masthead's `Ledger` sub-label. It names a real thing and nothing more. Small, spaced, and quiet.
-- **Amount** (400, 0.875rem, monospace, tabular figures): every monetary value. Right-aligned in a column.
+The prose face must keep a double-storey `a`, a closed `g` descender, slightly narrow `o`/`i`
+apertures, and flat horizontal terminals. Those four traits are what "not curly" means here.
 
-### Named Rules
+**Self-hosting satisfies the offline guarantee.** The app must run with `--network=none`. A face
+served from the app's own origin costs nothing at runtime; a CDN or a downloaded webfont would
+break the guarantee. `OFL-WorkSans.txt` and `OFL-JetBrainsMono.txt` ship beside the woff2 files and
+must ship with them.
 
-**The Serif Names Rule.** The serif is used for things that *have names* — page titles, panel headings, the wordmark. Prose, labels and controls are sans. A paragraph set in the serif is a mistake, not a choice.
+### Scale
 
-**The Mono Means Money Rule.** Monospace is reserved for figures that must align or be compared: amounts, dates in columns, quantities. It is never used to imply technicality, and never applied to running text.
+`3.5rem` figure · `2.75rem` · `2rem` · `1.375rem` figure-small · `1.0625rem` heading ·
+`0.9375rem` · `0.875rem` body · `0.8125rem` · `0.75rem` fine · `0.6875rem` label ·
+`0.625rem` micro.
 
-**The No Kicker Rule.** The page header carries no eyebrow above its `<h1>`. A kicker that only restates the heading's own words puts a second, quieter voice on the page, and the reader's eye lands on the quiet one. Anything worth labelling belongs in the body as data — a definition row, a field label, a status chip. This is a deliberate omission, not an unfinished one.
+Display caps at `3.5rem`. Tracking floor −0.02em. Labels are the one uppercase size, tracked to
+0.14em.
 
-**Documented deviation — the display face is a system stack.** The serif is `Iowan Old Style` → `Palatino Linotype` → `Palatino` → `Book Antiqua` → `Georgia`, resolved from the platform rather than downloaded. This is a knowing exception to the usual rule that an own-world display face must be sourced and self-hosted, and it is deliberate on three counts: the app is designed to run with the network switched off as a proof of no telemetry, nothing in the UI is fetched at runtime, and the licence policy for bundled assets is still unresolved. The chain lands on a face with real character on every target platform, so nothing degrades. Revisit only if all three of those change.
+### Named rules
+
+- **A balance carries no `+`.** `+41,005.64` reads as a movement; a position is not one. Negative
+  keeps a real U+2212 minus, not an ASCII hyphen, because screen readers announce some hyphens as
+  dashes.
+- **Category magnitudes are unsigned.** The section heading carries the direction. A minus sign
+  repeated down every row of a list says nothing the heading has not already said.
+- **No figure carries a currency code.** The unit rides the panel's label (`NET WORTH · EUR`,
+  `EUR · SIX MONTHS`), so columns of numbers align and the unit is still stated.
 
 ## Layout
 
-A single centred column, `max-w-5xl` (64rem / 1024px), padded `1.5rem` on both sides, holding every route. There is no multi-column dashboard grid and no sidebar: the route table is flat, each page renders its own `AppShell`, and the reader is always reading a document that is one column wide.
+Two independent flex columns packing on their own, **not a grid of rows.** A grid row is as tall as
+its tallest cell, which stretches a content-height panel to match its neighbour. This was a real
+defect caught in review: `items-start` on a grid fixed the panel but left a 300px notch in the
+page, because the row itself was still tall.
 
-Above the fold the masthead is a band of Paper at 85% opacity with a `backdrop-blur`, underlined by a 1px Rule, containing the wordmark in the display serif and navigation in Label. Below it, `main` opens with 2.5rem of top space and closes with 6rem of bottom space — the deep bottom margin is deliberate, so the last row of a long ledger never sits against the viewport edge.
+- **Desktop (≥1024px):** two columns. The wide column takes the lead panel, then the net-worth
+  panel, then the six-month series. The narrow column takes the month-by-month bars, the category
+  breakdown, and the review stub.
+- **Mobile (390px):** one column, lead panel first, unchanged in scale.
+- **Unequal column heights are correct.** Do not stretch, do not fill, do not pad.
+- 4px base rhythm. 24px panel gaps, 24px panel inset.
+- Body measure 65–75ch. Display max 6rem.
 
-Vertical rhythm is tight within a group and generous between groups. A page header clears its content by 2rem; a Panel header clears its body by 0.875rem. Data rows are a three-track grid — `auto` for the date, `minmax(0, 1fr)` for the description, `auto` for the amount — at `0.875rem` block padding and `1rem` inline gap, separated by hairline dividers rather than by individual row borders or card chrome.
+### Panel order is a rank, not a layout constant
 
-Responsive behaviour is mobile-first via Tailwind's default breakpoints: the masthead wraps (`flex-wrap` with `gap-y-2`), navigation wraps onto a second line rather than collapsing into a menu, and the container simply stops growing at 64rem. There is no mobile-specific navigation treatment.
+The panel order lives in one table with explicit ranks, and no class name in the layout JSX names
+a panel. **Spending leads because V1 scope is spending**, and a net-worth figure has less to say
+until savings and investments exist. When they do, promoting net worth back to first must be a
+change to that table, not a rebuild.
 
 ## Elevation & Depth
 
-This system is **flat, with a paper-edge whisper**. Surfaces do not float above one another; they are stacked sheets of the same paper, separated by a 1px Rule. The one shadow in the entire system belongs to the Panel.
+**There is no depth system.** No shadow, no border, no glass, no backdrop blur on any panel.
 
-### Shadow Vocabulary
+Panels separate by fill alone. Where a panel needs to separate from its neighbour, it gets a
+different fill — not an offset shadow.
 
-- **Paper Edge** (`0 1px 0 0 oklch(0 0 0 / 0.02), 0 1px 3px 0 oklch(0.2 0.02 80 / 0.05)`): the cut edge of a sheet catching light, plus a 3px settle. Applied to `Panel` and nothing else. It is near-invisible by design — if you can clearly see it, it is too strong.
+**If you flatten a corner, do not add a shadow to compensate.** That reflex is what destroyed the
+previous world. Flatness is load-bearing: it is why a colour field reads as a material rather than
+a decoration, and adding depth back would undo it.
 
-### Named Rules
-
-**The Hairline Rule.** Separate two things with a 1px Rule, not with a shadow. A shadow that lifts a surface off the page breaks the paper illusion immediately, and is the single fastest way to make this system look like a generic admin panel.
-
-**The One Shadow Rule.** Panel is the only element permitted a shadow. Buttons, fields, list rows, chips and notices are flat. Do not add a second elevation tier.
+Two sanctioned exceptions: the focus ring (2px `--ink`, offset 2px) and the demo-data banner, which
+is an ink field, not a surface.
 
 ## Shapes
 
-Gently curved, never rounded. The base radius is `0.375rem` (6px), stepping to `0.25rem` for chips and badge corners, `0.4375rem` for panels, and `0.75rem` only where a container needs to read as a distinct sheet. Nothing is a pill; the most curved thing in the system is the 6px base.
+**One radius token: 6px.** `--radius-sm` through `--radius-2xl` all resolve to it, deliberately —
+there is no ramp to reach for.
 
-Form language is *ruled paper*. Structure comes from hairlines and generous space, not from filled or outlined boxes. A list is one continuous surface divided by 1px rules — never a stack of individually bordered rows. Fields are the only routinely outlined elements, and their stroke is Rule Strong rather than Rule so an input is distinguishable from a divider without being louder.
+The reference this world came from measured 8–12% of a card's own width for panels and full
+stadium (`h/2`) for pills. Both were rejected as too round, and both were absolute tokens that read
+anywhere from 3.9% to 12.9% of width depending on card size. Here the value is absolute and small
+enough to stay quiet at every scale.
+
+Only genuinely circular things are round: an account avatar, a progress ring. A circular button is
+a different decision from a rounded rectangle, and it is not the default.
+
+**The perforation.** The review stub's top edge is a repeating notch, cut with a CSS mask rather
+than an image. It is reserved for panels representing a detachable, dismissible thing — a review
+stub, an import stub — and appears **once per surface**. It is not a motif to repeat.
 
 ## Components
 
-Tactile and precise: ink pressing into paper. Controls feel like a stamp, money columns lock, and nothing bounces, glows or blooms.
+- **Panel** — `--panel`, `--lime` or `--cyan` fill. Flat. Content-height. One panel is the loud
+  region; nothing else on the page competes.
+- **Lead panel** — the lime panel. Period, the figure, the comparison, and the largest category.
+  Nothing else.
+- **Review stub** — perforated top edge. **Its fill is its state:** cyan when the queue is clear,
+  lime when there is something to clear. The perforation is identical through both states, so the
+  shape reads before the colour does.
+- **Bar mark** — 2px `--ink`. Function, not decoration: it carries proportional share.
+- **Disclosure** — native `<details>`. Names the honest caveat it explains rather than saying
+  "More", so it is findable by the question it answers.
+- **Figure** — mono, always, at every size.
+- **Empty state** — says what is missing. Never fills an empty view with a plausible number.
+- **Error state** — names the cause and the recovery.
 
-### Buttons
+### Known, deliberate positions
 
-- **Shape:** gently curved (0.375rem radius), medium weight, 1px border, `0.5rem 0.75rem` padding.
-- **Primary:** Ledger Ink fill on Paper text. Used once per view — the one action this page exists to perform.
-- **Hover / Focus:** Primary darkens to 90% opacity on hover with a 150ms colour transition. `:focus-visible` draws a 2px Focus Ink ring at 2px offset — deliberately not the browser default, which disappears against Rule on a paper ground. Disabled drops to 45% opacity and stops receiving events.
-- **Quiet:** Paper fill, Rule border, Ink text. The default. Hover moves to Paper Tint.
-- **Danger:** Paper fill, 40%-strength Alarm border, Alarm text. Hover tints to 10% Alarm. Reserved for destructive actions only.
+Two things are recorded here so a later surface does not repeat them by accident.
 
-### Chips
-
-- **Style:** Paper Tint fill, Rule border, `0.3rem` radius, Label typography at 0.6875rem with 0.12em tracking.
-- **State:** status chips are informational and never clickable. Filter and selection chips use the segmented control below instead.
-
-### Segmented Control
-
-A `0.5rem`-radius Paper Tint track holding `0.25rem`-radius Paper segments, used for mutually exclusive filters. The active segment is Paper with full-strength Ink text; inactive segments are Ink Soft. This is the only filled-on-filled control in the system, and it exists because a row of separate pills would be louder than a filter should be.
-
-### Cards / Containers
-
-- **Corner Style:** 0.4375rem.
-- **Background:** Paper, identical to the page ground. A Panel is defined by its border and its header rule, not by a different fill.
-- **Shadow Strategy:** Paper Edge only — see Elevation.
-- **Border:** 1px Rule.
-- **Internal Padding:** `1.25rem` inline on rows, `0.875rem` block; headers use `1.25rem 0.875rem` under a 1px bottom Rule.
-
-### Inputs / Fields
-
-- **Style:** 1px Rule Strong stroke, Paper fill, `0.5rem 0.625rem` padding, `0.875rem` text.
-- **Focus:** a 2px Focus Ink ring at 2px offset, matching the button focus treatment exactly.
-- **Error / Disabled:** errors appear as a `0.75rem` destructive message 0.375rem below the field — the field's own stroke does not turn red, because the message already says what is wrong. Disabled fields drop to Paper Tint with a `not-allowed` cursor.
-- **Labels:** every field carries a Label eyebrow above it, and a hint or an error below — never both.
-
-### Notices
-
-Tone-framed messages for error, warning and information. Each carries a 1px frame in its tone colour at 35% strength over a 4.5% strength tint of that same colour, with a Label eyebrow naming the tone. Tone is therefore carried three times over — tint, label, frame — so the message survives a monochrome print and a screen reader. The frame is a hairline like every other rule in the system; no notice gets a heavier bar down one side.
-
-### Browser Surfaces
-
-The parts the browser draws for you carry the design too, because they are the cheapest signal that a page was built rather than assembled.
-
-- **Selection:** a warm 18% wash of the theme's own ink (`--selection`), with the text left at `--foreground` on top. In the dark theme the wash inverts to near-white at 22%, because `--foreground` there is already near-white. It must be spelled as an explicit alpha rather than `color-mix(… transparent)`: the build rewrites `color-mix` into an `@supports` block and degrades the fallback to the *opaque* colour, which would put ink text on an ink ground.
-- **Caret:** Ledger Ink in the light world — the one accent, spent on the one thing being typed into. In the dark theme `--primary` is already inverted to paper, so the same declaration stays legible without a second token.
-- **Scrollbars:** thin, with a `--border` thumb on a transparent track, lifting to `--input` on hover, at the system's own `0.375rem` radius. A rule-coloured thumb reads as paper; a grey chrome bar reads as an operating-system overlay sitting on top of the document.
-
-### Arrival
-
-One authored moment, and only one: everything arriving on a page rises and settles, so a list that lands all at once reads as a flash instead of a document. Nothing animates on scroll — a page that moves when you scroll past it stops being a document you are reading — and there is no second animation competing with it.
-
-What varies is **amplitude within that one moment**, not choreography. The same keyframes and easing serve two jobs that are not the same job: `.rise` is the page's own arrival, one per route, travelling 8px over 520ms; `.rise-row` is a list entry, of which there may be two hundred, travelling 4px over 380ms with a per-index delay set from JS and capped there. The loudest entrance in the system is calibrated for the page heading and is allowed exactly one.
-
-Travel stays on the Y axis and fade on opacity, on purpose. A scale, a blur or a colour shift on arrival would read as something being *presented* rather than a sheet being laid down. `prefers-reduced-motion: reduce` drops both amplitudes to `animation: none` entirely — a reader who asked for no motion gets none.
-
-### Navigation
-
-The masthead wordmark is set in the display serif at 1.125rem, followed by a `Ledger` sub-label in Label typography with wider tracking. Navigation links are Label typography: Ink Soft at rest, Ink on hover. **The active item carries a 2px Ledger Ink underline** (`::after`, inset-x 0, at −1px, height 2px) rather than a filled pill, a background shift, or a weight change. Links have no default underline; add `underline-offset` deliberately when one is needed.
-
-### Amount
-
-The signature component, and the one most worth protecting. Monospace with `tabular-nums`, right-aligned, whitespace-nowrap, so a column of amounts aligns on the decimal point and a flipped sign is impossible to miss in a dense list. Direction is the sign glyph first, then Money Out / Money In / Ink Soft for zero. The currency code sits at `0.75em` with `0.7` opacity — present but subordinate. An `sr-only` span states "money in" or "money out" in words for screen readers.
-
-### List Row
-
-A three-track grid at `0.875rem` block padding, divided by Rule, hovering to Paper Tint at 70%. The left track holds the date in Label typography, the middle track the description in Body with the amount in the right track. Rows are not individually bordered and are never cards.
-
-### Empty State & Skeleton
-
-Empty states are centred, with a serif `1.125rem` title, muted prose at `max-w-md`, and an optional action at 1.25rem. They state honestly what is absent — LifeOS prefers saying "no budgets defined" to drawing an illustration of an empty budget. Skeletons are shaped like the thing being loaded: rows of hairline Paper Tint bars at the real row rhythm, not the word "Loading". The container is `role="status"` with an `aria-label` naming what is loading, because the live region takes no name from its contents.
+- **The demo banner is heavy, and that is the cost of loud honesty.** In demo mode a full-width ink
+  banner sits above the lead panel; on a 390px viewport it and the lead panel together take about
+  half the screen, so the page opens on the warning rather than the number. **This is demo-mode
+  only — the banner does not exist in real mode — and it is a deliberate trade:** the strongest
+  possible signal that the figures are invented beats a lighter marker that can be missed. Do not
+  soften it, and do not let the same weight appear in real mode.
+- **The "next import" line has no endpoint.** No endpoint states it and `GET /api/v1/imports` is
+  not mounted. The panel says so in words rather than showing a plausible date. Whether it becomes
+  its own panel or is cut is an open direction decision. **Do not assume it is mounted.**
 
 ## Do's and Don'ts
 
-### Do:
+### Do
 
-- **Do** carry money direction with the sign glyph first and colour second, always.
-- **Do** set every amount in tabular monospace and right-align it, so columns align on the decimal.
-- **Do** separate surfaces with a 1px Rule; reach for the Paper Edge whisper only on `Panel`.
-- **Do** spend Ledger Ink only on things the reader can act on.
-- **Do** let the serif name things and the sans carry prose — never swap them.
-- **Do** honour `prefers-reduced-motion` by dropping the animation entirely, not by shortening it.
-- **Do** keep text selection, the caret, and scrollbars on the palette's own terms. They are the cheapest signal that a page was built rather than assembled, and the first thing that regresses when nobody is looking.
-- **Do** state honestly when a surface has no data behind it, the way the empty states already do.
-- **Do** keep every asset local: no runtime-fetched font, icon, or stylesheet. The app is designed to run with `--network=none` as a proof of no telemetry, and that is a product guarantee, not an accident.
+- **Lead with the number that answers the question the user came with.** Currently: spending.
+- **Use lime and cyan as whole fills.** If a brand colour would be thinner than a panel, it is the
+  wrong colour for that job.
+- **Set every monetary figure in `LifeOS Mono`.** Column alignment is the reason.
+- **Keep panels content-height** and let column heights differ.
+- **State the honest caveat on the surface**, then put the reasoning one click away.
+- **Keep every asset local.** No runtime-fetched font, icon or stylesheet. The app runs with
+  `--network=none` as a proof of no telemetry.
+- **Draw an axis that does not start at zero for a position, and say so.** Net worth is a *level*,
+  not a quantity measured from a reference point. Zero-anchoring squeezes six months of movement
+  into a fraction of the height. State the bounds, and keep the plot spanning at least 12% of the
+  position it sits on.
+- **Distinguish "nothing posted" from "nothing changed."** A stretch with no postings is drawn
+  dashed — a solid line would claim the balance held still, which the ledger does not say.
 
-### Don't:
+### Don't
 
-- **Don't** add a charting library, or design a chart, before an aggregation endpoint exists to feed it. Net-worth-over-time, spend-by-category and cashflow-by-period have no endpoint today; the arithmetic is correct but nothing exposes a series.
-- **Don't** put a chart on a page whose data comes from a stub endpoint. `/review`, `/imports` and `/budgets` currently have nothing behind them.
-- **Don't** introduce hard offset shadows, gradient text, glass or backdrop-blur as decoration. The only blur in the system is the masthead's, and it is doing a job.
-- **Don't** let colour be the sole carrier of meaning anywhere on the page.
-- **Don't** wrap a list in individually bordered rows or nest cards inside panels. One surface, hairline dividers.
-- **Don't** use colour alone to distinguish a filter chip's active and inactive states; the fill carries it.
-- **Don't** silently replace the system font stacks with a downloaded webfont without revisiting the offline guarantee first.
-- **Don't** invent numbers to fill an empty view. Empty states say what is missing.
+- **Don't stretch a panel to match its neighbour**, and don't compensate a flat surface with a
+  shadow.
+- **Don't put a brand colour on a hairline, a border, an underline or a dot.**
+- **Don't stack two saturated panels in one column.**
+- **Don't add a greeting, an avatar row, or an intro paragraph.** An introduction that restates
+  the page's own title is a header wearing a greeting's clothes.
+- **Don't add a kicker or eyebrow above a heading.** Banned outright. A label *beside* a heading
+  naming a real field is fine.
+- **Don't set currency in a proportional face**, and don't use an ASCII hyphen as a minus.
+- **Don't put a near-zero bar where the truth is an absence.** An empty month is a labelled gap.
+- **Don't silently substitute demo figures for real ones.** Real-empty and demo are distinct states
+  and must be visibly distinct.
+- **Don't add a second radius token**, and don't reach for a stadium pill.
+- **Don't repeat the perforation.** Once per surface, on a genuinely detachable panel.
+- **Don't introduce a charting library** before an aggregation endpoint exists to feed it. Net
+  worth, spend-by-category and cashflow now have endpoints; anything else does not.
+- **Don't put a chart on a page whose data comes from a stub endpoint.** `/review`, `/imports` and
+  `/budgets` still have nothing behind them.
+- **Don't use colour as the sole carrier of meaning** anywhere.

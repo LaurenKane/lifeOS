@@ -164,6 +164,16 @@ Option (B) is the ponytail answer for a single-user app: no bank connection, no
 OAuth/consent expiry, no credential rotation, no pending-state machine. Option
 (A) is right if you want automatic sync badly enough to own that maintenance.
 
+> **SUPERSEDED IN PART (2026-10-05).** Read `PRODUCT.md` before acting on this section.
+> Option (B) framed staying manual as an acceptable answer. It is not — automatic
+> transaction creation is **wanted**, on the condition that both Rabobank and Revolut prove
+> linkable through Enable Banking. The manual rhythm is a consequence of having no live
+> connection today, not a preference worth defending. So the real choice is (A) versus a dated
+> deferral of (A), and (B) is off the table.
+>
+> Also note the "single-user" premise above does not justify dropping live sync: single-user is a
+> refusal on *sharing* (no permissions, no second user), not on *automation*. See PRODUCT.md.
+
 **Confirmed target banks: Rabobank and Revolut (NL).** One caveat worth
 resolving before you commit to an integration shape — the research docs record
 Revolut NL reachability as **uncertain**: whether `/aspsps?country=NL` lists
