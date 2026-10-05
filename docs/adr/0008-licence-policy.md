@@ -98,11 +98,18 @@ So its patterns may be used, and using them does not oblige us to publish anythi
   never a candidate); no `vendor/`, `third_party/`, or fork directories; and of 46 installed Python
   distributions, **none carries a copyleft licence classifier**. The frontend depends on React,
   React Router, and Zod plus build tooling, with no AGPL or GPL text in any installed licence file.
-- **Recording the policy is not the same as being licensed.** There is still no `LICENSE` file at the
-  repository root and no `license` field in `pyproject.toml` or `frontend/package.json`. Until a
-  `LICENSE` file carrying the actual copyright holder exists, this ADR records an intention, and the
-  tree is not formally MIT-licensed to a third party. Tracked separately; it needs a name and year
-  this project cannot supply for itself.
+- **Recording the policy is not the same as being licensed.** When this ADR was first written there was
+  no `LICENSE` file at the repository root and no `license` field in either manifest, so the tree was
+  not formally MIT-licensed to a third party — only an intention. That gap is now closed
+  (LifeOS-1km): `LICENSE` at the root carries verbatim MIT text, "Copyright (c) 2026 Lauren Kane",
+  and both `pyproject.toml` and `frontend/package.json` declare the licence so it travels with built
+  artefacts. `pyproject.toml` uses PEP 639 (`license = "MIT"` plus `license-files`) so wheel metadata
+  carries a machine-readable `License-Expression: MIT` *and* the bundled text; the older
+  `license = { file = "LICENSE" }` form was tried first and rejected, because it copies the file body
+  into `License:` and yields the unparseable value `MIT License`.
+- The copyright holder is a real input rather than something the repository can infer, which is why
+  this was a separate step. Had the ADR alone been treated as licensing the project, the gap would
+  have stayed open indefinitely and looked closed.
 - Third-party licences are a moving target. Any *new* AGPL-licensed dependency is a decision, not
   an accident, and needs this ADR amended first.
 
