@@ -53,6 +53,7 @@ from finance.api.routes.imports import (
     _posting_date,
     _resolve_card_payment_roles,
 )
+from finance.api.transfer_linker import link_transfers
 from finance.api.writers import (
     PostingRefused,
     ReferenceNotFound,
@@ -107,6 +108,7 @@ class ReplayReport:
     reposted: int
     restored_pending: int
     category_rules_applied: int
+    transfer_links_created: int
     divergences: list[str]
     ok: bool
 
@@ -534,8 +536,8 @@ def replay_batch(session: Session, *, batch_id: int) -> ReplayReport:
     (e) require the re-parsed set to equal the stored set, raising on any
     symmetric difference; (f) detach the batch's rows; (g) delete the entries
     left orphaned; (h) re-book every row through the import's writer chain,
-    counting posted vs unposted; (i) re-apply the stored categorization
-    rules.
+    counting posted vs unposted; (i) link this batch's unmatched transfer
+    legs; (j) re-apply the stored categorization rules.
 
     Args:
         session: The caller's session. Never begun, committed or rolled back
@@ -567,6 +569,7 @@ def replay_batch(session: Session, *, batch_id: int) -> ReplayReport:
         stored=stored,
         batch_id=batch_id,
     )
+    links = link_transfers(session, batch_id=batch_id)
     applied = _categorize(session, batch_id=batch_id, snapshot=snapshot)
     return ReplayReport(
         batch_id=batch_id,
@@ -574,6 +577,7 @@ def replay_batch(session: Session, *, batch_id: int) -> ReplayReport:
         reposted=reposted,
         restored_pending=restored_pending,
         category_rules_applied=applied,
+        transfer_links_created=links.auto_matched,
         divergences=[],
         ok=True,
     )

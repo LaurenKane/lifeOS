@@ -12,8 +12,9 @@ Imports are absolute. `core` and `finance` are sibling packages under the
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -36,6 +37,7 @@ __all__ = [
     "CashflowBucket",
     "CategoryKind",
     "CategorySummary",
+    "ConfirmTransferRequest",
     "ImportRequest",
     "ImportSummary",
     "ManualTransactionRequest",
@@ -47,6 +49,10 @@ __all__ = [
     "SpendByCategoryPoint",
     "TransactionStatus",
     "TransactionSummary",
+    "TransferReviewCandidateOut",
+    "TransferReviewItem",
+    "TransferReviewLegOut",
+    "TransferReviewStats",
 ]
 
 
@@ -308,3 +314,78 @@ class CashflowBucket(BaseModel):  # type: ignore[explicit-any]
     income: int
     expense: int
     net: int
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Transfer-review queue schemas (M4)
+# ──────────────────────────────────────────────────────────────────────
+#
+# The JSON contract for `GET /review/transfers` and its three decisions.
+# Field names are snake_case, matching every other schema in this module.
+# Amounts are integer minor units, like the analytics schemas above — never
+# a decimal and never a float.
+
+
+class TransferReviewLegOut(BaseModel):  # type: ignore[explicit-any]
+    """One side of a queued transfer question, fully described.
+
+    Read-only, frozen and closed like every other response model here: a
+    response that could be mutated in place is a contract nobody can rely on.
+    `description` is the `journal_entry`'s, because the entry carries the
+    human text and the line carries only the arithmetic.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    journal_line_id: int
+    description: str
+    amount_minor: int
+    currency: str
+    booked_date: date
+    account_id: int
+    account_name: str
+
+
+class TransferReviewCandidateOut(TransferReviewLegOut):  # type: ignore[explicit-any]
+    """A possible incoming half, with the matcher's confidence attached.
+
+    `confidence` is recomputed live from the pure `transfer_match` rule on the
+    (outbound, candidate) pair — it is not a stored column, because the linker
+    stores no score on the review row. A pair that no longer satisfies the rule
+    (e.g. an `entry_date` moved after queueing) reports `0.00`.
+    """
+
+    confidence: Decimal
+
+
+class TransferReviewItem(BaseModel):  # type: ignore[explicit-any]
+    """One pending transfer question, with its outbound leg and candidates."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: int
+    outbound: TransferReviewLegOut
+    candidates: list[TransferReviewCandidateOut]
+    reason: Literal["multi_candidate", "low_confidence"]
+    created_at: datetime
+
+
+class TransferReviewStats(BaseModel):  # type: ignore[explicit-any]
+    """Queue depth by reason. `total` is the pending count, always the sum."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    multi_candidate: int
+    low_confidence: int
+    total: int
+
+
+class ConfirmTransferRequest(_Write):  # type: ignore[explicit-any]
+    """Which candidate a confirm decision picks.
+
+    Required when the review holds more than one candidate; the single
+    candidate of a `low_confidence` review is used when this is absent. An id
+    that is not on the review's stored candidate list is a 400, never a guess.
+    """
+
+    candidate_journal_line_id: int | None = None

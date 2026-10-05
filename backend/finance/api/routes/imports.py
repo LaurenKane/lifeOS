@@ -30,6 +30,7 @@ from starlette.concurrency import run_in_threadpool
 
 from finance.api.deps import get_session
 from finance.api.schemas import ImportSummary, Provider, ProviderInfo
+from finance.api.transfer_linker import link_transfers
 from finance.api.writers import (
     PostingRefused,
     ReferenceNotFound,
@@ -794,6 +795,7 @@ def _persist(
         # Inside the block rather than after it: the COMMIT is what makes these
         # rows durable, and an assertion that ran afterwards would be reading a
         # different connection's view of a batch that might never commit.
+        link_transfers(session, batch_id=batch_id)
         _assert_ranks_agree(records, ranks, _stored_occurrence_keys(session, keys))
 
         status = _batch_status(
