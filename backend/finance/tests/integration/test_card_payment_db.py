@@ -889,3 +889,102 @@ class TestLinkerLeavesCardPaymentsAlone:
             " ORDER BY id",
         )
         assert after == before
+
+
+class TestCardPaymentIsNotUncategorisedSpending:
+    """LifeOS-6aq: the uncategorised queue must not report debt repayment as spending.
+
+    `GET /transactions/uncategorized` answers "what did I spend". A card payment
+    debits checking, so its paying leg is a negative, uncategorised, unmatched
+    line — every property the queue selects for — and it was being listed as
+    consumption. `transfer_match_id IS NULL` cannot catch it: an unmatched card
+    payment has no match row. The transfer flag is on the `JournalEntry`.
+
+    Every test below asserts the queue by AMOUNT, so a fix that emptied the queue
+    outright would fail rather than pass.
+    """
+
+    @staticmethod
+    def _amounts(client: TestClient) -> list[int]:
+        response = client.get("/api/v1/transactions/uncategorized")
+        assert response.status_code == 200, response.text
+        rows = response.json()
+        return [int(row["raw_amount"]) for row in rows]
+
+    def test_a_checking_debit_card_payment_is_absent_from_the_queue(
+        self, client: TestClient, engine: Engine, seeded: dict[str, int]
+    ) -> None:
+        """The live defect: 2026-09-30, -922.19, no Amex statement to match."""
+        upload(
+            client,
+            rabo(RABO_SEPTEMBER),
+            provider="rabobank_pdf",
+            account_id=seeded["checking"],
+            filename=RABO_SEPTEMBER,
+        )
+        assert -92219 not in self._amounts(client), (
+            "a card payment is debt repayment, not spending, and must not be queued"
+        )
+
+    def test_the_same_payment_absent_in_the_other_import_order_too(
+        self, client: TestClient, engine: Engine, seeded: dict[str, int]
+    ) -> None:
+        """Card-first must behave identically: the synthesized leg has no record."""
+        upload(
+            client,
+            amex(AMEX_JUNE),
+            provider="amex_pdf",
+            account_id=seeded["card"],
+            filename=AMEX_JUNE,
+        )
+        upload(
+            client,
+            rabo(RABO_SEPTEMBER),
+            provider="rabobank_pdf",
+            account_id=seeded["checking"],
+            filename=RABO_SEPTEMBER,
+        )
+        assert -92219 not in self._amounts(client)
+
+    def test_a_genuine_uncategorised_expense_is_still_queued(
+        self, client: TestClient, engine: Engine, seeded: dict[str, int]
+    ) -> None:
+        """The guard on the fix: real spending must NOT disappear.
+
+        The Rabobank statements hold ordinary debits alongside the card payment,
+        so one of those is the control. If the whole September file were quietly
+        filtered out, this fails.
+        """
+        summary = upload(
+            client,
+            rabo(RABO_SEPTEMBER),
+            provider="rabobank_pdf",
+            account_id=seeded["checking"],
+            filename=RABO_SEPTEMBER,
+        )
+        assert summary.landed > 1, "expected other rows in the September statement"
+        queued = self._amounts(client)
+        assert queued, "no uncategorised transactions left at all; over-filtered"
+        assert all(amount != -92219 for amount in queued), queued
+
+    def test_the_payment_is_still_visible_in_the_unfiltered_list(
+        self, client: TestClient, engine: Engine, seeded: dict[str, int]
+    ) -> None:
+        """Excluded from the spend queue, NOT hidden from the ledger.
+
+        It is a real transaction. Suppressing it everywhere would make the
+        account look like it never paid the card.
+        """
+        upload(
+            client,
+            rabo(RABO_SEPTEMBER),
+            provider="rabobank_pdf",
+            account_id=seeded["checking"],
+            filename=RABO_SEPTEMBER,
+        )
+        response = client.get(
+            "/api/v1/transactions", params={"account_id": seeded["checking"]}
+        )
+        assert response.status_code == 200, response.text
+        amounts = [int(row["raw_amount"]) for row in response.json()]
+        assert -92219 in amounts, "the card payment vanished from the transaction list"

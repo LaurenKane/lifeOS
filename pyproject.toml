@@ -16,6 +16,15 @@ sources = ["backend"]
 [project]
 name = "lifeos"
 version = "0.1.0"
+# ADR 0008 settles the policy: MIT, no AGPL code. The LICENSE file at the repo
+# root is the authoritative text; this field and the two below exist so the
+# licence travels with built artefacts rather than only with the checkout.
+# PEP 639: a bare SPDX string plus license-files, so built metadata carries
+# `License-Expression: MIT` (machine-readable) AND the full text. The older
+# `license = { file = ... }` form instead copies the file body into `License:`,
+# which yields the unparseable "MIT License".
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
     "fastapi",

@@ -29,6 +29,9 @@ backups/
 
 .opencode/
 .beads/
+.codex/
+.cursor/
+.claude/
 
 # Beads / Dolt files (added by bd init)
 .dolt/

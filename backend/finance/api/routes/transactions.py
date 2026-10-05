@@ -559,15 +559,37 @@ def list_uncategorized(session: SessionDep) -> list[TransactionSummary]:
     A record with no journal entry has no line to categorise and is therefore not
     queued. That is stated explicitly rather than left to the `amount_base < 0`
     predicate, because the answer is otherwise invisible.
+
+    Transfer entries are excluded, and this is a correctness fix rather than a
+    nicety: an imported card payment debits checking, so its paying leg is a
+    negative uncategorised unmatched line and was queued here as spending. That
+    is debt repayment reported as consumption. `transfer_match_id IS NULL` does
+    not catch it, because an unmatched card payment has no match row yet — the
+    transfer flag lives on the `JournalEntry` (`api/writers.py` sets
+    `is_transfer=True` there, not per leg), so the predicate has to join the
+    entry. `JournalEntry.is_transfer.is_(False)` is the same rule
+    `analytics.py` already applies to cashflow.
+
+    Such a payment still appears in the unfiltered list endpoint, which is
+    correct: it is a real transaction, it just is not spending.
+
+    `idx_jl_uncat` no longer fully describes this query: it indexes the
+    `journal_line` predicate only, and the transfer flag lives on the entry, so
+    the planner filters those rows afterwards. That is stated rather than papered
+    over with a second index — the partial predicate still selects the lines, and
+    denormalising `is_transfer` onto `journal_line` to widen the index would put
+    a transfer's identity on the wrong table.
     """
     rows = session.execute(
         select(SourceRecord, JournalLine)
         .outerjoin(JournalLine, _funding_line_clause())
+        .join(JournalEntry, JournalEntry.id == JournalLine.journal_entry_id)
         .where(
             SourceRecord.journal_entry_id.is_not(None),
             JournalLine.category_id.is_(None),
             JournalLine.transfer_match_id.is_(None),
             JournalLine.amount_base < 0,
+            JournalEntry.is_transfer.is_(False),
         )
         .order_by(SourceRecord.raw_date, SourceRecord.id)
     ).all()
