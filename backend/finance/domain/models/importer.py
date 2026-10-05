@@ -76,6 +76,14 @@ class ImportBatch(Base):
     # a gzipped CSV is a string, an Enable Banking payload is an object.
     # `disallow_any_explicit` in pyproject.toml rules `dict[str, Any]` out.
     raw_payload: Mapped[object | None] = mapped_column(JSONB, nullable=True)
+    # The per-section account ids the upload actually used (Revolut
+    # Account/Deposit), lowercased section name -> local account id. NULL for
+    # single-account providers, where no such decision exists to remember. It
+    # is what replay reads to re-attribute a multi-section file exactly as the
+    # import did, instead of re-asking a question the user already answered.
+    section_account_ids: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB, nullable=True
+    )
     stats: Mapped[dict[str, object]] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )

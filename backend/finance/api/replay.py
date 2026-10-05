@@ -22,9 +22,11 @@ THREE DEVIATIONS FROM THE NAIVE READING, each documented where it bites:
 * Deletion is bounded to entries this batch pointed at. A global "delete every
   orphan" would, on a batch with no entries at all, delete the whole ledger's
   journal. In normal operation the two are identical.
-* A Revolut multi-section statement needs `section_account_ids` to attribute
-  its rows, and the batch does not store them. Replay passes only
-  `batch.account_id`, so a multi-account Revolut batch diverges at the
+* A Revolut multi-section statement replays because the batch stores the
+  `section_account_ids` mapping the import used (migration 0005). Rows are
+  re-attributed exactly as the import attributed them, so the fingerprints
+  agree. A batch from before that column existed carries no mapping: its
+  Deposit rows re-parse unattributed and the replay diverges at the
   fingerprint check — loudly, rather than partially.
 * A manual category edit is restored when no current rule claims the line
   (see `_snapshot_categories`). Without that, every replay would destroy
@@ -47,6 +49,7 @@ from sqlalchemy.orm import Session
 from finance.api.routes.imports import (
     _CARD_PAYMENT,
     _FILE_ADAPTERS,
+    _adapter_for,
     _content_only_ranks,
     _money,
     _occurrence_keys,
@@ -143,20 +146,57 @@ def _decode_payload(batch: ImportBatch) -> bytes:
         ) from exc
 
 
-def _parse_records(batch: ImportBatch, payload: bytes) -> list[RawRecord]:
-    """The adapter's rows for the stored file, under the batch's account.
+def _section_mapping(batch: ImportBatch) -> dict[str, int]:
+    """The batch's stored per-section mapping, coerced to account ids.
 
-    Only `batch.account_id` is passed: a Revolut multi-section statement needs
-    `section_account_ids` to attribute its rows, and the batch does not store
-    them. Single-account batches replay exactly; multi-account Revolut batches
-    diverge at the fingerprint check instead of replaying half-attributed.
+    The column is JSONB, so what comes back is shaped by whatever was
+    written, not by the annotation: a hand-edited row could hold a string
+    where an id belongs. Anything that is not a lowercase-section to positive
+    id mapping refuses the replay, because re-attributing rows under a mapping
+    nobody validated is how money lands on the wrong account silently.
+    """
+    stored = batch.section_account_ids
+    if stored is None:
+        return {}
+    if not isinstance(stored, dict):
+        raise ReplayError(
+            f"import_batch {batch.id} section_account_ids is not an object"
+        )
+    mapping: dict[str, int] = {}
+    for key, value in stored.items():
+        if (
+            not isinstance(key, str)
+            or not isinstance(value, int)
+            or isinstance(value, bool)
+            or value < 1
+        ):
+            raise ReplayError(
+                f"import_batch {batch.id} section_account_ids names "
+                f"{key!r} with a non-account value"
+            )
+        mapping[key.lower()] = value
+    return mapping
+
+
+def _parse_records(batch: ImportBatch, payload: bytes) -> list[RawRecord]:
+    """The adapter's rows for the stored file, attributed as the import was.
+
+    The adapter is built with the batch's stored `section_account_ids`, so a
+    multi-section Revolut file re-attributes each row to the account the
+    import gave it — and the fingerprints agree. Rows are still parsed under
+    `batch.account_id` only: the batch owns no other account, and the mapping
+    covers the sections beyond it. A row the stored mapping cannot attribute
+    re-parses with `account_id=None`, exactly as the import saw it, and the
+    fingerprint check below refuses the replay rather than rebuilding half a
+    statement.
     """
     if batch.provider not in _FILE_ADAPTERS:
         raise ReplayError(
             f"import_batch {batch.id} provider {batch.provider!r} has no file "
             "adapter, so there is nothing to re-parse it with"
         )
-    adapter = _FILE_ADAPTERS[batch.provider][0]()
+    mapping = _section_mapping(batch)
+    adapter = _adapter_for(batch.provider, section_account_ids=mapping or None)
     result = adapter.parse(
         payload, account_id=batch.account_id, filename=batch.source_filename
     )
@@ -532,7 +572,8 @@ def replay_batch(session: Session, *, batch_id: int) -> ReplayReport:
     The steps, in order: (a) load the batch, refusing a missing batch, a
     missing payload, or a `pending`/`processing` status; (b) gunzip the
     base64 payload; (c) re-parse it with the batch's provider adapter, under
-    the batch's account only; (d) recompute every row's Tier-3 fingerprint;
+    the batch's account and its stored section mapping; (d) recompute every
+    row's Tier-3 fingerprint;
     (e) require the re-parsed set to equal the stored set, raising on any
     symmetric difference; (f) detach the batch's rows; (g) delete the entries
     left orphaned; (h) re-book every row through the import's writer chain,

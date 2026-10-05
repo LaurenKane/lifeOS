@@ -54,7 +54,7 @@ exactly the divergence `manual_posting.py` was extracted to prevent.
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Final, Protocol
@@ -336,6 +336,7 @@ def open_import_batch(
     source_filename: str | None = None,
     source_checksum: str | None = None,
     raw_payload: object | None = None,
+    section_account_ids: Mapping[str, int] | None = None,
     stats: dict[str, object] | None = None,
 ) -> int:
     """Open an `import_batch` and return its id.
@@ -361,6 +362,11 @@ def open_import_batch(
         source_checksum: SHA-256 of the uploaded bytes.
         raw_payload: What a replay reads. JSONB, so a caller that stores a file
             gzips and base64s it first — see `routes/imports.py`.
+        section_account_ids: The per-section account mapping the upload used
+            (Revolut Account/Deposit), stored so a replay re-attributes each
+            row exactly as the import did. Copied rather than kept by
+            reference, because the caller's dict outlives this call and a
+            later mutation must not rewrite what the batch remembers.
         stats: JSONB counters. Defaults to `{}` at the column level.
 
     Returns:
@@ -383,6 +389,7 @@ def open_import_batch(
         source_filename=source_filename,
         source_checksum=source_checksum,
         raw_payload=raw_payload,
+        section_account_ids=dict(section_account_ids) if section_account_ids else None,
         stats=dict(stats or {}),
         completed_at=func.now(),
     )

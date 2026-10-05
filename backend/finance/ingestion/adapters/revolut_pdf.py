@@ -535,7 +535,12 @@ def iter_transactions(
     return [
         _finish(
             item,
-            section_name_for=_section_of(product),
+            # The ROW's product, not the loop's: `product` still holds the
+            # LAST section's name by the time this comprehension runs, so
+            # reading it here attributed every row of the file to that
+            # section — all 340 Account rows landed on the Deposit account.
+            # Each staged row carries the section it was parsed under.
+            section_name_for=_section_of(item.product),
             account_id_for=lambda name: per_section.get(
                 name, account_id if name == "account" else None
             ),

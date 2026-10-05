@@ -18,12 +18,13 @@ from __future__ import annotations
 import base64
 import datetime as dt
 import gzip
-from collections.abc import Sequence
+import json
+from collections.abc import Mapping, Sequence
 from typing import Annotated, Final, Protocol
 
 from core.datetime import parse_date
 from core.money import Currency, Money
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
@@ -48,6 +49,7 @@ from finance.ingestion.adapters import (
     RevolutPdfAdapter,
 )
 from finance.ingestion.adapters.base import ImportResult
+from finance.ingestion.adapters.revolut_pdf import _SECTION_PRODUCTS
 from finance.ingestion.dedupe import (
     OccurrenceKey,
     count_existing_occurrences,
@@ -110,6 +112,81 @@ _FILE_ADAPTERS: dict[str, tuple[type[FileAdapter], str]] = {
     "rabobank_pdf": (RabobankPdfAdapter, ".pdf"),
     "revolut_pdf": (RevolutPdfAdapter, ".pdf"),
 }
+
+
+def _adapter_for(
+    provider: str, *, section_account_ids: Mapping[str, int] | None = None
+) -> FileAdapter:
+    """The upload's adapter, carrying the section mapping when one applies.
+
+    Only Revolut takes a mapping — its statement can cover several products,
+    and the mapping is what attributes each section to a local account. Every
+    other adapter ignores it, because a second account id on a single-account
+    file would be a claim about attribution nobody made.
+    """
+    cls = _FILE_ADAPTERS[provider][0]
+    if cls is RevolutPdfAdapter:
+        return RevolutPdfAdapter(section_account_ids=section_account_ids or {})
+    return cls()
+
+
+def _parse_section_account_ids(raw: str | None) -> dict[str, int] | None:
+    """The `section_account_ids` form field as a mapping, or None.
+
+    The field carries a JSON object like `{"deposit": 7}` naming the local
+    account per Revolut section. Keys are lowercased so `"Deposit"` and
+    `"deposit"` name the same section; anything else in here is a 400, because
+    a mis-attributed section writes money to the wrong account and the batch
+    would then remember the mistake as the mapping.
+
+    Raises:
+        HTTPException: 400 for malformed JSON, a non-object, an unknown
+            section, or a value that is not a positive account id.
+    """
+    if raw is None or not raw.strip():
+        return None
+    try:
+        parsed: object = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"section_account_ids is not valid JSON: {exc}",
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise HTTPException(
+            status_code=400,
+            detail="section_account_ids must be a JSON object like "
+            '{"deposit": 7}, mapping a Revolut section to an account id',
+        )
+    known = ", ".join(sorted(_SECTION_PRODUCTS))
+    mapping: dict[str, int] = {}
+    for key, value in parsed.items():
+        if not isinstance(key, str):
+            raise HTTPException(
+                status_code=400,
+                detail=f"section_account_ids keys must be section names ({known})",
+            )
+        name = key.lower()
+        if name not in _SECTION_PRODUCTS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown Revolut section {key!r}; expected one of: {known}",
+            )
+        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+            raise HTTPException(
+                status_code=400,
+                detail=f"section_account_ids[{key!r}] must be a positive "
+                "account id, not a flag, a string or a zero",
+            )
+        if name in mapping and mapping[name] != value:
+            raise HTTPException(
+                status_code=400,
+                detail=f"section_account_ids names section {key!r} twice "
+                "with different accounts; one section is one account",
+            )
+        mapping[name] = value
+    return mapping
+
 
 _IMPORT_METHODS: dict[str, str] = {
     "enable_banking": "api",
@@ -179,6 +256,7 @@ async def dry_run_import(
     file: UploadFile = File(...),
     provider: str = "amex_pdf",
     account_id: int | None = None,
+    section_account_ids: Annotated[str | None, Form()] = None,
 ) -> ImportSummary:
     """Accept a statement file, parse it, and write NOTHING.
 
@@ -189,6 +267,11 @@ async def dry_run_import(
             account, so the user picks one and the caller passes it in. None
             when the upload has not been attributed to an account yet — which is
             honest, where the previous `""` default claimed to be an id.
+        section_account_ids: A JSON object like `{"deposit": 7}` naming the
+            local account per Revolut section. Parsed exactly as the persisting
+            import parses it, so the dry run reports the same attribution the
+            import would write — a dry run that attributed differently would be
+            answering a different question than the import it previews.
 
     Returns:
         A summary of what the file CONTAINS. Nothing is written: `created`,
@@ -196,11 +279,13 @@ async def dry_run_import(
         `import_batch`. Use `POST /imports/file` to persist.
 
     Raises:
-        HTTPException: 400 for an unknown provider, a mismatched extension, or a
-            provider that is not uploadable; 413 when the upload is too large.
+        HTTPException: 400 for an unknown provider, a mismatched extension, a
+            provider that is not uploadable, or a malformed section mapping;
+            413 when the upload is too large.
     """
     payload, filename = await _read_upload(file, provider=provider)
-    adapter = _FILE_ADAPTERS[provider][0]()
+    mapping = _parse_section_account_ids(section_account_ids)
+    adapter = _adapter_for(provider, section_account_ids=mapping)
     result = adapter.parse(payload, account_id=account_id, filename=filename)
     return ImportSummary(
         provider=result.provider,
@@ -218,14 +303,17 @@ async def dry_run_import(
 
 #: The message every unattributable row carries. `source_record.account_id` is
 #: NOT NULL (migration 0001), so a row nobody can attribute cannot be written at
-#: all — and Revolut's PDF emits `account_id=None` for rows from a section other
-#: than the caller's, by design (`revolut_pdf.py` says so). The row is counted as
-#: failed rather than dropped, because a silently dropped row is a statement that
-#: does not reconcile and a user with no way to tell which one.
+#: all — and Revolut's PDF emits `account_id=None` for rows from a section the
+#: caller did not map, by design (`revolut_pdf.py` says so). Pass a
+#: `section_account_ids` form field carrying a JSON object like `{"deposit": 7}`
+#: naming the local account per section. The row is counted as failed rather
+#: than dropped, because a silently dropped row is a statement that does not
+#: reconcile and a user with no way to tell which one.
 _UNATTRIBUTED = (
     "Not written: this row names no account, and source_record.account_id is "
-    "NOT NULL. Pass account_id on the upload, or supply "
-    "section_account_ids so the adapter can attribute it."
+    "NOT NULL. Pass account_id on the upload, or a section_account_ids form "
+    'field carrying a JSON object like {"deposit": 7} so the adapter can '
+    "attribute it."
 )
 
 #: A flagged card payment's message. Actionable, and deliberately does NOT guess
@@ -601,6 +689,21 @@ def _persist_card_payment_row(
     return None
 
 
+def _require_section_accounts(
+    session: Session, mapping: Mapping[str, int] | None
+) -> None:
+    """Refuse a section mapping that names a missing account.
+
+    The same 404 as the primary-account check, for the same reason: a mapping
+    that names nothing would attribute rows to nowhere, and the batch must not
+    remember a mapping that was never real. Called inside the import's
+    transaction so the refusal leaves no batch behind.
+    """
+    for section_id in (mapping or {}).values():
+        if session.get(Account, section_id) is None:
+            raise HTTPException(status_code=404, detail=f"No account {section_id}")
+
+
 def _persist(
     session: Session,
     *,
@@ -610,6 +713,7 @@ def _persist(
     account_id: int | None,
     records: Sequence[RawRecord],
     card_payment_account_id: int | None = None,
+    section_account_ids: Mapping[str, int] | None = None,
 ) -> tuple[str, int, int, int, list[str]]:
     """Write every row the adapter produced.
 
@@ -654,6 +758,7 @@ def _persist(
             # the rollback of this block is what guarantees that, since the
             # refusal is raised rather than caught.
             raise HTTPException(status_code=404, detail=f"No account {account_id}")
+        _require_section_accounts(session, section_account_ids)
 
         batch_id = open_import_batch(
             session,
@@ -664,6 +769,7 @@ def _persist(
             source_filename=filename or result.source_filename,
             source_checksum=result.source_checksum,
             raw_payload=_gzip_b64(payload),
+            section_account_ids=section_account_ids,
             stats={"record_count": result.record_count},
         )
 
@@ -909,6 +1015,7 @@ async def import_file(
     provider: str = "amex_pdf",
     account_id: int | None = None,
     card_payment_account_id: int | None = None,
+    section_account_ids: Annotated[str | None, Form()] = None,
 ) -> ImportSummary:
     """Accept a statement file, parse it, and WRITE what it parsed.
 
@@ -939,6 +1046,9 @@ async def import_file(
             card payment, when the caller wants to name it for this upload.
             Used in preference to the saved mapping
             (`account.payment_from_account_id`), and never guessed from a name.
+        section_account_ids: A JSON object like `{"deposit": 7}` naming the
+            local account per Revolut section. Stored on the batch, so a
+            replay re-attributes each row exactly as this import did.
 
     Returns:
         What persisted: `created`, `duplicated` and `failed`, plus the failures
@@ -947,12 +1057,14 @@ async def import_file(
         payments can be attributed.
 
     Raises:
-        HTTPException: 400 for an unknown provider, a mismatched extension, or a
-            provider that is not uploadable; 404 for an `account_id` that names no
+        HTTPException: 400 for an unknown provider, a mismatched extension, a
+            provider that is not uploadable, or a malformed section mapping;
+            404 for an `account_id` (or a section account id) that names no
             account; 413 when the upload is too large.
     """
     payload, filename = await _read_upload(file, provider=provider)
-    adapter = _FILE_ADAPTERS[provider][0]()
+    mapping = _parse_section_account_ids(section_account_ids)
+    adapter = _adapter_for(provider, section_account_ids=mapping)
     result = await run_in_threadpool(
         adapter.parse, payload, account_id=account_id, filename=filename
     )
@@ -965,6 +1077,7 @@ async def import_file(
         account_id=account_id,
         records=result.records,
         card_payment_account_id=card_payment_account_id,
+        section_account_ids=mapping,
     )
     return ImportSummary(
         provider=result.provider,
