@@ -74,7 +74,7 @@ describe("route tree", () => {
   it.each([
     ["/finance/accounts", "Accounts", /no accounts yet/i],
     ["/finance/transactions", "Transactions", /nothing recorded yet/i],
-    ["/finance/review", "Review queue", /no items in review queue/i],
+    ["/finance/review", "Review queue", /nothing in the queue/i],
     ["/finance/imports", "Imports", /no import batches/i],
     ["/finance/budgets", "Budgets", /no budgets defined/i],
   ])("renders the %s page", async (path, heading, emptyText) => {
