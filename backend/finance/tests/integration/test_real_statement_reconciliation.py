@@ -1106,6 +1106,77 @@ class TestRevolutSabotage:
         )
 
 
+#: Page-furniture strings that must never appear in a real Revolut transaction
+#: description. The running header repeats on every page; `Generated on the
+#: <date>` is the one that leaked before LifeOS-qvv, because the furniture filter
+#: matched only the bare `Generated on the` prefix and so let the dated line
+#: through to be folded onto the last row of the previous page. The rest are the
+#: header and per-page legal block that `strip_page_furniture` drops. Captured as
+#: the class of leak, because a description drives the Tier-3 fingerprint and a
+#: silent change defeats dedup without tripping the balance identities above.
+_REVOLUT_FURNITURE_MARKERS: Final = (
+    "Generated on the",
+    "EUR Statement",
+    "Revolut Bank UAB",
+    "© 2026 Revolut",
+    "Report lost or stolen card",
+    "Get help directly in app",
+    "Scan the QR code",
+    "AFM number",
+)
+
+
+class TestRevolutDescriptionIntegrity:
+    """Revolut descriptions must not absorb the page furniture above them.
+
+    The reconciliation identities are blind to a description change: a row whose
+    description quietly gains ` Generated on the 1 Oct 2026` still sums to the
+    same closing balance. This turns that silent fingerprint shift into a loud
+    failure, over both the public `description` and the immutable
+    `raw_data["description"]` because both feed the fingerprint.
+    """
+
+    def test_no_revolut_description_contains_page_furniture(self) -> None:
+        require_extractor()
+        offenders: list[tuple[str, str, str]] = []
+        for name, path in statements("revolut"):
+            for record in _parse_revolut(path, name).records:
+                for field_name, field_value in (
+                    ("description", record.description),
+                    (
+                        "raw_data['description']",
+                        str(record.raw_data.get("description", "")),
+                    ),
+                ):
+                    lowered = field_value.lower()
+                    for marker in _REVOLUT_FURNITURE_MARKERS:
+                        if marker.lower() in lowered:
+                            offenders.append((name, field_name, marker))
+                            break
+        assert not offenders, (
+            f"{len(offenders)} Revolut field(s) contain page furniture; "
+            f"first: {offenders[0] if offenders else ''}"
+        )
+
+    def test_the_stamp_removal_did_not_drop_a_wrapped_description(self) -> None:
+        """Every row still parses, and the row count matches the printed totals.
+
+        Dropping the dated running-header line is only safe if no genuine wrapped
+        merchant description had that shape. The balance identities already prove
+        the amounts are intact; this pins the row COUNT so a header that swallowed
+        a continuation line would show up as a missing row rather than a
+        plausible-looking sum.
+        """
+        require_extractor()
+        _name, path = one_statement("revolut")
+        result = _parse_revolut(path, path.name)
+        _no_failures(result, "revolut_pdf")
+        assert result.record_count == 351, (
+            "the verified Revolut statement parses 351 transaction rows; the "
+            "running-header strip changed that count"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Amex
 # ---------------------------------------------------------------------------
@@ -1189,10 +1260,11 @@ _AMEX_FURNITURE_MARKERS: Final = (
 #:
 #: Rabobank is not golden-set here: its descriptions contain real counterparty
 #: names and redacted account fragments that should not be committed as a
-#: fixture. Revolut is also excluded: its descriptions leak the statement's own
-#: "Generated on ..." page furniture into some rows (17 of 351 in the current
-#: statement), so they are not stable enough to bless. That furniture leakage
-#: is filed as a separate bead and is deliberately NOT fixed here.
+#: fixture. Revolut is not golden-set either: it was left out while its
+#: descriptions leaked the statement's "Generated on ..." page furniture
+#: (17 of 351 rows). That leak was fixed under LifeOS-qvv and is now guarded by
+#: `TestRevolutDescriptionIntegrity`; adding Revolut digests to the golden set
+#: would be separate work, not a consequence of that fix.
 
 
 def _digest_description(description: str) -> str:
