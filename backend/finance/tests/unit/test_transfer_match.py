@@ -36,7 +36,7 @@ CARD: int = 1002
 
 def line(
     *,
-    entry_id: int = 5001,
+    journal_line_id: int = 5001,
     account_id: int = CHECKING,
     amount_minor: int = -5000,
     currency: str = "EUR",
@@ -44,7 +44,7 @@ def line(
     already_matched: bool = False,
 ) -> JournalLineRef:
     return JournalLineRef(
-        entry_id=entry_id,
+        journal_line_id=journal_line_id,
         account_id=account_id,
         amount_minor=amount_minor,
         currency=currency,
@@ -206,10 +206,10 @@ class TestMatchResult:
             transfer_match(line(), line(account_id=CHECKING, amount_minor=5000)) is None
         )
 
-    def test_entry_ids_are_carried_through(self) -> None:
+    def test_journal_line_ids_are_carried_through(self) -> None:
         match = transfer_match(
-            line(entry_id=5001),
-            line(entry_id=5002, account_id=CARD, amount_minor=5000),
+            line(journal_line_id=5001),
+            line(journal_line_id=5002, account_id=CARD, amount_minor=5000),
         )
         assert match is not None
         assert match.outbound == 5001

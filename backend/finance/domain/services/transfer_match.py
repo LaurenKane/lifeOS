@@ -25,7 +25,7 @@ from decimal import Decimal
 
 __all__ = [
     "JournalLineRef",
-    "TransferMatch",
+    "TransferPair",
     "is_transfer_pair",
     "transfer_match",
     "transfer_window",
@@ -50,7 +50,10 @@ class JournalLineRef:
     stay pure.
     """
 
-    entry_id: int
+    #: The `journal_line` id. Named for the table, not "entry": `transfer_match`
+    #: stores `journal_line_id_out`/`journal_line_id_in`, and an `entry_id` here
+    #: would be read as a `journal_entry` id and match the wrong row.
+    journal_line_id: int
     account_id: int
     amount_minor: int
     currency: str
@@ -59,8 +62,14 @@ class JournalLineRef:
 
 
 @dataclass(frozen=True)
-class TransferMatch:
-    """A confirmed transfer pair."""
+class TransferPair:
+    """A confirmed transfer pair.
+
+    Named `TransferPair`, not `TransferMatch`: the ORM row in
+    `finance.domain.models.transfers` is `TransferMatch`, and one name for two
+    different things (a pure decision vs. a stored row) is how a reader imports
+    the wrong one.
+    """
 
     outbound: int
     inbound: int
@@ -114,7 +123,7 @@ def is_transfer_pair(outbound: JournalLineRef, inbound: JournalLineRef) -> bool:
 
 def transfer_match(
     outbound: JournalLineRef, inbound: JournalLineRef
-) -> TransferMatch | None:
+) -> TransferPair | None:
     """Return the link if these two lines are a transfer pair, else None.
 
     Args:
@@ -123,7 +132,7 @@ def transfer_match(
             asymmetric, so the order of the arguments matters.
 
     Returns:
-        A `TransferMatch`, or None when the rules do not all hold.
+        A `TransferPair`, or None when the rules do not all hold.
     """
     if not is_transfer_pair(outbound, inbound):
         return None
@@ -147,9 +156,9 @@ def transfer_match(
         if same_currency and exact_amount and exact_date
         else Decimal("0.85")
     )
-    return TransferMatch(
-        outbound=outbound.entry_id,
-        inbound=inbound.entry_id,
+    return TransferPair(
+        outbound=outbound.journal_line_id,
+        inbound=inbound.journal_line_id,
         match_method=method,
         confidence=confidence,
     )
