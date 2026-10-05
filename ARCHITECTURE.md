@@ -1,7 +1,16 @@
 # ARCHITECTURE.md — Life OS
 
+> **Product truth lives in [`PRODUCT.md`](PRODUCT.md).** This file is the engineering contract — how
+> it is built and why, not who it is for or what it refuses. Where the two appear to disagree, read
+> PRODUCT.md for intent and check whether this file is stale.
+
 ## 1. What this is
 A personal financial single-user OS for EU residents. Tracks transactions across Rabobank, Amex, Revolut. Double-entry ledger, fingerprint dedup, file import, no telemetry.
+
+Single-user is a **refusal**, not an unfinished feature: no sharing, no permissions, no second
+user. Two things often mistaken for refusals are not — cloud sync and automatic categorisation are
+both wanted, and are recorded in PRODUCT.md as explicitly undecided. Read that file before treating
+any scope boundary here as fixed.
 
 ---
 
