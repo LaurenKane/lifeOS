@@ -135,8 +135,8 @@ clean: ## DESTROY the stack AND its database volume
 
 .PHONY: lint
 lint: ## ruff check + ruff format --check
-	$(UV_RUN) ruff check backend
-	$(UV_RUN) ruff format --check backend
+	$(UV_RUN) ruff check backend tools
+	$(UV_RUN) ruff format --check backend tools
 
 .PHONY: format
 format: ## Apply ruff formatting
@@ -145,7 +145,7 @@ format: ## Apply ruff formatting
 
 .PHONY: typecheck
 typecheck: ## mypy --strict
-	$(UV_RUN) mypy --strict backend
+	$(UV_RUN) mypy --strict backend tools
 
 .PHONY: test
 test: ## Run the whole pytest suite (no Docker, no database)

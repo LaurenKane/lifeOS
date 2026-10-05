@@ -31,6 +31,7 @@ Rules enforced
    (private.key, *.pem, *.crt, app_id, id_rsa, ...), even with --force.
 5. Always prints a manifest of every file before removing anything.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -49,8 +50,17 @@ FORBIDDEN = {
     Path("/"),
 }
 
-CREDENTIAL_HINTS = (".key", ".pem", ".crt", ".cer", "app_id", "id_rsa", "id_ed25519",
-                    "private", "credentials")
+CREDENTIAL_HINTS = (
+    ".key",
+    ".pem",
+    ".crt",
+    ".cer",
+    "app_id",
+    "id_rsa",
+    "id_ed25519",
+    "private",
+    "credentials",
+)
 
 
 def looks_like_credential(p: Path) -> bool:
@@ -72,8 +82,6 @@ def looks_like_credential(p: Path) -> bool:
     return False
 
 
-
-
 def manifest(target: Path) -> list[Path]:
     if target.is_dir():
         return sorted(x for x in target.rglob("*") if x.is_file())
@@ -82,10 +90,12 @@ def manifest(target: Path) -> list[Path]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("paths", nargs="+")
-    ap.add_argument("--force", action="store_true",
-                    help="actually remove (default is a dry run)")
+    ap.add_argument(
+        "--force", action="store_true", help="actually remove (default is a dry run)"
+    )
     args = ap.parse_args()
 
     targets: list[Path] = []
@@ -102,7 +112,8 @@ def main() -> int:
         elif not (p == REPO or REPO in p.parents):
             blocked.append(
                 f"{p} is outside the working tree {REPO}. This guard only governs the\n"
-                f"        repository; use ordinary care for paths elsewhere.")
+                f"        repository; use ordinary care for paths elsewhere."
+            )
 
     creds = [f for t in targets for f in manifest(t) if looks_like_credential(f)]
     if creds:
@@ -110,8 +121,9 @@ def main() -> int:
             f"{len(creds)} file(s) look like credentials and are inside the working tree: "
             + ", ".join(str(c) for c in creds[:5])
             + "\n        A private key cannot be regenerated. If these are live credentials, "
-              "STOP.\n        If you created them this session and read them, delete them by hand "
-              "deliberately.")
+            "STOP.\n        If you created them this session and read them, delete them by hand "
+            "deliberately."
+        )
 
     print("=" * 72)
     print("  REMOVE MANIFEST")
