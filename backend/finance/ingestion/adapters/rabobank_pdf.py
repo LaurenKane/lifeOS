@@ -67,6 +67,7 @@ from finance.ingestion.adapters.redaction import (
     mask_iban,
     redact_ibans,
 )
+from finance.ingestion.card_payment import is_card_payment
 from finance.ingestion.normalize import (
     AmountSignConvention,
     normalize_record,
@@ -536,10 +537,17 @@ def _finish(
             "row has no amount", row.line_number, RabobankPdfAdapter.provider
         )
 
+    description = redact_ibans(row.description) or ""
     extras: dict[str, str | int | float | bool | None] = {
         key: redact_ibans(value) for key, value in row.extras.items() if value
     }
     extras["value_date"] = row.value_date.isoformat()
+    # The debit that pays an Amex card is a TRANSFER, not an expense: the card
+    # liability falls and the checking asset falls. Flagged here at parse time,
+    # exactly as `amex_pdf` flags the card's own credit, so the writer never
+    # routes it through the equity-only expense resolver. Measured: 4 of the 106
+    # real Rabobank rows, each matching the card credit 0-2 days earlier.
+    extras["is_card_payment"] = is_card_payment(description)
     extras["processing_date"] = extras.get("processing_date")
     extras["amount_raw"] = row.amount_raw
     extras["is_credit"] = row.is_credit
@@ -558,7 +566,7 @@ def _finish(
         signed_minor = amount_minor if row.is_credit else -amount_minor
         normalized = normalize_record(
             account_id=account_id,
-            description=redact_ibans(row.description) or "",
+            description=description,
             amount=signed_minor,
             currency_code="EUR",
             booked_date=row.value_date,
