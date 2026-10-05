@@ -86,7 +86,11 @@ export const describeError = (error: unknown): string => {
 const humanDetail = (body: string): string => {
   const trimmed = body.trim();
   if (trimmed === "") {
-    return "The server sent no explanation.";
+    /* An empty body is not the server declining to explain — it is nearly always
+     * a proxy or a gateway in the way, which answers with a status code and
+     * nothing else. "No explanation" would read as the ledger being cryptic;
+     * naming the likely cause and the one thing to check is what gets it fixed. */
+    return "No response body came back. Check that the backend is running on port 8000.";
   }
   try {
     const parsed: unknown = JSON.parse(trimmed);
