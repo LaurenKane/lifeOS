@@ -174,6 +174,16 @@ class JournalLine(Base):
             "('card_payment','sepa_dd','investment','opening_balance')",
             name="synthesized_reason",
         ),
+        # `is_synthesized` and `synthesized_reason` are two columns carrying one
+        # fact, and migration 0001 let them disagree: a leg could claim to be
+        # synthesized for no stated reason. A matcher that keys on one column can
+        # then be contradicted by the other, so the pair is made total (migration
+        # 0003): a synthesized leg always says why, and a real leg never does.
+        CheckConstraint(
+            "(is_synthesized AND synthesized_reason IS NOT NULL)"
+            " OR (NOT is_synthesized AND synthesized_reason IS NULL)",
+            name="synthesized_reason_present",
+        ),
     )
 
     # NOT modelled: idx_jl_entry (journal_entry_id), idx_jl_acct

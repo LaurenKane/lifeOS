@@ -79,6 +79,7 @@ from finance.ingestion.adapters.redaction import (
     redact_card_numbers,
     redact_ibans,
 )
+from finance.ingestion.card_payment import is_card_payment
 from finance.ingestion.normalize import (
     AmountSignConvention,
     normalize_record,
@@ -115,10 +116,11 @@ _AMOUNT = re.compile(r"(?<![\d.,])(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})\s*$")
 # way to distinguish a refund/card payment from a purchase.
 _CR_RE = re.compile(r"^\s*CR\s*$")
 
-# The monthly card payment. It lands in the same credit section as genuine
-# refunds and is positive in exactly the same way, so the two are separated by
-# description rather than by sign — see the module docstring.
-_CARD_PAYMENT_RE = re.compile(r"HARTELIJK\s+BEDANKT\s+VOOR\s+UW\s+BETALING", re.I)
+# The monthly card payment's description pattern now lives in
+# `finance.ingestion.card_payment`, shared with `rabobank_pdf` so there is one
+# list of settlement wordings rather than one per adapter. It lands in the same
+# credit section as genuine refunds and is positive in exactly the same way, so
+# the two are separated by description rather than by sign.
 
 # Printed statement furniture, verified present in all four statements: the
 # repeating legal block and its "Nieuwe transacties voor:" sub-header, the
@@ -546,7 +548,7 @@ def _finish(
             # refunds and is positive in the same way, so it is separated by
             # description. Downstream matching must not treat a repayment as
             # a refund, or vice versa.
-            "is_card_payment": bool(_CARD_PAYMENT_RE.search(description)),
+            "is_card_payment": is_card_payment(description),
             # `Bedrag in vreemde valuta` is empty in all four verified
             # statements, so no foreign amount or rate is available and none
             # is invented here.

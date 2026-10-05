@@ -121,6 +121,7 @@ class AccountSummary(_ReadOnly):  # type: ignore[explicit-any]
     is_active: bool = True
     is_hidden: bool = False
     sort_order: int = 0
+    system_role: str | None = None
 
 
 class TransactionSummary(_ReadOnly):  # type: ignore[explicit-any]

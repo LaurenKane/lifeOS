@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Sequence
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Final, Protocol
 
@@ -67,6 +68,13 @@ from finance.domain.models.importer import ImportBatch, SourceRecord
 from finance.domain.models.ledger import JournalEntry, JournalLine
 from finance.domain.models.reference import Currency as CurrencyRow
 from finance.domain.models.reference import ExchangeRate
+from finance.domain.models.transfers import TransferMatch
+from finance.domain.services.card_payment import (
+    CARD_PAYMENT_REASON,
+    CARD_PAYMENT_WINDOW_DAYS_AFTER,
+    CardPaymentLeg,
+    build_card_payment_legs,
+)
 from finance.domain.services.manual_posting import (
     BASE_CURRENCY,
     CounterAccountUnresolvedError,
@@ -91,6 +99,7 @@ __all__ = [
     "leg_count",
     "open_import_batch",
     "resolve_contra_account",
+    "write_card_payment",
     "write_posted_transaction",
     "write_unposted_transaction",
 ]
@@ -211,13 +220,14 @@ def _all_accounts(session: Session) -> list[PostingAccount]:
     scan, so this is deliberately not cached across rows: a cache would be a
     second source of truth about which accounts exist, invalidated by nobody.
     """
-    rows: Sequence[tuple[int, str, str, str, bool]] = session.execute(
+    rows: Sequence[tuple[int, str, str, str, bool, str | None]] = session.execute(
         select(
             Account.id,
             Account.name,
             Account.currency,
             Account.account_nature,
             Account.is_active,
+            Account.system_role,
         ).order_by(Account.id)
     ).all()
     return [
@@ -227,8 +237,9 @@ def _all_accounts(session: Session) -> list[PostingAccount]:
             currency=currency.strip(),
             account_nature=nature,
             is_active=is_active,
+            system_role=system_role,
         )
-        for account_id, name, currency, nature, is_active in rows
+        for account_id, name, currency, nature, is_active, system_role in rows
     ]
 
 
@@ -262,18 +273,18 @@ def _require_currency(session: Session, code: str) -> CurrencyRow:
 def resolve_contra_account(
     session: Session, *, requested_id: int | None
 ) -> PostingAccount:
-    """The contra-account: the seeded system one, or the one the caller named.
+    """The contra-account: the designated system one, or the one the caller named.
 
     Public because a caller needs it for something the writer cannot do: a manual
     entry's `raw_data` records the account id that was ACTUALLY used, not the one
     that was asked for. When no id is asked for, the default resolver picks by
-    name, so "None" would be a claim the entry does not back up.
+    role, so "None" would be a claim the entry does not back up.
 
     Raises:
-        PostingRefused: with the resolver's own message, which names the account
+        PostingRefused: with the resolver's own message, which names the role
             that was expected. A refusal that says only "no counter-leg" is not
-            actionable; one that says "no ACTIVE account named 'Expenses
-            (system)'" is.
+            actionable; one that says "no account is designated as the system
+            expense account" is.
     """
     accounts = _all_accounts(session)
     try:
@@ -757,6 +768,626 @@ def write_unposted_transaction(
         journal_entry_id=None,
         error_message=error_message,
     )
+
+
+# ---------------------------------------------------------------------------
+# Card payments — a transfer between a card and the account that pays it
+# ---------------------------------------------------------------------------
+#
+# `docs/adr/0007-imported-card-payment-is-a-transfer.md`. A monthly card payment
+# credits a liability and debits an asset, so it never reaches
+# `resolve_contra_account` (which is unconditionally equity) and it never goes
+# through the `LegBuilder` protocol (which has no notion of a synthesized leg).
+# It gets its own writer, for the same reason `build_expense_legs` is not
+# widened: a manual expense must not acquire a transfer-shaped hole.
+#
+# The writer is deliberately NOT `write_posted_transaction` with a different
+# builder. It owns the two facts the generic writer has no room for: WHICH leg
+# is synthesized (the side no statement printed), and whether an earlier import
+# already created the other side. That second fact is the double-booking guard.
+
+
+@dataclass(frozen=True)
+class _CardPaymentLegRef:
+    """A `journal_line` a card-payment write might attach to."""
+
+    journal_line_id: int
+    journal_entry_id: int
+    entry_date: dt.date
+    account_id: int
+    amount: int
+
+
+def _as_posting_account(account: Account) -> PostingAccount:
+    """The `PostingAccount` view of an ORM row, for the pure leg builder."""
+    return PostingAccount(
+        id=account.id,
+        name=account.name,
+        currency=account.currency.strip(),
+        account_nature=account.account_nature,
+        is_active=account.is_active,
+        system_role=account.system_role,
+    )
+
+
+def _find_synthesized_card_payment_legs(
+    session: Session,
+    *,
+    account_id: int,
+    amount: int,
+    earliest: dt.date,
+    latest: dt.date,
+) -> list[_CardPaymentLegRef]:
+    """Unmatched synthesized `card_payment` legs on `account_id`.
+
+    A synthesized leg is the side no statement printed, so finding one means the
+    other statement was imported first and this row is its counterpart. The
+    query keys on `is_synthesized` AND `synthesized_reason`, never on one alone:
+    migration 0003 makes them total, and a matcher that trusted only the boolean
+    could be contradicted by the reason.
+    """
+    rows = session.execute(
+        select(
+            JournalLine.id,
+            JournalLine.journal_entry_id,
+            JournalEntry.entry_date,
+            JournalLine.account_id,
+            JournalLine.amount,
+        )
+        .join(JournalEntry, JournalEntry.id == JournalLine.journal_entry_id)
+        .where(JournalLine.account_id == account_id)
+        .where(JournalLine.is_synthesized.is_(True))
+        .where(JournalLine.synthesized_reason == CARD_PAYMENT_REASON)
+        .where(JournalLine.transfer_match_id.is_(None))
+        .where(JournalLine.amount == amount)
+        .where(JournalEntry.entry_date >= earliest)
+        .where(JournalEntry.entry_date <= latest)
+        .order_by(JournalLine.id)
+    ).all()
+    return [_CardPaymentLegRef(*row) for row in rows]
+
+
+def _find_posted_expense_counterparts(
+    session: Session,
+    *,
+    account_id: int,
+    amount: int,
+    earliest: dt.date,
+    latest: dt.date,
+) -> list[_CardPaymentLegRef]:
+    """Already-posted expense entries in `account_id` a card payment may rewrite.
+
+    This is the checking-first order: the paying statement was imported before
+    the card's, so its row was posted through the ordinary expense path and now
+    carries an equity contra-leg. The equity leg is the marker that this entry
+    is a candidate to rewrite, and requiring it is what keeps the query from
+    matching an unrelated transaction that merely has the same amount.
+    """
+    candidates = session.execute(
+        select(
+            JournalLine.id,
+            JournalLine.journal_entry_id,
+            JournalEntry.entry_date,
+            JournalLine.account_id,
+            JournalLine.amount,
+        )
+        .join(JournalEntry, JournalEntry.id == JournalLine.journal_entry_id)
+        .where(JournalLine.account_id == account_id)
+        .where(JournalLine.is_synthesized.is_(False))
+        .where(JournalLine.transfer_match_id.is_(None))
+        .where(JournalLine.amount == amount)
+        .where(JournalEntry.entry_date >= earliest)
+        .where(JournalEntry.entry_date <= latest)
+        .order_by(JournalLine.id)
+    ).all()
+    entry_ids = {row[1] for row in candidates}
+    if not entry_ids:
+        return []
+    equity_entries = set(
+        session.scalars(
+            select(JournalLine.journal_entry_id)
+            .join(Account, Account.id == JournalLine.account_id)
+            .where(JournalLine.journal_entry_id.in_(entry_ids))
+            .where(Account.account_nature == "equity")
+        )
+    )
+    return [_CardPaymentLegRef(*row) for row in candidates if row[1] in equity_entries]
+
+
+def _real_line_in_entry(session: Session, *, entry_id: int, account_id: int) -> int:
+    """The one real (non-synthesized) line of `entry_id` on `account_id`."""
+    line_id = session.scalar(
+        select(JournalLine.id)
+        .where(JournalLine.journal_entry_id == entry_id)
+        .where(JournalLine.account_id == account_id)
+        .order_by(JournalLine.id)
+        .limit(1)
+    )
+    if line_id is None:
+        raise PostingRefused(
+            f"Journal entry {entry_id} has no line on account {account_id}, so "
+            "the card payment has nothing to match against."
+        )
+    return int(line_id)
+
+
+def _refuse_ambiguous(candidates: Sequence[_CardPaymentLegRef]) -> PostingRefused:
+    """Refuse when more than one leg could be the other side, naming them."""
+    ids = ", ".join(str(candidate.journal_line_id) for candidate in candidates)
+    return PostingRefused(
+        f"{len(candidates)} unmatched card-payment legs could be the other side "
+        f"(journal_line ids {ids}); the match is refused rather than guessed, "
+        "because choosing one silently decides where the money went. Attach the "
+        "source row to the right entry by hand, or remove the extra match."
+    )
+
+
+def _insert_transfer_match(
+    session: Session,
+    *,
+    out_line_id: int,
+    in_line_id: int,
+    match_method: str,
+    confidence: Decimal,
+    confirmed: bool,
+) -> int:
+    """INSERT the `transfer_match` row and stamp both lines with its id.
+
+    Nothing else in this codebase writes this table; before this function the
+    word "matched" on a card payment was a comment. Both `journal_line` rows get
+    `transfer_match_id` so the pair is discoverable from either side, and the
+    unique constraint on the ordered pair makes a second link impossible.
+    """
+    match = TransferMatch(
+        journal_line_id_out=out_line_id,
+        journal_line_id_in=in_line_id,
+        match_method=match_method,
+        confidence=confidence,
+        confirmed_at=func.now() if confirmed else None,
+    )
+    session.add(match)
+    session.flush()
+    for line_id in (out_line_id, in_line_id):
+        line = session.get(JournalLine, line_id)
+        if line is None:  # pragma: no cover - the ids came from this session
+            raise PostingRefused(f"journal_line {line_id} vanished mid-match")
+        line.transfer_match_id = match.id
+    return match.id
+
+
+def _attach_card_payment_source(
+    session: Session,
+    *,
+    batch_id: int,
+    account_id: int,
+    entry_id: int,
+    out_line_id: int,
+    in_line_id: int,
+    match_method: str,
+    confidence: Decimal,
+    confirmed: bool,
+    description: str,
+    amount: Money,
+    booked_date: dt.date,
+    raw_data: dict[str, object],
+    raw_posting_date: dt.date | None,
+    occurrence_index: int,
+    provider_txn_id: str | None,
+) -> int:
+    """Attach the incoming row to an EXISTING entry and store the match."""
+    _insert_transfer_match(
+        session,
+        out_line_id=out_line_id,
+        in_line_id=in_line_id,
+        match_method=match_method,
+        confidence=confidence,
+        confirmed=confirmed,
+    )
+    return _add_source_record(
+        session,
+        batch_id=batch_id,
+        account_id=account_id,
+        description=description,
+        amount=amount,
+        booked_date=booked_date,
+        raw_data=raw_data,
+        raw_posting_date=raw_posting_date,
+        occurrence_index=occurrence_index,
+        provider_txn_id=provider_txn_id,
+        status=TransactionStatus.POSTED,
+        journal_entry_id=entry_id,
+        error_message=None,
+    )
+
+
+def _write_card_payment_legs(
+    session: Session,
+    *,
+    entry_id: int,
+    legs: Sequence[CardPaymentLeg],
+) -> None:
+    """Insert the legs of a card-payment entry, flags included."""
+    for leg in legs:
+        session.add(
+            JournalLine(
+                journal_entry_id=entry_id,
+                account_id=leg.account_id,
+                amount=leg.amount,
+                currency=leg.currency,
+                amount_base=leg.amount_base,
+                exchange_rate=leg.exchange_rate,
+                sort_order=leg.sort_order,
+                is_synthesized=leg.is_synthesized,
+                synthesized_reason=leg.synthesized_reason,
+            )
+        )
+
+
+def _rewrite_posted_expense_as_card_payment(
+    session: Session,
+    *,
+    batch_id: int,
+    card: Account,
+    paying: Account,
+    expense_line: _CardPaymentLegRef,
+    card_credit: Money,
+    rate: Decimal,
+    description: str,
+    amount: Money,
+    booked_date: dt.date,
+    raw_data: dict[str, object],
+    raw_posting_date: dt.date | None,
+    occurrence_index: int,
+    provider_txn_id: str | None,
+) -> int:
+    """Turn an already-posted expense entry into the card-payment transfer.
+
+    Checking-first order. The paying row was imported before the card's and was
+    posted as an expense (the only thing the code could do without the card),
+    so its entry carries a real paying line and an equity contra-leg. The
+    rewrite deletes the equity leg and inserts the card leg, leaving the paying
+    line in place: the entry becomes the transfer it always was. `journal_line`
+    is freely editable — only `source_record.raw_data` is frozen by trigger —
+    and the balance trigger is DEFERRABLE, so the transient one-line state is
+    legal until COMMIT.
+    """
+    entry_id = expense_line.journal_entry_id
+    equity_line_ids = session.scalars(
+        select(JournalLine.id)
+        .join(Account, Account.id == JournalLine.account_id)
+        .where(JournalLine.journal_entry_id == entry_id)
+        .where(Account.account_nature == "equity")
+    ).all()
+    if not equity_line_ids:  # pragma: no cover - the finder required one
+        raise PostingRefused(
+            f"Journal entry {entry_id} was expected to carry an equity "
+            "contra-leg and does not, so rewriting it would not balance."
+        )
+    for line_id in equity_line_ids:
+        session.delete(session.get(JournalLine, line_id))
+    session.flush()
+
+    card_leg, _paying_leg = build_card_payment_legs(
+        card_account=_as_posting_account(card),
+        paying_account=_as_posting_account(paying),
+        amount=card_credit,
+        rate=rate,
+    )
+    # The paying line already occupies sort_order 0; the card leg takes the
+    # equity leg's slot.
+    card_leg = replace(card_leg, sort_order=1)
+    _write_card_payment_legs(session, entry_id=entry_id, legs=(card_leg,))
+    session.flush()
+
+    entry = session.get(JournalEntry, entry_id)
+    if entry is None:  # pragma: no cover - the line's FK guarantees it
+        raise PostingRefused(f"Journal entry {entry_id} vanished mid-rewrite")
+    entry.is_transfer = True
+
+    card_line_id = _real_line_in_entry(session, entry_id=entry_id, account_id=card.id)
+    return _attach_card_payment_source(
+        session,
+        batch_id=batch_id,
+        account_id=card.id,
+        entry_id=entry_id,
+        out_line_id=expense_line.journal_line_id,
+        in_line_id=card_line_id,
+        match_method="user_confirmed",
+        confidence=Decimal("1.00"),
+        confirmed=True,
+        description=description,
+        amount=amount,
+        booked_date=booked_date,
+        raw_data=raw_data,
+        raw_posting_date=raw_posting_date,
+        occurrence_index=occurrence_index,
+        provider_txn_id=provider_txn_id,
+    )
+
+
+@dataclass(frozen=True)
+class _CardPaymentContext:
+    """Everything one card-payment write needs, once the accounts are loaded."""
+
+    batch_id: int
+    card: Account
+    paying: Account
+    card_credit: Money
+    stored: Money
+    rate: Decimal
+    description: str
+    booked_date: dt.date
+    raw_data: dict[str, object]
+    raw_posting_date: dt.date | None
+    occurrence_index: int
+    provider_txn_id: str | None
+
+    @property
+    def window(self) -> dt.timedelta:
+        return dt.timedelta(days=CARD_PAYMENT_WINDOW_DAYS_AFTER)
+
+
+def _attach_auto(
+    session: Session,
+    ctx: _CardPaymentContext,
+    *,
+    account_id: int,
+    entry_id: int,
+    out_line_id: int,
+    in_line_id: int,
+) -> int:
+    """Attach the row to an existing entry with the automatic match method."""
+    return _attach_card_payment_source(
+        session,
+        batch_id=ctx.batch_id,
+        account_id=account_id,
+        entry_id=entry_id,
+        out_line_id=out_line_id,
+        in_line_id=in_line_id,
+        match_method="auto_card_payment",
+        confidence=Decimal("0.95"),
+        confirmed=False,
+        description=ctx.description,
+        amount=ctx.stored,
+        booked_date=ctx.booked_date,
+        raw_data=ctx.raw_data,
+        raw_posting_date=ctx.raw_posting_date,
+        occurrence_index=ctx.occurrence_index,
+        provider_txn_id=ctx.provider_txn_id,
+    )
+
+
+def _build_new_card_payment_entry(
+    session: Session,
+    ctx: _CardPaymentContext,
+    *,
+    statement_account_id: int,
+    synthesized_account_id: int,
+) -> int:
+    """The first import for a payment: real leg + synthesized missing leg."""
+    legs = build_card_payment_legs(
+        card_account=_as_posting_account(ctx.card),
+        paying_account=_as_posting_account(ctx.paying),
+        amount=ctx.card_credit,
+        rate=ctx.rate,
+    )
+    flagged = tuple(
+        replace(leg, is_synthesized=True, synthesized_reason=CARD_PAYMENT_REASON)
+        if leg.account_id == synthesized_account_id
+        else leg
+        for leg in legs
+    )
+    entry = JournalEntry(
+        entry_date=ctx.booked_date, description=ctx.description, is_transfer=True
+    )
+    session.add(entry)
+    session.flush()
+    _write_card_payment_legs(session, entry_id=entry.id, legs=flagged)
+    return _add_source_record(
+        session,
+        batch_id=ctx.batch_id,
+        account_id=statement_account_id,
+        description=ctx.description,
+        amount=ctx.stored,
+        booked_date=ctx.booked_date,
+        raw_data=ctx.raw_data,
+        raw_posting_date=ctx.raw_posting_date,
+        occurrence_index=ctx.occurrence_index,
+        provider_txn_id=ctx.provider_txn_id,
+        status=TransactionStatus.POSTED,
+        journal_entry_id=entry.id,
+        error_message=None,
+    )
+
+
+def _write_card_statement_row(session: Session, ctx: _CardPaymentContext) -> int:
+    """The card statement's row: match a synthesized card leg, rewrite, or build."""
+    candidates = _find_synthesized_card_payment_legs(
+        session,
+        account_id=ctx.card.id,
+        amount=ctx.card_credit.amount,
+        earliest=ctx.booked_date,
+        latest=ctx.booked_date + ctx.window,
+    )
+    if len(candidates) > 1:
+        raise _refuse_ambiguous(candidates)
+    if len(candidates) == 1:
+        entry_id = candidates[0].journal_entry_id
+        return _attach_auto(
+            session,
+            ctx,
+            account_id=ctx.card.id,
+            entry_id=entry_id,
+            out_line_id=_real_line_in_entry(
+                session, entry_id=entry_id, account_id=ctx.paying.id
+            ),
+            in_line_id=candidates[0].journal_line_id,
+        )
+
+    expenses = _find_posted_expense_counterparts(
+        session,
+        account_id=ctx.paying.id,
+        amount=-ctx.card_credit.amount,
+        earliest=ctx.booked_date,
+        latest=ctx.booked_date + ctx.window,
+    )
+    if len(expenses) > 1:
+        raise _refuse_ambiguous(expenses)
+    if len(expenses) == 1:
+        return _rewrite_posted_expense_as_card_payment(
+            session,
+            batch_id=ctx.batch_id,
+            card=ctx.card,
+            paying=ctx.paying,
+            expense_line=expenses[0],
+            card_credit=ctx.card_credit,
+            rate=ctx.rate,
+            description=ctx.description,
+            amount=ctx.stored,
+            booked_date=ctx.booked_date,
+            raw_data=ctx.raw_data,
+            raw_posting_date=ctx.raw_posting_date,
+            occurrence_index=ctx.occurrence_index,
+            provider_txn_id=ctx.provider_txn_id,
+        )
+    return _build_new_card_payment_entry(
+        session,
+        ctx,
+        statement_account_id=ctx.card.id,
+        synthesized_account_id=ctx.paying.id,
+    )
+
+
+def _write_paying_statement_row(session: Session, ctx: _CardPaymentContext) -> int:
+    """The paying statement's row: match a synthesized paying leg, or build."""
+    candidates = _find_synthesized_card_payment_legs(
+        session,
+        account_id=ctx.paying.id,
+        amount=-ctx.card_credit.amount,
+        earliest=ctx.booked_date - ctx.window,
+        latest=ctx.booked_date,
+    )
+    if len(candidates) > 1:
+        raise _refuse_ambiguous(candidates)
+    if len(candidates) == 1:
+        entry_id = candidates[0].journal_entry_id
+        return _attach_auto(
+            session,
+            ctx,
+            account_id=ctx.paying.id,
+            entry_id=entry_id,
+            out_line_id=candidates[0].journal_line_id,
+            in_line_id=_real_line_in_entry(
+                session, entry_id=entry_id, account_id=ctx.card.id
+            ),
+        )
+    return _build_new_card_payment_entry(
+        session,
+        ctx,
+        statement_account_id=ctx.paying.id,
+        synthesized_account_id=ctx.card.id,
+    )
+
+
+def write_card_payment(
+    session: Session,
+    *,
+    batch_id: int,
+    card_account_id: int,
+    paying_account_id: int,
+    statement_account_id: int,
+    amount: Money,
+    description: str,
+    booked_date: dt.date,
+    raw_data: dict[str, object],
+    raw_posting_date: dt.date | None = None,
+    occurrence_index: int = 1,
+    provider_txn_id: str | None = None,
+) -> int:
+    """Write one flagged card payment, matching the other side if it exists.
+
+    A card payment is a transfer, and whichever statement is imported second
+    must attach to the synthesized leg the first import left rather than create
+    a second entry. Three shapes, decided in this order:
+
+    * **The other side was already synthesized** (this statement came second):
+      attach to that entry and store the `transfer_match`.
+    * **The paying side was already posted as an expense** (checking first, card
+      second, with no synthesized leg): rewrite that entry into the transfer.
+    * **Neither exists** (this statement came first): build the entry, marking
+      the side no statement printed as synthesized, and leave it unmatched.
+
+    More than one candidate at either step is a REFUSAL, never a guess: a wrong
+    link silently changes a card payment into something else.
+
+    Args:
+        session: The caller's session. Never begun, committed or rolled back.
+        batch_id: The open `import_batch`.
+        card_account_id: The liability the payment reduces.
+        paying_account_id: The asset that pays it.
+        statement_account_id: Which of the two this row is on. Decides which leg
+            is real and which is synthesized.
+        amount: The row as printed, SIGNED. A card statement prints it positive
+            (a credit); a checking statement prints it negative (a debit).
+        description: The row's description, verbatim.
+        booked_date: The row's accounting date.
+        raw_data: The row exactly as the provider gave it.
+        raw_posting_date: A second date the provider stated, when any.
+        occurrence_index: This row's content-only rank in its batch.
+        provider_txn_id: The provider's own id, or None on the v1 PDF paths.
+
+    Returns:
+        The new `source_record` id, linked to a posted `journal_entry`.
+
+    Raises:
+        ReferenceNotFound: An account id names no account → 404.
+        PostingRefused: A missing rate, a currency mismatch, or two candidates
+            for the other side → 422. The caller stores the row unposted.
+    """
+    card = _require_account(session, card_account_id)
+    paying = _require_account(session, paying_account_id)
+    if statement_account_id not in (card.id, paying.id):
+        raise PostingRefused(
+            f"statement_account_id={statement_account_id} is neither the card "
+            f"({card.id}) nor the paying account ({paying.id})."
+        )
+
+    currency_row = _require_currency(session, amount.currency.code)
+    if card.currency.strip() != currency_row.code:
+        raise PostingRefused(
+            f"Card account {card.id} holds {card.currency.strip()} but the "
+            f"payment is in {currency_row.code}."
+        )
+    if paying.currency.strip() != currency_row.code:
+        raise PostingRefused(
+            f"Paying account {paying.id} holds {paying.currency.strip()} but "
+            f"the payment is in {currency_row.code}."
+        )
+
+    currency = Currency(code=currency_row.code, decimals=currency_row.decimals)
+    stored = Money(amount=amount.amount, currency=currency)
+    card_credit = Money(amount=abs(amount.amount), currency=currency)
+    if card_credit.amount == 0:
+        raise PostingRefused("A zero-amount card payment has no double-entry meaning.")
+    rate = _base_rate(session, currency_row.code, booked_date)
+
+    ctx = _CardPaymentContext(
+        batch_id=batch_id,
+        card=card,
+        paying=paying,
+        card_credit=card_credit,
+        stored=stored,
+        rate=rate,
+        description=description,
+        booked_date=booked_date,
+        raw_data=raw_data,
+        raw_posting_date=raw_posting_date,
+        occurrence_index=occurrence_index,
+        provider_txn_id=provider_txn_id,
+    )
+    if statement_account_id == card.id:
+        return _write_card_statement_row(session, ctx)
+    return _write_paying_statement_row(session, ctx)
 
 
 def leg_count(session: Session, *, source_record_id: int) -> int:

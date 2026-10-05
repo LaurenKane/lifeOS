@@ -1,6 +1,10 @@
 """Accounts: account, provider_account_link.
 
-`account` is the asset-vs-liability split made first-class, which is what lets
+`account`     #
+    # NOT modelled: idx_account_payment_from, a PARTIAL index
+    #     ON account (payment_from_account_id) WHERE payment_from_account_id IS NOT NULL
+    # Created by migration 0003, for the same reason.
+is the asset-vs-liability split made first-class, which is what lets
 one balance query serve a checking account and a credit card without a CASE
 expression per account type. `provider_account_link` is the seam between a
 provider's opaque account identifier and our row, kept in its own table so the
@@ -68,6 +72,26 @@ class Account(Base):
     # under `no_cross_schema_fk`. A column that cannot be joined is the honest
     # state of an unfinished feature.
     security_id: Mapped[int | None] = mapped_column(nullable=True)
+    # Canonical system-purpose account. NULL means "not designated". The only
+    # value today is 'system_expense'; the CHECK and the partial unique index
+    # (created in migration 0002) guarantee at most one account carries it.
+    system_role: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The account that pays this one, for a monthly card payment. A self-FK,
+    # because both sides of that transfer are accounts and one column on the card
+    # names the other side without inventing a join table or a role value.
+    #
+    # NULL is the normal state and means "not registered", never "the same
+    # account": the import path REFUSES a card payment without one rather than
+    # guessing, because a guess here decides where the user's money went
+    # (docs/adr/0007-imported-card-payment-is-a-transfer.md).
+    #
+    # SET NULL on delete: losing the checking account must not delete the card
+    # that named it. The card is real; the mapping is what was lost, so the card
+    # falls back to unregistered and the next card payment is refused rather than
+    # silently re-pointed somewhere else.
+    payment_from_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("account.id", ondelete="SET NULL"), nullable=True
+    )
 
     __table_args__ = (
         # A CHECK rather than an Enum, so adding a provider's account type is a
@@ -83,6 +107,17 @@ class Account(Base):
             "account_nature IN ('asset','liability','equity')",
             name="account_nature",
         ),
+        CheckConstraint(
+            "system_role IS NULL OR system_role = 'system_expense'",
+            name="system_role",
+        ),
+        # An account that pays itself is not a transfer, it is a mistake. A
+        # self-referencing FK cannot express that, so the database says it rather
+        # than the one writer that would have noticed (migration 0003).
+        CheckConstraint(
+            "payment_from_account_id IS NULL OR payment_from_account_id <> id",
+            name="payment_from_not_self",
+        ),
     )
 
     # NOT modelled: idx_account_nature, a PARTIAL index
@@ -90,6 +125,10 @@ class Account(Base):
     # It is created by migration 0001. A partial index is an `Index(...)` with a
     # `postgresql_where` clause rather than a table argument, so it lives with
     # the migration that owns the `WHERE`, not in the model.
+    #
+    # NOT modelled: idx_account_payment_from, a PARTIAL index
+    #     ON account (payment_from_account_id) WHERE payment_from_account_id IS NOT NULL
+    # Created by migration 0003, for the same reason.
 
 
 class ProviderAccountLink(Base):

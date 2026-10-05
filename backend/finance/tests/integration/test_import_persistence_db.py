@@ -174,8 +174,8 @@ def seeded(engine: Engine) -> dict[str, int]:
             connection.execute(
                 text(
                     "INSERT INTO finance.account"
-                    " (name, account_type, account_nature, currency)"
-                    " VALUES (:name, 'cash', 'equity', 'EUR')"
+                    " (name, account_type, account_nature, currency, system_role)"
+                    " VALUES (:name, 'cash', 'equity', 'EUR', 'system_expense')"
                 ),
                 {"name": SYSTEM_EXPENSE_ACCOUNT_NAME},
             )
@@ -372,9 +372,17 @@ def _counts(engine: Engine) -> dict[str, int]:
 class TestARealStatementBecomesRealRows:
     """Import `rabobank-2026-06.pdf` and read the ledger back from outside."""
 
-    def test_every_parsed_row_lands_as_a_posted_source_record(
+    def test_every_parsed_row_lands_and_only_the_card_payment_is_unposted(
         self, client: TestClient, engine: Engine, seeded: dict[str, int]
     ) -> None:
+        """Every parsed row is STORED; the card payment is not POSTED.
+
+        The fixture registers no paying account, so the statement's monthly card
+        payment is stored unposted with an actionable reason
+        (`docs/adr/0007-imported-card-payment-is-a-transfer.md`). It is still a
+        row — dropping it is how a statement stops reconciling — so the count of
+        `source_record` is unchanged and only the `posted` count drops by one.
+        """
         payload = rabo(RABO_JUNE)
         rows = parsed_count(payload)
         assert rows > 0, (
@@ -383,10 +391,10 @@ class TestARealStatementBecomesRealRows:
 
         body = upload(client, payload, account_id=seeded["checking"])
 
-        assert body.created == rows
-        assert body.failed == 0
+        assert body.created == rows - 1
+        assert body.failed == 1
         assert body.duplicated == 0
-        assert body.status == "completed"
+        assert body.status == "partial"
 
         assert _scalar(engine, "SELECT count(*) FROM finance.source_record") == rows
         assert (
@@ -395,7 +403,15 @@ class TestARealStatementBecomesRealRows:
                 "SELECT count(*) FROM finance.source_record"
                 " WHERE status = 'posted' AND journal_entry_id IS NOT NULL",
             )
-            == rows
+            == rows - 1
+        )
+        assert (
+            _scalar(
+                engine,
+                "SELECT count(*) FROM finance.source_record"
+                " WHERE status = 'pending' AND journal_entry_id IS NULL",
+            )
+            == 1
         )
         assert _scalar(engine, "SELECT count(*) FROM finance.import_batch") == 1
 
@@ -600,7 +616,10 @@ class TestReimportingTheSameFileIsANoOp:
 
         assert second.created == 0, second
         assert second.failed == 0
-        assert second.duplicated == first.created, second
+        # Every row is recognised, including the card payment that the first
+        # import stored unposted: `_already_stored` runs BEFORE the card-payment
+        # dispatch, so an unposted row is a duplicate too.
+        assert second.duplicated == second.record_count, second
 
         after = _counts(engine)
         assert after["source_record"] == before["source_record"], "a row was duplicated"
@@ -648,8 +667,11 @@ class TestReimportingTheSameFileIsANoOp:
         second = upload(client, payload, account_id=seeded["checking"])
 
         assert second.status == "completed", second
+        # The FIRST batch is `partial`: its card payment did not post. The
+        # re-import is `completed`, because it recognised every row and the row
+        # it did not post is still accounted for as a duplicate.
         assert _rows(engine, "SELECT status FROM finance.import_batch ORDER BY id") == [
-            ("completed",),
+            ("partial",),
             ("completed",),
         ]
 
@@ -684,8 +706,10 @@ class TestASecondMonthAddsOnlyWhatIsNew:
             client, august, account_id=seeded["checking"], filename=RABO_AUGUST
         )
 
-        assert body.created == august_rows, body
-        assert body.failed == 0, body
+        # August also carries one card payment, stored unposted for want of a
+        # registered paying account.
+        assert body.created == august_rows - 1, body
+        assert body.failed == 1, body
 
         total = _as_int(_scalar(engine, "SELECT count(*) FROM finance.source_record"))
         assert total == june_rows + august_rows
@@ -733,7 +757,9 @@ class TestASecondMonthAddsOnlyWhatIsNew:
         body = upload(
             client, august, account_id=seeded["checking"], filename=RABO_AUGUST
         )
-        assert body.created == len(records), body
+        # One row does not post: the statement's card payment. It is not the
+        # repeated pair, which is an ordinary direct debit.
+        assert body.created == len(records) - 1, body
 
         copies = sum(1 for key in keys if key == repeated[0])
         assert copies == 2, (copies, repeated)
@@ -802,7 +828,7 @@ class TestASecondMonthAddsOnlyWhatIsNew:
             client, august, account_id=seeded["checking"], filename=RABO_AUGUST
         )
         assert second.created == 0, second
-        assert second.duplicated == first.created, second
+        assert second.duplicated == second.record_count, second
 
         after = _counts(engine)
         assert after["source_record"] == before["source_record"]
@@ -1111,7 +1137,13 @@ class TestTheSilentWrongDataTraps:
             assert status == "pending"
             assert entry_id is None
             assert isinstance(message, str), message
-            assert SYSTEM_EXPENSE_ACCOUNT_NAME in message, message
+            # The card payment is refused for a DIFFERENT reason — no paying
+            # account is registered — but the SHAPE is identical: stored,
+            # unposted, with a reason. That shape is what this test is about.
+            assert (
+                "system expense account" in message.lower()
+                or "card payment" in message.lower()
+            ), message
 
         # Nothing was posted, so nothing can be unbalanced.
         assert _scalar(engine, "SELECT count(*) FROM finance.journal_entry") == 0
@@ -1210,9 +1242,9 @@ class TestTheOccurrenceIndexIsContentOnly:
         second = upload(client, payload, account_id=seeded["checking"])
 
         assert second.created == 0, second
-        assert second.duplicated == first.created, second
+        assert second.duplicated == second.record_count, second
         stored_total = _scalar(engine, "SELECT count(*) FROM finance.source_record")
-        assert stored_total == first.created
+        assert stored_total == first.record_count
 
         # Every stored row has a distinct fingerprint, which is what "two
         # identical rows are two transactions" means at the storage layer.
@@ -1222,7 +1254,7 @@ class TestTheOccurrenceIndexIsContentOnly:
                 "SELECT count(DISTINCT encode(fingerprint, 'hex'))"
                 " FROM finance.source_record",
             )
-            == first.created
+            == first.record_count
         )
 
     def test_the_occurrence_index_column_is_written(

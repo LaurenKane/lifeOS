@@ -16,12 +16,12 @@ from __future__ import annotations
 
 from finance.domain.services.budget import BudgetResult, check_budget
 from finance.domain.services.categorize import CategorizeResult, categorize_transaction
-from finance.domain.services.transfer_match import TransferMatch, transfer_match
+from finance.domain.services.transfer_match import TransferPair, transfer_match
 
 __all__ = [
     "BudgetResult",
     "CategorizeResult",
-    "TransferMatch",
+    "TransferPair",
     "categorize_transaction",
     "check_budget",
     "transfer_match",
