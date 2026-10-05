@@ -29,6 +29,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
+from finance.api.categorize import categorize_posted_record
 from finance.api.deps import get_session
 from finance.api.schemas import ImportSummary, Provider, ProviderInfo
 from finance.api.transfer_linker import link_transfers
@@ -56,6 +57,7 @@ from finance.ingestion.dedupe import (
     fingerprint_account_scope,
 )
 from finance.ingestion.fingerprint import compute_fingerprint
+from finance.ingestion.rules import load_rules
 from finance.public import RawRecord, TransactionStatus
 
 router = APIRouter(tags=["finance"], prefix="/imports")
@@ -791,6 +793,11 @@ def _persist(
 
         keys = _occurrence_keys(records)
 
+        # Loaded once, matched per row: the rules cannot change mid-import, and
+        # re-reading the whole table per row would be O(rows) queries for a
+        # file whose 351 rows already cost one point lookup each.
+        rules = load_rules(session)
+
         for record, rank in zip(records, ranks, strict=True):
             money = _money(record)
 
@@ -849,7 +856,7 @@ def _persist(
                 continue
 
             try:
-                write_posted_transaction(
+                posted_id = write_posted_transaction(
                     session,
                     batch_id=batch_id,
                     funding_account_id=row_account,
@@ -887,6 +894,20 @@ def _persist(
                 failed += 1
                 reasons.append(f"line {record.line_number}: {exc}")
                 continue
+            # The row posted; categorize its funding leg when the engine is
+            # sure. Learned and hand rules apply here exactly as on replay —
+            # one spelling, in `finance.api.categorize` — while an unsure
+            # engine leaves the line alone so the row still reaches the
+            # review queue. Card-payment rows never reach this branch: they
+            # are transfers, and a category on a transfer leg is noise (both
+            # spend and the queue exclude transfer legs already).
+            categorize_posted_record(
+                session,
+                source_record_id=posted_id,
+                account_id=row_account,
+                description=record.description,
+                rules=rules,
+            )
             created += 1
 
         # The consistency assertion, INSIDE this transaction. After the writes,

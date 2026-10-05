@@ -55,6 +55,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
+from finance.api.categorize import categorize_posted_record, upsert_learned_rule
 from finance.api.deps import get_session
 from finance.api.schemas import (
     ManualTransactionRequest,
@@ -316,6 +317,16 @@ def _write_manual_transaction(
             occurrence_index=1,
             leg_builder=_legs,
         )
+        # Categorize what the user just typed, when the engine is sure. A
+        # manual entry with no matching rule still lands uncategorized — the
+        # review queue is the honest answer for a first-seen payee, and the
+        # correction the user then makes is what teaches the system.
+        categorize_posted_record(
+            session,
+            source_record_id=record_id,
+            account_id=funding.id,
+            description=request.description,
+        )
         finish_import_batch(
             session,
             batch_id=batch_id,
@@ -341,7 +352,9 @@ def _write_manual_transaction(
 # ---------------------------------------------------------------------------
 
 
-def _summary(record: SourceRecord, line: JournalLine | None) -> TransactionSummary:
+def _summary(
+    record: SourceRecord, line: JournalLine | None, *, learned: bool = False
+) -> TransactionSummary:
     """One `source_record` as `TransactionSummary`.
 
     `fingerprint` goes back to the 64-character hex the API accepted, because
@@ -352,6 +365,9 @@ def _summary(record: SourceRecord, line: JournalLine | None) -> TransactionSumma
     `journal_line` on the account this transaction belongs to — because that is
     where categorisation is decided. A record whose entry has been unlinked has
     no line and therefore no category.
+
+    `learned` is True only from the PATCH that taught the system; every other
+    caller leaves the default, because nothing was learned there.
     """
     return TransactionSummary(
         id=record.id,
@@ -365,6 +381,7 @@ def _summary(record: SourceRecord, line: JournalLine | None) -> TransactionSumma
         journal_entry_id=record.journal_entry_id,
         transfer_match_id=None if line is None else line.transfer_match_id,
         category_id=None if line is None else line.category_id,
+        learned=learned,
     )
 
 
@@ -591,6 +608,12 @@ def update_transaction(
       change, and what moves a transaction out of the uncategorized queue.
     * `entry_date` on the journal entry — the accounting date.
 
+    With `learn=true` alongside a `category_id`, the correction also teaches
+    the system: the record's `raw_description` — the frozen evidence, never
+    anything the client typed in this request — is stored as a learned rule
+    in the SAME transaction, so the category and the lesson commit together
+    or not at all. The response's `learned` flag says whether that happened.
+
     What is NOT editable is the point. `raw_description` and `raw_data` are frozen
     by the `raw_data_immutable` trigger, and there is no way to change the amount,
     the currency or the description here, because the raw side is what a replay
@@ -600,8 +623,10 @@ def update_transaction(
 
     Raises:
         HTTPException: 404 for an unknown record or category; 409 for a record
-            with no posted entry to correct.
+            with no posted entry to correct; 422 when the description reduces
+            to no learnable pattern.
     """
+    learned = False
     try:
         with session.begin():
             # Every read is inside the block. `Session.get()` autobegins, so a
@@ -621,6 +646,22 @@ def update_transaction(
                 )
             if payload.category_id is not None:
                 line.category_id = payload.category_id
+                if payload.learn:
+                    # The pattern comes from the frozen evidence, not the
+                    # request: the client names the category, never the text
+                    # future transactions must match.
+                    try:
+                        upsert_learned_rule(
+                            session,
+                            description=record.raw_description,
+                            category_id=payload.category_id,
+                        )
+                    except ValueError as exc:
+                        raise HTTPException(
+                            status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
+                            detail=str(exc),
+                        ) from exc
+                    learned = True
             if payload.entry_date is not None:
                 entry = session.get(JournalEntry, record.journal_entry_id)
                 if entry is None:
@@ -638,7 +679,7 @@ def update_transaction(
             raise
         raise mapped from exc
     record, line = _get_record(session, record_id)
-    return _summary(record, line)
+    return _summary(record, line, learned=learned)
 
 
 @router.delete(

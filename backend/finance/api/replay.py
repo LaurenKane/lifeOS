@@ -46,6 +46,7 @@ from core.money import Money
 from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
+from finance.api.categorize import categorize_with_rules
 from finance.api.routes.imports import (
     _CARD_PAYMENT,
     _FILE_ADAPTERS,
@@ -67,8 +68,6 @@ from finance.api.writers import (
 )
 from finance.domain.models.importer import ImportBatch, SourceRecord
 from finance.domain.models.ledger import JournalEntry, JournalLine
-from finance.domain.services.categorize import categorize_transaction
-from finance.ingestion.fingerprint import normalize_description
 from finance.ingestion.rules import load_rules
 from finance.public import RawRecord, TransactionStatus
 
@@ -512,9 +511,15 @@ def _categorize(
 
     Only lines with no category are touched: a line already carrying one — on
     an entry shared with another batch, or set by hand — is left alone. When
-    no rule matches a line, the pre-replay snapshot is restored onto it (see
-    `_snapshot_categories`); when a rule matches, the rule wins. Returns how
-    many lines a rule categorized.
+    no rule is sure enough to auto-apply, the pre-replay snapshot is restored
+    onto the line (see `_snapshot_categories`); when a rule matches at auto
+    confidence, the rule wins. Returns how many lines a rule categorized.
+
+    The match itself comes from the shared `finance.api.categorize` entry
+    point — the same engine, normalizer and `is_auto` bar the import and the
+    manual paths use — so a replay can never disagree with them about what a
+    description means. Only the snapshot/restore around it is replay's own:
+    the import never restores, because it has nothing to restore.
     """
     rules = load_rules(session)
     entry_description: dict[int, str] = {}
@@ -546,10 +551,8 @@ def _categorize(
     applied = 0
     for line in lines:
         description = entry_description[line.journal_entry_id]
-        result = categorize_transaction(
-            description, rules=rules, normalize=normalize_description
-        )
-        if result.category_id is not None:
+        result = categorize_with_rules(rules, description=description)
+        if result.is_auto:
             line.category_id = result.category_id
             applied += 1
             continue

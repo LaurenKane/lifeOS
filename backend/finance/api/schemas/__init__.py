@@ -162,7 +162,8 @@ class ManualTransactionRequest(_Write):  # type: ignore[explicit-any]
 class ManualTransactionUpdate(_Write):  # type: ignore[explicit-any]
     """The only two things about a transaction a user is allowed to change.
 
-    Both are LEDGER facts, not evidence:
+    Both are LEDGER facts, not evidence (`learn` below is a flag about the
+    correction, not a third editable fact):
 
     * `category_id` — what categorisation means. It lives on the
       `journal_line`, because `categorized` is derived from there
@@ -180,10 +181,17 @@ class ManualTransactionUpdate(_Write):  # type: ignore[explicit-any]
     Both fields are optional and an absent field means "leave alone", so this is
     a PATCH and not a PUT: a PUT would make an unspecified `category_id`
     indistinguishable from a deliberate "uncategorise this".
+
+    `learn` teaches the system from this correction: when a `category_id` is
+    set and `learn` is true, the description's stable payee pattern is stored
+    as a learned rule in the same transaction, so the next identical payee
+    auto-categorizes. Default off is deliberate — a correction must not
+    silently teach the system; the caller says so explicitly.
     """
 
     category_id: int | None = Field(default=None, ge=1)
     entry_date: date | None = None
+    learn: bool = False
 
 
 class Provider(_Write):  # type: ignore[explicit-any]

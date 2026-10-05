@@ -130,6 +130,10 @@ class TransactionSummary(_ReadOnly):  # type: ignore[explicit-any]
     `raw_amount` is signed minor units. `journal_entry_id` is None until the
     normalizer has run — an imported-but-unprocessed row is queryable on
     purpose, so a failed batch can be inspected and retried.
+
+    `learned` is True only on the PATCH response that taught the system: the
+    correction was stored as a learned rule in the same transaction. Every
+    other response carries False, because nothing was learned there.
     """
 
     id: int
@@ -143,6 +147,7 @@ class TransactionSummary(_ReadOnly):  # type: ignore[explicit-any]
     journal_entry_id: int | None = None
     transfer_match_id: int | None = None
     category_id: int | None = None
+    learned: bool = False
 
 
 class CategorySummary(_ReadOnly):  # type: ignore[explicit-any]
