@@ -43,6 +43,7 @@ dev = [
 
 [project.scripts]
 lifeos = "main:app"
+lifeos-cli = "cli:main"
 
 [tool.ruff]
 line-length = 88
@@ -57,6 +58,9 @@ select = ["E", "F", "I", "N", "W", "B", "C", "T"]
 # Generated revision stubs follow Alembic's fixed layout, and the CLI's whole
 # job is printing to stdout.
 "backend/*/alembic/versions/*.py" = ["E501"]
+# A command line that cannot print is not a command line: reporting a replay
+# on stdout (and refusing one on stderr) is what `cli.py` is for.
+"backend/cli.py" = ["T201"]
 # FastAPI's dependency-injection idiom is a call in a default argument.
 "backend/finance/api/routes/imports.py" = ["B008"]
 
