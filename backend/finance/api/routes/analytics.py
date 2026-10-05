@@ -42,7 +42,7 @@ from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from finance.api.deps import get_session
@@ -124,8 +124,7 @@ def net_worth(
 
     series = net_worth_series({row[0]: row[1] for row in daily}, start, end)
     return [
-        NetWorthPoint(date=day.isoformat(), net_worth=minor)
-        for day, minor in series
+        NetWorthPoint(date=day.isoformat(), net_worth=minor) for day, minor in series
     ]
 
 
@@ -151,6 +150,12 @@ def spend_by_category(
     `ledger.py` calls getting that wrong "the single most misleading thing this
     application can do".
 
+    Equity accounts are excluded too, and that exclusion is load-bearing rather
+    than tidiness. A two-leg entry carries the category on BOTH sides — the
+    charge on the card and the contra-leg on equity — so summing every line that
+    holds the category returns zero for every expense in the ledger. Counting
+    only the real side is what makes the figure non-zero.
+
     `rollup=false` reports leaf categories. `rollup=true` walks each one up to its
     top-level ancestor, so a chart can show 'Groceries' rather than one bar per
     shop.
@@ -166,7 +171,9 @@ def spend_by_category(
         )
         .join(JournalLine, JournalLine.category_id == Category.id)
         .join(JournalEntry, JournalEntry.id == JournalLine.journal_entry_id)
+        .join(Account, Account.id == JournalLine.account_id)
         .where(JournalEntry.is_transfer.is_(False))
+        .where(Account.account_nature != "equity")
         .where(JournalEntry.entry_date.between(start, end))
         .group_by(Category.id, Category.name, Category.kind)
     ).all()
@@ -224,11 +231,15 @@ def cashflow(
     to every real movement, so counting both sides would net each period to zero
     and every bar would be the same height.
 
-    Transfers are deliberately INCLUDED here, unlike spend-by-category. A savings
-    top-up is two asset legs that cancel; a card payment is an asset leg out and a
-    liability leg that is not counted, so it correctly reads as cash leaving.
-    Excluding transfers would hide the payment, and a card-funded purchase would
-    then never appear in cashflow at all.
+    Transfers need per-entry judgement, and this is the reason. Aggregated line by
+    line, a €300 top-up from checking to savings is a -€300 debit and a +€300
+    credit: split on sign, the credit is read as €300 of INCOME, and a user who
+    moved their own money sees their income go up. So entries are aggregated
+    first, and an entry whose every leg is an asset is dropped entirely — that is
+    money rearranging inside the user's own accounts. An entry that reaches a
+    non-asset account is kept, which is what makes paying a credit card read as
+    cash leaving: the card is a liability, so the paying leg is the only asset leg
+    and the amount survives.
 
     A period with no movement is omitted rather than emitted as a zero row; the
     chart can render a gap and cannot invent one.
@@ -240,14 +251,25 @@ def cashflow(
     start, end = _resolve_range(from_, to)
 
     rows = session.execute(
-        select(JournalEntry.entry_date, JournalLine.amount_base)
+        select(
+            JournalEntry.entry_date,
+            func.sum(
+                case(
+                    (Account.account_nature == "asset", JournalLine.amount_base),
+                    else_=0,
+                )
+            ),
+            func.bool_and(Account.account_nature == "asset"),
+        )
         .join(JournalLine, JournalLine.journal_entry_id == JournalEntry.id)
         .join(Account, Account.id == JournalLine.account_id)
-        .where(Account.account_nature == "asset")
         .where(JournalEntry.entry_date.between(start, end))
+        .group_by(JournalEntry.id, JournalEntry.entry_date)
     ).all()
 
-    points = summarise_cashflow([(row[0], row[1]) for row in rows], period)
+    # An entry touching only assets moved money inside the user's own world.
+    movements = [(row[0], row[1]) for row in rows if not row[2] and row[1] != 0]
+    points = summarise_cashflow(movements, period)
     return [
         CashflowBucket(
             period=point.period,
