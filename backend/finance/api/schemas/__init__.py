@@ -35,7 +35,10 @@ __all__ = [
     "AccountSummary",
     "AccountType",
     "CashflowBucket",
+    "CategoryCreateRequest",
     "CategoryKind",
+    "CategoryRuleCreateRequest",
+    "CategoryRuleSummary",
     "CategorySummary",
     "ConfirmTransferRequest",
     "ImportRequest",
@@ -397,3 +400,66 @@ class ConfirmTransferRequest(_Write):  # type: ignore[explicit-any]
     """
 
     candidate_journal_line_id: int | None = None
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Categories and categorization rules
+# ──────────────────────────────────────────────────────────────────────
+#
+# The rule set is plain text on purpose (section I): a substring plus a
+# priority integer, readable on one screen and editable by hand. These
+# schemas are that text on the wire — never the domain `CategoryRule`
+# dataclass, which carries matcher behaviour (`matches()`) that has no
+# business in a request body or a JSON response.
+
+
+class CategoryCreateRequest(_Write):  # type: ignore[explicit-any]
+    """A user-created category.
+
+    No `id`: the database hands it out, and a client-chosen id would collide
+    the way account ids do (see `AccountCreateRequest`). `kind` is the
+    closed `CategoryKind` enum, so an unknown kind fails at the edge with a
+    422 rather than at the migration's CHECK with a 500-shaped surprise.
+    `is_system` is absent on purpose: only seeded rows carry it, and a
+    request must not be able to mint one.
+    """
+
+    name: str = Field(min_length=1, max_length=200)
+    kind: CategoryKind
+    parent_id: int | None = Field(default=None, ge=1)
+
+
+class CategoryRuleCreateRequest(_Write):  # type: ignore[explicit-any]
+    """A hand-authored categorization rule.
+
+    `description_pattern` is a plain substring, stripped of surrounding
+    whitespace on the way in — so a blank pattern fails `min_length` here
+    with a 422 instead of landing as a row that matches nothing (or, worse,
+    everything). `priority` defaults to 100, the hand-rule tier that always
+    outranks learned rules (see `LEARNED_RULE_PRIORITY`). `is_learned` is
+    absent on purpose: a rule authored here is never "learned", and the
+    router forces that rather than trusting the body.
+    """
+
+    description_pattern: str = Field(min_length=1)
+    category_id: int = Field(ge=1)
+    priority: int = 100
+
+
+class CategoryRuleSummary(BaseModel):  # type: ignore[explicit-any]
+    """One stored rule, hand or learned, as the rule screen reads it.
+
+    Read-only and frozen like every other response model here. `confidence`
+    is the `NUMERIC(3,2)` the matcher scores with, rendered as a decimal —
+    never a float — because a second money-adjacent float on the wire is a
+    second place for rounding to disagree with the ledger.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: int
+    description_pattern: str | None
+    priority: int
+    category_id: int
+    is_learned: bool
+    confidence: Decimal
