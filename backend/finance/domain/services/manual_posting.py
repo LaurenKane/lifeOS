@@ -93,6 +93,12 @@ For the two-leg manual entry this is an exact no-op, because the counter-leg is
 already the exact negation of the funding leg; it is written generally because the
 moment a third leg appears (an FX fee, a split) it is the thing that keeps the
 sum at zero rather than merely inside tolerance.
+
+Only a ROUNDING residual may be absorbed. A shift larger than
+`BASE_BALANCE_TOLERANCE` is a real FX gain/loss, and folding it into a leg would
+erase it from the ledger while looking balanced; `absorb_fx_residual` raises
+`ManualPostingError` for one instead. The fix is to post the difference as its own
+leg, not to widen the tolerance.
 """
 
 from __future__ import annotations
@@ -138,6 +144,14 @@ BASE_CURRENCY: Final[str] = "EUR"
 #: the way in, and a Python-side sum of unquantised Decimals would not
 #: necessarily agree with the sum of the stored values.
 BASE_SCALE: Final[Decimal] = Decimal("0.0001")
+
+#: The balance trigger's tolerance, `NUMERIC := 0.005` in migration 0001, mirrored
+#: here so absorption refuses a residual at the same line the database refuses to
+#: let sit unbalanced. A residual up to this is rounding and `absorb_fx_residual`
+#: folds it into the largest leg. A residual GREATER than this is a real FX
+#: gain/loss; folding it into a leg is how a genuine loss disappears from the
+#: ledger, so the function refuses it instead (bead LifeOS-fwc).
+BASE_BALANCE_TOLERANCE: Final[Decimal] = Decimal("0.005")
 
 #: The counter-leg account for a manual expense. See the module docstring.
 SYSTEM_EXPENSE_ACCOUNT_NAME: Final[str] = "Expenses (system)"
@@ -471,7 +485,9 @@ def absorb_fx_residual(legs: Sequence[PostingLeg]) -> tuple[PostingLeg, ...]:
     Raises:
         ManualPostingError: With fewer than two legs. There is nothing to
             absorb into, and returning the input unchanged would be a silent
-            no-op that looks like success.
+            no-op that looks like success. Or when the largest leg would have to
+            move by more than `BASE_BALANCE_TOLERANCE`: that is a real FX
+            gain/loss, not rounding, and absorbing it would hide it.
     """
     if len(legs) < 2:
         raise ManualPostingError(
@@ -493,6 +509,19 @@ def absorb_fx_residual(legs: Sequence[PostingLeg]) -> tuple[PostingLeg, ...]:
         start=Decimal("0.0000"),
     )
     residual = to_base_scale(-others)
+    # How far the largest leg would have to move to balance the entry. Zero for
+    # the two-leg case; within tolerance for a rounding residual; a real amount
+    # for a genuine FX gain/loss. Only the first two are absorption — the third
+    # is the loss this function must never hide, so it refuses instead.
+    shift = to_base_scale(residual - quantised[largest].amount_base)
+    if abs(shift) > BASE_BALANCE_TOLERANCE:
+        raise ManualPostingError(
+            "The legs do not balance: the largest leg would have to change by "
+            f"{abs(shift)} {BASE_CURRENCY} to absorb the residual, which is more "
+            f"than the {BASE_BALANCE_TOLERANCE} balance tolerance. A difference "
+            "that large is a real FX gain/loss, not rounding; post it as its own "
+            "leg instead of folding it into another one."
+        )
     if residual == 0:
         # `Decimal("-0.0000")` and `Decimal("0.0000")` compare equal but print
         # differently, and a ledger that prints "-0.0000" has invited a bug.
