@@ -276,9 +276,7 @@ _PRINTED_IBAN: Final = re.compile(
 )
 
 #: Letter-masked card numbers Amex prints (XXXX-XXXXXX-23007 or XXXXXXXXXX23007).
-_MASKED_CARD_NUMBER: Final = re.compile(
-    r"\b(?:[Xx]{4}-[Xx]{6}-\d{5}|[Xx]{10}\d{5})\b"
-)
+_MASKED_CARD_NUMBER: Final = re.compile(r"\b(?:[Xx]{4}-[Xx]{6}-\d{5}|[Xx]{10}\d{5})\b")
 
 
 def dutch_to_money(text: str) -> Money:
