@@ -35,6 +35,7 @@ from finance.api.writers import (
     ReferenceNotFound,
     finish_import_batch,
     open_import_batch,
+    write_card_payment,
     write_posted_transaction,
     write_unposted_transaction,
 )
@@ -433,6 +434,172 @@ def _stored_occurrence_keys(
 # ---------------------------------------------------------------------------
 
 
+def _resolve_card_payment_roles(
+    session: Session,
+    *,
+    row_account_id: int,
+    explicit_id: int | None,
+) -> tuple[Account, Account] | None:
+    """The `(card, paying)` accounts for a flagged card-payment row, or None.
+
+    Never by name and never guessed (`docs/adr/0007-imported-card-payment-is-a
+    -transfer.md`). Resolution is explicit only, in this order:
+
+    * An explicit request id names the OTHER side; which role it plays follows
+      from the two accounts' natures.
+    * `account.payment_from_account_id` on the row account names the paying
+      account, when the row IS the card.
+    * A row on a paying account is recognised by the cards that point at it. Two
+      cards pointing at one account is ambiguous and resolves to None.
+
+    Every unresolvable or wrong-shaped case returns None: the caller stores the
+    row unposted rather than posting it as an expense.
+    """
+    row = session.get(Account, row_account_id)
+    if row is None:
+        return None
+    if explicit_id is not None:
+        counterpart = session.get(Account, explicit_id)
+        if counterpart is None:
+            return None
+        return _roles_from_explicit(row, counterpart)
+    return _roles_from_saved_mapping(session, row)
+
+
+def _roles_from_explicit(
+    row: Account, counterpart: Account
+) -> tuple[Account, Account] | None:
+    """`(card, paying)` from an explicitly named counterpart, by nature."""
+    if counterpart.id == row.id:
+        return None
+    if row.account_nature == "liability" and counterpart.account_nature == "asset":
+        return (row, counterpart)
+    if row.account_nature == "asset" and counterpart.account_nature == "liability":
+        return (counterpart, row)
+    return None
+
+
+def _roles_from_saved_mapping(
+    session: Session, row: Account
+) -> tuple[Account, Account] | None:
+    """`(card, paying)` from `payment_from_account_id`, forward or reverse."""
+    if row.payment_from_account_id is not None:
+        paying = session.get(Account, row.payment_from_account_id)
+        if paying is None or paying.id == row.id:
+            return None
+        if row.account_nature != "liability" or paying.account_nature != "asset":
+            return None
+        return (row, paying)
+
+    cards = session.scalars(
+        select(Account).where(Account.payment_from_account_id == row.id)
+    ).all()
+    if (
+        len(cards) == 1
+        and cards[0].account_nature == "liability"
+        and row.account_nature == "asset"
+    ):
+        return (cards[0], row)
+    return None
+
+
+def _store_card_payment_unposted(
+    session: Session,
+    *,
+    record: RawRecord,
+    money: Money,
+    batch_id: int,
+    row_account: int,
+    rank: int,
+    reason: str,
+) -> None:
+    """Store one flagged card payment as a row with a reason, never as an expense."""
+    write_unposted_transaction(
+        session,
+        batch_id=batch_id,
+        account_id=row_account,
+        description=record.description,
+        amount=money,
+        booked_date=record.booked_date,
+        raw_data=dict(record.raw_data),
+        error_message=reason,
+        raw_posting_date=_posting_date(record),
+        occurrence_index=rank,
+        provider_txn_id=record.provider_txn_id,
+        status=TransactionStatus.PENDING,
+    )
+
+
+def _persist_card_payment_row(
+    session: Session,
+    *,
+    record: RawRecord,
+    money: Money,
+    batch_id: int,
+    row_account: int,
+    rank: int,
+    card_payment_account_id: int | None,
+) -> str | None:
+    """Post one flagged card payment. None on success, else the reason.
+
+    Raises `HTTPException(404)` when an account id names nothing, matching the
+    ordinary row path; every other per-row refusal is a reason string, so the
+    caller can count it and name the line.
+    """
+    roles = _resolve_card_payment_roles(
+        session,
+        row_account_id=row_account,
+        explicit_id=card_payment_account_id,
+    )
+    if roles is not None and not (roles[0].is_active and roles[1].is_active):
+        # An inactive mapping is as unusable as a missing one; using it would
+        # move money through a closed account.
+        roles = None
+    if roles is None:
+        _store_card_payment_unposted(
+            session,
+            record=record,
+            money=money,
+            batch_id=batch_id,
+            row_account=row_account,
+            rank=rank,
+            reason=_CARD_PAYMENT,
+        )
+        return _CARD_PAYMENT
+
+    card, paying = roles
+    try:
+        write_card_payment(
+            session,
+            batch_id=batch_id,
+            card_account_id=card.id,
+            paying_account_id=paying.id,
+            statement_account_id=row_account,
+            amount=money,
+            description=record.description,
+            booked_date=record.booked_date,
+            raw_data=dict(record.raw_data),
+            raw_posting_date=_posting_date(record),
+            occurrence_index=rank,
+            provider_txn_id=record.provider_txn_id,
+        )
+    except ReferenceNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PostingRefused as exc:
+        reason = f"Not posted: {exc}"
+        _store_card_payment_unposted(
+            session,
+            record=record,
+            money=money,
+            batch_id=batch_id,
+            row_account=row_account,
+            rank=rank,
+            reason=reason,
+        )
+        return reason
+    return None
+
+
 def _persist(
     session: Session,
     *,
@@ -441,6 +608,7 @@ def _persist(
     filename: str,
     account_id: int | None,
     records: Sequence[RawRecord],
+    card_payment_account_id: int | None = None,
 ) -> tuple[str, int, int, int, list[str]]:
     """Write every row the adapter produced.
 
@@ -557,22 +725,20 @@ def _persist(
             # account present it books against equity, which balances, commits and
             # is permanent. 4 of the 121 real Amex rows are card payments.
             if record.raw_data.get("is_card_payment") is True:
-                write_unposted_transaction(
+                card_reason = _persist_card_payment_row(
                     session,
+                    record=record,
+                    money=money,
                     batch_id=batch_id,
-                    account_id=row_account,
-                    description=record.description,
-                    amount=money,
-                    booked_date=record.booked_date,
-                    raw_data=dict(record.raw_data),
-                    error_message=_CARD_PAYMENT,
-                    raw_posting_date=_posting_date(record),
-                    occurrence_index=rank,
-                    provider_txn_id=record.provider_txn_id,
-                    status=TransactionStatus.PENDING,
+                    row_account=row_account,
+                    rank=rank,
+                    card_payment_account_id=card_payment_account_id,
                 )
-                failed += 1
-                reasons.append(f"line {record.line_number}: {_CARD_PAYMENT}")
+                if card_reason is None:
+                    created += 1
+                else:
+                    failed += 1
+                    reasons.append(f"line {record.line_number}: {card_reason}")
                 continue
 
             try:
@@ -740,6 +906,7 @@ async def import_file(
     file: UploadFile = File(...),
     provider: str = "amex_pdf",
     account_id: int | None = None,
+    card_payment_account_id: int | None = None,
 ) -> ImportSummary:
     """Accept a statement file, parse it, and WRITE what it parsed.
 
@@ -766,6 +933,10 @@ async def import_file(
         account_id: The local account to attribute rows to. Without it, rows
             whose own `account_id` is None cannot be written at all
             (`source_record.account_id` is NOT NULL) and are counted as failed.
+        card_payment_account_id: The account on the OTHER side of a flagged
+            card payment, when the caller wants to name it for this upload.
+            Used in preference to the saved mapping
+            (`account.payment_from_account_id`), and never guessed from a name.
 
     Returns:
         What persisted: `created`, `duplicated` and `failed`, plus the failures
@@ -791,6 +962,7 @@ async def import_file(
         filename=filename,
         account_id=account_id,
         records=result.records,
+        card_payment_account_id=card_payment_account_id,
     )
     return ImportSummary(
         provider=result.provider,
