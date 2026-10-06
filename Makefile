@@ -35,6 +35,12 @@ FRONTEND_PORT ?= 8080
 # this machine; see docker-compose.yml for the full reasoning.
 LIFEOS_TEST_DB_PORT ?= 55432
 
+# --- deploy ------------------------------------------------------------------
+# Where `make deploy` and `make status` go. No default host: deploying without
+# knowing which machine is the target is exactly the mistake this avoids.
+DEPLOY_HOST ?=
+DEPLOY_PATH ?= /srv/lifeos
+
 .PHONY: help
 help: ## List available targets
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -128,6 +134,24 @@ db-shell: ## Open a psql shell with the application's search_path
 clean: ## DESTROY the stack AND its database volume
 	@echo "This deletes the lifeos database volume. Unrelated stacks are not touched."
 	$(COMPOSE) down --volumes --remove-orphans
+
+# ===========================================================================
+# Deploy (ADR 0009: one host, `ssh` + Compose)
+# ===========================================================================
+
+.PHONY: deploy
+deploy: ## Pull and rebuild the stack on $(DEPLOY_HOST) (needs DEPLOY_HOST=...)
+	@test -n "$(DEPLOY_HOST)" || { echo "DEPLOY_HOST is required, e.g. make deploy DEPLOY_HOST=lifeos@vps.example"; exit 1; }
+	ssh $(DEPLOY_HOST) 'cd $(DEPLOY_PATH) && git pull --ff-only && docker compose up -d --build'
+
+.PHONY: status
+status: ## Show Compose state + API health on $(DEPLOY_HOST) (needs DEPLOY_HOST=...)
+	@test -n "$(DEPLOY_HOST)" || { echo "DEPLOY_HOST is required, e.g. make status DEPLOY_HOST=lifeos@vps.example"; exit 1; }
+	ssh $(DEPLOY_HOST) 'cd $(DEPLOY_PATH) && docker compose ps && curl -fsS http://localhost:8000/health'
+
+.PHONY: backup-test
+backup-test: ## Restore the latest backup into a throwaway Postgres and check it
+	tools/backup_test.sh
 
 # ===========================================================================
 # Quality gates — the exact commands CI runs
