@@ -16,6 +16,7 @@ import { TransactionDetailPage } from "@/features/finance/transactions/detail";
 import { ReviewPage } from "@/features/finance/review/page";
 import { CategoriesPage } from "@/features/finance/categories/page";
 import { RulesPage } from "@/features/finance/categories/rules-page";
+import { MerchantsPage } from "@/features/finance/merchants/page";
 import { ImportsPage } from "@/features/finance/imports/page";
 import { BudgetsPage } from "@/features/finance/budgets/page";
 import { OverviewPage } from "@/features/finance/overview/page";
@@ -56,6 +57,14 @@ export const Routes: RouteObject[] = [
   {
     path: "/finance/categories",
     element: <CategoriesPage />,
+  },
+  {
+    // The third half of the categorization surface, and the one that makes
+    // layers 2-4 reachable: the merchant and alias tables the matcher reads.
+    // Declared beside the other two curation routes because they are three
+    // addresses for one subject, and all three are static.
+    path: "/finance/merchants",
+    element: <MerchantsPage />,
   },
   {
     path: "/finance/imports",
