@@ -21,11 +21,24 @@ export const ImportBatchSchema = z.object({
     "revolut_pdf",
     "manual",
   ]),
-  status: z.enum(["pending", "processing", "completed", "failed"]),
-  sourceFilename: z.string(),
+  /* `partial` is a real stored status — the normal outcome of an import where
+   * some row did not post — so omitting it would reject the very batches the
+   * list exists to show. Mirrors the `import_batch` CHECK, which allows
+   * pending|processing|completed|failed|partial. */
+  status: z.enum(["pending", "processing", "completed", "partial", "failed"]),
+  /* Null when no file was recorded: a manual batch never had one. Null rather
+   * than `z.string()` because a parse-only or manual run has no filename to
+   * give, and the page renders a fallback for it. An empty string would read
+   * as a file with no name, which is a different and misleading claim. */
+  sourceFilename: z.string().nullable(),
 });
 
 export type ImportBatch = z.infer<typeof ImportBatchSchema>;
+
+/** The body of `GET /imports`, newest first. Parsed with `expectSchema` in
+ * `use-imports`, like every other list in this app — an unknown status or a
+ * missing field fails loudly there rather than rendering a wrong row. */
+export const ImportBatchListSchema = z.array(ImportBatchSchema);
 
 /** The providers that accept a FILE upload.
  *

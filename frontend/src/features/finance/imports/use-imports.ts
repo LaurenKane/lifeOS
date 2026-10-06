@@ -13,7 +13,7 @@
  * `ApiError` is constructed directly so a 4xx keeps the server's own words. */
 import React from "react";
 import { API_PATH, ApiError, apiGet, baseUrl, describeError, expectSchema } from "@/lib/apiClient";
-import { ImportSummarySchema } from "./types";
+import { ImportBatchListSchema, ImportSummarySchema } from "./types";
 import type { FileProvider, ImportBatch, ImportSummary, SectionAccountIds } from "./types";
 
 export const useImports = () => {
@@ -23,8 +23,8 @@ export const useImports = () => {
   const [attempt, setAttempt] = React.useState(0);
 
   React.useEffect(() => {
-    apiGet<ImportBatch[]>(`${API_PATH}/imports`)
-      .then(setData)
+    apiGet<unknown>(`${API_PATH}/imports`)
+      .then((payload) => setData(expectSchema(ImportBatchListSchema, payload, "import batches")))
       .catch((cause: unknown) => setError(describeError(cause)))
       .finally(() => setLoading(false));
   }, [attempt]);

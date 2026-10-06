@@ -31,7 +31,12 @@ from starlette.concurrency import run_in_threadpool
 
 from finance.api.categorize import categorize_posted_record
 from finance.api.deps import get_session
-from finance.api.schemas import ImportSummary, Provider, ProviderInfo
+from finance.api.schemas import (
+    ImportBatchSummary,
+    ImportSummary,
+    Provider,
+    ProviderInfo,
+)
 from finance.api.transfer_linker import link_transfers
 from finance.api.writers import (
     PostingRefused,
@@ -43,7 +48,7 @@ from finance.api.writers import (
     write_unposted_transaction,
 )
 from finance.domain.models.accounts import Account
-from finance.domain.models.importer import SourceRecord
+from finance.domain.models.importer import ImportBatch, SourceRecord
 from finance.ingestion.adapters import (
     AmexPdfAdapter,
     RabobankPdfAdapter,
@@ -1128,3 +1133,30 @@ def list_providers() -> ProviderInfo:
     yet uploadable.
     """
     return ProviderInfo(providers=list(_PROVIDERS))
+
+
+@router.get("", summary="List import batches", response_model=list[ImportBatchSummary])
+def list_import_batches(session: SessionDep) -> list[ImportBatchSummary]:
+    """Every persisted import run, newest first.
+
+    A plain SELECT, sync like every other list route here: no bytes are parsed
+    and nothing is written, so there is nothing to push to a threadpool. `id`
+    order is insertion order (BIGSERIAL), so DESC is newest first without
+    trusting a clock.
+
+    The filename rides as `sourceFilename` (see `ImportBatchSummary`); it is
+    None when no file was recorded, and the status is whatever was WRITTEN —
+    including `partial`, the normal outcome of a real import.
+    """
+    batches = session.execute(
+        select(ImportBatch).order_by(ImportBatch.id.desc())
+    ).scalars()
+    return [
+        ImportBatchSummary(
+            id=batch.id,
+            provider=batch.provider,
+            status=batch.status,
+            source_filename=batch.source_filename,
+        )
+        for batch in batches
+    ]

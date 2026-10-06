@@ -41,6 +41,7 @@ __all__ = [
     "CategoryRuleSummary",
     "CategorySummary",
     "ConfirmTransferRequest",
+    "ImportBatchSummary",
     "ImportRequest",
     "ImportSummary",
     "ManualTransactionRequest",
@@ -257,6 +258,36 @@ class ImportSummary(BaseModel):  # type: ignore[explicit-any]
     duplicated: int = 0
     failed: int = 0
     failures: list[str] = []
+
+
+class ImportBatchSummary(BaseModel):  # type: ignore[explicit-any]
+    """One persisted import run, as the batch list reads it.
+
+    Read-only and frozen like every other response model here. `provider` and
+    `status` are plain strings rather than enums, for the same reason
+    `ImportSummary` keeps them that way: the CHECK values live in the database,
+    and a closed enum here would turn a stored value this build has not heard
+    of into a 500 on a read-only list.
+
+    `status` carries whatever was WRITTEN, including `partial` — the normal
+    outcome of a real import — so a client must accept every value the column
+    allows rather than the four the batch-creation path starts from.
+
+    The filename rides as `sourceFilename` on the wire (a serialization alias;
+    the attribute stays snake_case like every other field in this module)
+    because that is the name the frontend's `ImportBatchSchema` parses. It is
+    None when no file was recorded — a manual batch never had one — and the
+    client renders a fallback rather than a blank.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: int
+    provider: str
+    status: str
+    source_filename: str | None = Field(
+        default=None, serialization_alias="sourceFilename"
+    )
 
 
 class ImportRequest(_Write):  # type: ignore[explicit-any]

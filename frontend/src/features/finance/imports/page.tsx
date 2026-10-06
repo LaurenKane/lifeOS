@@ -80,7 +80,14 @@ export const ImportsPage: React.FC = () => {
                   className="rise-row px-5 py-3.5"
                   style={{ animationDelay: `${Math.min(index, 8) * 34}ms` }}
                 >
-                  <p className="truncate text-sm">{batch.sourceFilename}</p>
+                  {/* A null filename is not a missing value: a manual batch never
+                    had a file, so it says so, while a file provider with none
+                    recorded is stated as "No file" rather than a blank that
+                    reads as a file with no name. */}
+                  <p className="truncate text-sm">
+                    {batch.sourceFilename ??
+                      (batch.provider === "manual" ? "Manual entry" : "No file")}
+                  </p>
                   <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-ink-quiet">
                     <span className="font-mono tabular-nums">#{batch.id}</span>
                     <span className="font-mono uppercase tracking-wide">{batch.provider}</span>

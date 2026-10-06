@@ -1390,3 +1390,147 @@ class TestTheEndpointContract:
             )
         }
         assert stored <= allowed, stored
+
+
+def _insert_batch(
+    engine: Engine,
+    *,
+    provider: str,
+    import_method: str,
+    status: str,
+    filename: str | None,
+) -> int:
+    """One `import_batch` row, written directly, and its id.
+
+    Direct SQL rather than an upload: what is under test is the LIST, and a
+    list must also show batches no upload path produces — a `partial` manual
+    batch with no filename. Depending on the statement PDFs here would make
+    the endpoint's own test unrunnable on a machine without them.
+    """
+    with engine.connect() as connection:
+        with connection.begin():
+            return int(
+                connection.execute(
+                    text(
+                        "INSERT INTO finance.import_batch"
+                        " (provider, import_method, status, source_filename)"
+                        " VALUES (:provider, :method, :status, :filename)"
+                        " RETURNING id"
+                    ),
+                    {
+                        "provider": provider,
+                        "method": import_method,
+                        "status": status,
+                        "filename": filename,
+                    },
+                ).scalar_one()
+            )
+
+
+class TestListImportBatches:
+    """`GET /imports` lists the persisted batches, newest first.
+
+    The page this feeds renders `batch.id`, `batch.sourceFilename`,
+    `batch.provider` and `batch.status`, so those four — with the filename
+    under its camelCase wire name — are exactly what is asserted.
+    """
+
+    def test_an_empty_ledger_lists_no_batches(
+        self, client: TestClient, engine: Engine
+    ) -> None:
+        """No batches, `[]` — not a 404 and not null.
+
+        An empty list is the honest answer for a fresh ledger, and the page
+        renders its "nothing imported yet" state from exactly this shape.
+        """
+        del engine
+        response = client.get("/api/v1/imports")
+        assert response.status_code == 200, response.text
+        assert response.json() == []
+
+    def test_batches_come_back_newest_first_with_the_wire_filename(
+        self, client: TestClient, engine: Engine
+    ) -> None:
+        """Two batches in, newest first, with `sourceFilename` camelCase.
+
+        The second row is the contract-gap case on purpose: `partial` with a
+        NULL filename, which the old frontend schema would have rejected — the
+        list must carry it rather than hide it.
+        """
+        first = _insert_batch(
+            engine,
+            provider="rabobank_pdf",
+            import_method="pdf",
+            status="completed",
+            filename=RABO_JUNE,
+        )
+        second = _insert_batch(
+            engine,
+            provider="manual",
+            import_method="manual",
+            status="partial",
+            filename=None,
+        )
+
+        response = client.get("/api/v1/imports")
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body == [
+            {
+                "id": second,
+                "provider": "manual",
+                "status": "partial",
+                "sourceFilename": None,
+            },
+            {
+                "id": first,
+                "provider": "rabobank_pdf",
+                "status": "completed",
+                "sourceFilename": RABO_JUNE,
+            },
+        ]
+        # The wire name is camelCase and ONLY camelCase: a snake_case key
+        # alongside it would be two names for one fact.
+        assert "source_filename" not in body[0]
+
+    def test_a_persisted_upload_appears_in_the_list(
+        self, client: TestClient, engine: Engine, seeded: dict[str, int]
+    ) -> None:
+        """The full loop: upload a statement, read it back from the list.
+
+        Uses the stub adapter rather than a real PDF so this runs without the
+        statements directory. The stub's batch is `partial` with a real
+        filename — the other half of the contract gap from the test above.
+        """
+        from unittest import mock
+
+        import finance.api.routes.imports as imports_routes
+
+        def _stub_adapter() -> object:
+            return _CardPaymentAdapter()
+
+        with mock.patch.object(
+            imports_routes,
+            "_FILE_ADAPTERS",
+            {"rabobank_pdf": (_stub_adapter, ".pdf")},
+        ):
+            response = client.post(
+                "/api/v1/imports/file",
+                params={
+                    "provider": "rabobank_pdf",
+                    "account_id": seeded["checking"],
+                },
+                files={"file": (RABO_JUNE, SYNTHETIC_PDF, "application/pdf")},
+            )
+        assert response.status_code == 200, response.text
+
+        listed = client.get("/api/v1/imports")
+        assert listed.status_code == 200, listed.text
+        body = listed.json()
+        assert isinstance(body, list) and len(body) == 1, body
+        batch = body[0]
+        assert isinstance(batch, dict), batch
+        assert batch["provider"] == "rabobank_pdf", batch
+        assert batch["status"] == "partial", batch
+        assert batch["sourceFilename"] == RABO_JUNE, batch
+        assert isinstance(batch["id"], int) and batch["id"] >= 1, batch
