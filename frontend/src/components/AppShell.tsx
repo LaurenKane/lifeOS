@@ -39,6 +39,11 @@ const NAV: ReadonlyArray<{ to: string; label: string }> = [
   { to: "/finance/transactions", label: "Transactions" },
   { to: "/finance/review", label: "Review" },
   { to: "/finance/categories", label: "Categories" },
+  /* Its own entry rather than a second link under "Categories": merchants are a
+   * different KIND of thing from both the category inventory and the rules — they
+   * are what the matcher matches a payee against — and burying a third curation
+   * screen behind the first would make it a place a user has to know exists. */
+  { to: "/finance/merchants", label: "Merchants" },
   { to: "/finance/imports", label: "Imports" },
   { to: "/finance/budgets", label: "Budgets" },
 ];
