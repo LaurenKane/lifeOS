@@ -1809,6 +1809,31 @@ class TestTheRulesOnTheirOwn:
         assert absorbed[1].amount_base == Decimal("99.9900")
         assert absorbed[2].amount_base == Decimal("0.0150")
 
+    def test_a_real_residual_is_refused_not_absorbed(self) -> None:
+        """A shift past the balance tolerance is a real FX loss, not rounding.
+
+        Absorption may fold a ROUNDING residual into the largest leg, but a
+        genuine difference must become its own leg. Silently absorbing this would
+        balance the entry while erasing the loss, which is the defect LifeOS-fwc
+        exists to close. The tolerance boundary itself is proven by the test
+        above, which absorbs exactly 0.0050.
+        """
+        from finance.domain.services.manual_posting import (
+            ManualPostingError,
+            PostingLeg,
+            absorb_fx_residual,
+        )
+
+        legs = (
+            PostingLeg(1, "EUR", -10000, Decimal("-100.0000"), Decimal(1), 0),
+            PostingLeg(2, "EUR", 9900, Decimal("99.0000"), Decimal(1), 1),
+            PostingLeg(3, "EUR", 50, Decimal("0.5000"), Decimal(1), 2),
+        )
+        assert sum(leg.amount_base for leg in legs) == Decimal("-0.5000")
+
+        with pytest.raises(ManualPostingError, match="real FX gain/loss"):
+            absorb_fx_residual(legs)
+
     def test_absorbing_needs_at_least_two_legs(self) -> None:
         """A single leg has nothing to absorb into, and returning it would be a lie."""
         from finance.domain.services.manual_posting import (

@@ -12,8 +12,9 @@ Imports are absolute. `core` and `finance` are sibling packages under the
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -34,12 +35,22 @@ __all__ = [
     "AccountSummary",
     "AccountType",
     "CashflowBucket",
+    "CategoryCreateRequest",
     "CategoryKind",
+    "CategoryRuleCreateRequest",
+    "CategoryRuleSummary",
     "CategorySummary",
+    "ConfirmTransferRequest",
     "ImportRequest",
     "ImportSummary",
     "ManualTransactionRequest",
     "ManualTransactionUpdate",
+    "MerchantAliasCreateRequest",
+    "MerchantAliasSummary",
+    "MerchantAliasUpdateRequest",
+    "MerchantCreateRequest",
+    "MerchantSummary",
+    "MerchantUpdateRequest",
     "NetWorthPoint",
     "Provider",
     "ProviderInfo",
@@ -47,6 +58,10 @@ __all__ = [
     "SpendByCategoryPoint",
     "TransactionStatus",
     "TransactionSummary",
+    "TransferReviewCandidateOut",
+    "TransferReviewItem",
+    "TransferReviewLegOut",
+    "TransferReviewStats",
 ]
 
 
@@ -156,7 +171,8 @@ class ManualTransactionRequest(_Write):  # type: ignore[explicit-any]
 class ManualTransactionUpdate(_Write):  # type: ignore[explicit-any]
     """The only two things about a transaction a user is allowed to change.
 
-    Both are LEDGER facts, not evidence:
+    Both are LEDGER facts, not evidence (`learn` below is a flag about the
+    correction, not a third editable fact):
 
     * `category_id` — what categorisation means. It lives on the
       `journal_line`, because `categorized` is derived from there
@@ -174,10 +190,17 @@ class ManualTransactionUpdate(_Write):  # type: ignore[explicit-any]
     Both fields are optional and an absent field means "leave alone", so this is
     a PATCH and not a PUT: a PUT would make an unspecified `category_id`
     indistinguishable from a deliberate "uncategorise this".
+
+    `learn` teaches the system from this correction: when a `category_id` is
+    set and `learn` is true, the description's stable payee pattern is stored
+    as a learned rule in the same transaction, so the next identical payee
+    auto-categorizes. Default off is deliberate — a correction must not
+    silently teach the system; the caller says so explicitly.
     """
 
     category_id: int | None = Field(default=None, ge=1)
     entry_date: date | None = None
+    learn: bool = False
 
 
 class Provider(_Write):  # type: ignore[explicit-any]
@@ -308,3 +331,248 @@ class CashflowBucket(BaseModel):  # type: ignore[explicit-any]
     income: int
     expense: int
     net: int
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Transfer-review queue schemas (M4)
+# ──────────────────────────────────────────────────────────────────────
+#
+# The JSON contract for `GET /review/transfers` and its three decisions.
+# Field names are snake_case, matching every other schema in this module.
+# Amounts are integer minor units, like the analytics schemas above — never
+# a decimal and never a float.
+
+
+class TransferReviewLegOut(BaseModel):  # type: ignore[explicit-any]
+    """One side of a queued transfer question, fully described.
+
+    Read-only, frozen and closed like every other response model here: a
+    response that could be mutated in place is a contract nobody can rely on.
+    `description` is the `journal_entry`'s, because the entry carries the
+    human text and the line carries only the arithmetic.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    journal_line_id: int
+    description: str
+    amount_minor: int
+    currency: str
+    booked_date: date
+    account_id: int
+    account_name: str
+
+
+class TransferReviewCandidateOut(TransferReviewLegOut):  # type: ignore[explicit-any]
+    """A possible incoming half, with the matcher's confidence attached.
+
+    `confidence` is recomputed live from the pure `transfer_match` rule on the
+    (outbound, candidate) pair — it is not a stored column, because the linker
+    stores no score on the review row. A pair that no longer satisfies the rule
+    (e.g. an `entry_date` moved after queueing) reports `0.00`.
+    """
+
+    confidence: Decimal
+
+
+class TransferReviewItem(BaseModel):  # type: ignore[explicit-any]
+    """One pending transfer question, with its outbound leg and candidates."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: int
+    outbound: TransferReviewLegOut
+    candidates: list[TransferReviewCandidateOut]
+    reason: Literal["multi_candidate", "low_confidence"]
+    created_at: datetime
+
+
+class TransferReviewStats(BaseModel):  # type: ignore[explicit-any]
+    """Queue depth by reason. `total` is the pending count, always the sum."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    multi_candidate: int
+    low_confidence: int
+    total: int
+
+
+class ConfirmTransferRequest(_Write):  # type: ignore[explicit-any]
+    """Which candidate a confirm decision picks.
+
+    Required when the review holds more than one candidate; the single
+    candidate of a `low_confidence` review is used when this is absent. An id
+    that is not on the review's stored candidate list is a 400, never a guess.
+    """
+
+    candidate_journal_line_id: int | None = None
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Categories and categorization rules
+# ──────────────────────────────────────────────────────────────────────
+#
+# The rule set is plain text on purpose (section I): a substring plus a
+# priority integer, readable on one screen and editable by hand. These
+# schemas are that text on the wire — never the domain `CategoryRule`
+# dataclass, which carries matcher behaviour (`matches()`) that has no
+# business in a request body or a JSON response.
+
+
+class CategoryCreateRequest(_Write):  # type: ignore[explicit-any]
+    """A user-created category.
+
+    No `id`: the database hands it out, and a client-chosen id would collide
+    the way account ids do (see `AccountCreateRequest`). `kind` is the
+    closed `CategoryKind` enum, so an unknown kind fails at the edge with a
+    422 rather than at the migration's CHECK with a 500-shaped surprise.
+    `is_system` is absent on purpose: only seeded rows carry it, and a
+    request must not be able to mint one.
+    """
+
+    name: str = Field(min_length=1, max_length=200)
+    kind: CategoryKind
+    parent_id: int | None = Field(default=None, ge=1)
+
+
+class CategoryRuleCreateRequest(_Write):  # type: ignore[explicit-any]
+    """A hand-authored categorization rule.
+
+    `description_pattern` is a plain substring, stripped of surrounding
+    whitespace on the way in — so a blank pattern fails `min_length` here
+    with a 422 instead of landing as a row that matches nothing (or, worse,
+    everything). `priority` defaults to 100, the hand-rule tier that always
+    outranks learned rules (see `LEARNED_RULE_PRIORITY`). `is_learned` is
+    absent on purpose: a rule authored here is never "learned", and the
+    router forces that rather than trusting the body.
+    """
+
+    description_pattern: str = Field(min_length=1)
+    category_id: int = Field(ge=1)
+    priority: int = 100
+
+
+class CategoryRuleSummary(BaseModel):  # type: ignore[explicit-any]
+    """One stored rule, hand or learned, as the rule screen reads it.
+
+    Read-only and frozen like every other response model here. `confidence`
+    is the `NUMERIC(3,2)` the matcher scores with, rendered as a decimal —
+    never a float — because a second money-adjacent float on the wire is a
+    second place for rounding to disagree with the ledger.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: int
+    description_pattern: str | None
+    priority: int
+    category_id: int
+    is_learned: bool
+    confidence: Decimal
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Merchants and merchant aliases (LifeOS-8 layers 2-4 curation)
+# ──────────────────────────────────────────────────────────────────────
+#
+# The rows the matcher reads: `load_known_merchants` resolves merchants to a
+# category (layer 3) and `load_aliases` resolves raw strings to a category
+# (layer 2). These schemas are those rows on the wire — never the domain
+# dataclasses, which carry matcher behaviour (`matches()`) that has no
+# business in a request body or a JSON response.
+#
+# Response models are frozen `BaseModel`s, request models inherit `_Write`:
+# the same split the categories section above uses. There is no separate
+# `_ReadOnly` base in this module; frozen-plus-forbid IS the read-only idiom.
+
+
+class MerchantSummary(BaseModel):  # type: ignore[explicit-any]
+    """One canonical merchant, as the curation screen reads it.
+
+    `category_id` is None when the name is known but unfiled: such a row
+    feeds neither layer 3 nor layer 4, which is the honest answer for a name
+    nobody categorised.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: int
+    name: str
+    category_id: int | None
+
+
+class MerchantCreateRequest(_Write):  # type: ignore[explicit-any]
+    """A new canonical merchant, optionally filed to a category already.
+
+    No `id`: the database hands it out, and a client-chosen id would collide
+    the way account ids do (see `AccountCreateRequest`). A blank name fails
+    `min_length` here with a 422 instead of landing as a row the substring
+    match can never meaningfully use.
+    """
+
+    name: str = Field(min_length=1, max_length=500)
+    category_id: int | None = Field(default=None, ge=1)
+
+
+class MerchantUpdateRequest(_Write):  # type: ignore[explicit-any]
+    """What a merchant edit may change.
+
+    Both fields optional and an absent field means "leave alone", so this is
+    a PATCH and not a PUT: an explicit `category_id: null` CLEARS the
+    category (back to known-but-unfiled) while an absent field leaves it —
+    read via `model_fields_set`, never via the default. A blank name is
+    still a 422.
+    """
+
+    name: str | None = Field(default=None, min_length=1, max_length=500)
+    category_id: int | None = Field(default=None, ge=1)
+
+
+class MerchantAliasSummary(BaseModel):  # type: ignore[explicit-any]
+    """One stored alias, as the curation screen reads it.
+
+    `confidence` is the `NUMERIC(3,2)` layer 2 scores with, rendered as a
+    decimal — never a float — for the same reason `CategoryRuleSummary`
+    states: a curated alias is a deliberate mapping, so it defaults to
+    1.00 and clears the `is_auto` bar.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: int
+    raw_string: str
+    merchant_id: int | None
+    category_id: int | None
+    confidence: Decimal
+
+
+class MerchantAliasCreateRequest(_Write):  # type: ignore[explicit-any]
+    """A new raw-string mapping.
+
+    At least one of `category_id` / `merchant_id` is required — enforced in
+    the router, not here, because "at least one of two" is not a shape either
+    field carries alone. `confidence` defaults to 1.00: a curated alias is a
+    deliberate mapping, not a guess, and must clear layer 2's `is_auto` bar
+    of 0.90. A blank `raw_string` fails `min_length` with a 422.
+    """
+
+    raw_string: str = Field(min_length=1, max_length=500)
+    category_id: int | None = Field(default=None, ge=1)
+    merchant_id: int | None = Field(default=None, ge=1)
+    confidence: Decimal = Field(
+        default=Decimal("1.00"), ge=Decimal("0"), le=Decimal("1")
+    )
+
+
+class MerchantAliasUpdateRequest(_Write):  # type: ignore[explicit-any]
+    """What an alias edit may change.
+
+    All fields optional with PATCH semantics: an explicit null clears while
+    an absent field leaves the row alone — read via `model_fields_set`. The
+    raw string itself is immutable: it is the match key, and renaming it is
+    a delete plus a create, not an edit.
+    """
+
+    category_id: int | None = Field(default=None, ge=1)
+    merchant_id: int | None = Field(default=None, ge=1)
+    confidence: Decimal | None = Field(default=None, ge=Decimal("0"), le=Decimal("1"))

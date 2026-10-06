@@ -31,6 +31,7 @@ You can run `probe` against SANDBOX first. Note the sandbox ASPSP list is NOT
 the production list — the Revolut answer must be re-confirmed in production
 later by activating production in "restricted mode" (link your own accounts).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -40,7 +41,9 @@ import json
 import os
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 try:
     from cryptography import x509
@@ -48,8 +51,10 @@ try:
     from cryptography.hazmat.primitives.asymmetric import padding, rsa
     from cryptography.x509.oid import NameOID
 except ImportError:
-    sys.exit("Missing dependency. Install it with:\n    uv pip install cryptography\n"
-             "or: pip install cryptography")
+    sys.exit(
+        "Missing dependency. Install it with:\n    uv pip install cryptography\n"
+        "or: pip install cryptography"
+    )
 
 # ── Credential location ──────────────────────────────────────────────────────
 # Credentials live OUTSIDE the git working tree, on purpose.
@@ -79,7 +84,6 @@ LEGACY_REPO_KEY_DIR = Path(__file__).resolve().parent.parent / ".eb-keys"
 SEARCH_DIRS = (KEY_DIR, DOWNLOADS, LEGACY_REPO_KEY_DIR, Path.home() / ".eb-keys")
 
 
-
 def discover_key() -> Path | None:
     """Find the RSA private key without being told where it is."""
     candidates: list[Path] = []
@@ -97,7 +101,7 @@ def discover_key() -> Path | None:
             blob = c.read_bytes()
         except OSError:
             continue
-        if b"PRIVATE KEY" in blob:   # matches PKCS#1 and PKCS#8 PEM headers
+        if b"PRIVATE KEY" in blob:  # matches PKCS#1 and PKCS#8 PEM headers
             return c
     return None
 
@@ -129,19 +133,31 @@ def discover_cert(near: Path | None = None) -> Path | None:
 def app_id_from_filename(key: Path) -> str | None:
     """EB names the downloaded key "<app_id>.pem". Recover the UUID from it."""
     import re
-    m = re.match(r"^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}"
-                 r"-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})", key.stem)
+
+    m = re.match(
+        r"^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}"
+        r"-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})",
+        key.stem,
+    )
     return m.group(1) if m else None
 
 
 API_BASE = "https://api.enablebanking.com"
 
 # Fields we care about, in report order.
-INTERESTING = ("name", "country", "maximum_consent_validity", "auth_methods",
-               "required_psu_headers", "beta", "psu_type")
+INTERESTING = (
+    "name",
+    "country",
+    "maximum_consent_validity",
+    "auth_methods",
+    "required_psu_headers",
+    "beta",
+    "psu_type",
+)
 
 
 # ─────────────────────────────── keygen ───────────────────────────────
+
 
 def cmd_keygen(_args: argparse.Namespace) -> int:
     """Generate a 4096-bit RSA key and a self-signed certificate.
@@ -156,13 +172,20 @@ def cmd_keygen(_args: argparse.Namespace) -> int:
     (the -subj avoids an interactive prompt that the plain command triggers)
     """
     repo = Path(__file__).resolve().parent.parent
-    if KEY_DIR.resolve() == (repo / ".eb-keys").resolve() or repo in KEY_DIR.resolve().parents:
-        sys.exit(f"REFUSING to write credentials inside the repository: {KEY_DIR}\n"
-                 f"  A private key cannot be regenerated. Keep it outside the working tree.\n"
-                 f"  Unset EB_KEY_DIR to use the default: {DEFAULT_KEY_DIR}")
+    if (
+        KEY_DIR.resolve() == (repo / ".eb-keys").resolve()
+        or repo in KEY_DIR.resolve().parents
+    ):
+        sys.exit(
+            f"REFUSING to write credentials inside the repository: {KEY_DIR}\n"
+            f"  A private key cannot be regenerated. Keep it outside the working tree.\n"
+            f"  Unset EB_KEY_DIR to use the default: {DEFAULT_KEY_DIR}"
+        )
 
     if KEY_PATH.exists():
-        print(f"ERROR: {KEY_PATH} already exists. Delete it first if you want to regenerate.")
+        print(
+            f"ERROR: {KEY_PATH} already exists. Delete it first if you want to regenerate."
+        )
         print("       Rotating a key invalidates the previously uploaded certificate,")
         print("       which can orphan an Enable Banking app. See SAFETY.md.")
         return 1
@@ -172,22 +195,26 @@ def cmd_keygen(_args: argparse.Namespace) -> int:
 
     key = rsa.generate_private_key(public_exponent=65537, key_size=4096)
 
-    KEY_PATH.write_bytes(key.private_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=serialization.NoEncryption(),
-    ))
+    KEY_PATH.write_bytes(
+        key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+    )
     os.chmod(KEY_PATH, 0o600)
 
-    subject = x509.Name([
-        x509.NameAttribute(NameOID.COMMON_NAME, "lifeos-enable-banking"),
-        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "LifeOS (personal)"),
-    ])
+    subject = x509.Name(
+        [
+            x509.NameAttribute(NameOID.COMMON_NAME, "lifeos-enable-banking"),
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "LifeOS (personal)"),
+        ]
+    )
     now = dt.datetime.now(dt.timezone.utc)
     cert = (
         x509.CertificateBuilder()
         .subject_name(subject)
-        .issuer_name(subject)              # self-signed
+        .issuer_name(subject)  # self-signed
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - dt.timedelta(minutes=5))
@@ -234,8 +261,8 @@ def cmd_keygen(_args: argparse.Namespace) -> int:
     return 0
 
 
-
 # ──────────────────────────────── probe ────────────────────────────────
+
 
 def b64url(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
@@ -303,19 +330,22 @@ def load_key() -> rsa.RSAPrivateKey:
         print(f"(using discovered private key: {found})")
         key = serialization.load_pem_private_key(found.read_bytes(), password=None)
     if not isinstance(key, rsa.RSAPrivateKey):
-        sys.exit(f"{KEY_PATH} is not an RSA private key (found {type(key).__name__}).\n"
-                 f"  Enable Banking requires RSA. Re-generate with:\n"
-                 f"    openssl genrsa -out private.key 4096")
+        sys.exit(
+            f"{KEY_PATH} is not an RSA private key (found {type(key).__name__}).\n"
+            f"  Enable Banking requires RSA. Re-generate with:\n"
+            f"    openssl genrsa -out private.key 4096"
+        )
     return key
 
 
-def load_cert():
+def load_cert() -> x509.Certificate | None:
     if not CRT_PATH.exists():
         return None
     return x509.load_pem_x509_certificate(CRT_PATH.read_bytes())
 
 
 # ─────────────────────────────── verify ───────────────────────────────
+
 
 def cmd_verify(_args: argparse.Namespace) -> int:
     """Check that the private key and certificate exist, match, and are RSA.
@@ -333,10 +363,13 @@ def cmd_verify(_args: argparse.Namespace) -> int:
     print(f"private key : {found_key or '(not found)'}")
     print(f"certificate : {found_crt or '(not found)'}")
     try:
-        shown_app_id = (APP_ID_PATH.read_text().strip() if APP_ID_PATH.exists()
-                        else os.environ.get("EB_APP_ID")
-                        or (app_id_from_filename(found_key) if found_key else None)
-                        or "(not set)")
+        shown_app_id = (
+            APP_ID_PATH.read_text().strip()
+            if APP_ID_PATH.exists()
+            else os.environ.get("EB_APP_ID")
+            or (app_id_from_filename(found_key) if found_key else None)
+            or "(not set)"
+        )
     except OSError:
         shown_app_id = "(not set)"
     print(f"app_id      : {shown_app_id}")
@@ -355,7 +388,9 @@ def cmd_verify(_args: argparse.Namespace) -> int:
             mode = oct(found_key.stat().st_mode & 0o777)
             print(f"OK    private key loads, {key.key_size}-bit RSA  (mode {mode})")
             if key.key_size < 2048:
-                print(f"FAIL  key is only {key.key_size} bits; Enable Banking wants 2048 or more")
+                print(
+                    f"FAIL  key is only {key.key_size} bits; Enable Banking wants 2048 or more"
+                )
                 ok = False
             if mode not in ("0o600", "0o400"):
                 print(f"WARN  key mode is {mode}; tighten with: chmod 600 {found_key}")
@@ -376,22 +411,30 @@ def cmd_verify(_args: argparse.Namespace) -> int:
 
     if cert is None:
         print("WARN  no certificate found — you cannot create the app without one")
-        print("      For a browser-generated key, Enable Banking saves both the .pem and")
+        print(
+            "      For a browser-generated key, Enable Banking saves both the .pem and"
+        )
         print("      the .crt to ~/Downloads. Otherwise generate one with 'keygen'.")
     else:
         subject = cert.subject.rfc4514_string()
         issuer = cert.issuer.rfc4514_string()
         self_signed = subject == issuer
         # cryptography >= 42 exposes *_utc properties; 41 only has naive ones.
-        not_before = getattr(cert, "not_valid_before_utc", None) or cert.not_valid_before.replace(
-            tzinfo=dt.timezone.utc)
-        not_after = getattr(cert, "not_valid_after_utc", None) or cert.not_valid_after.replace(
-            tzinfo=dt.timezone.utc)
+        not_before = getattr(
+            cert, "not_valid_before_utc", None
+        ) or cert.not_valid_before.replace(tzinfo=dt.timezone.utc)
+        not_after = getattr(
+            cert, "not_valid_after_utc", None
+        ) or cert.not_valid_after.replace(tzinfo=dt.timezone.utc)
         days_left = (not_after - dt.datetime.now(dt.timezone.utc)).days
         print(f"OK    certificate parses  subject={subject}")
-        print(f"      self-signed: {self_signed}"
-              f"{'' if self_signed else '   <-- EB expects a self-signed cert'}")
-        print(f"      valid {not_before:%Y-%m-%d} -> {not_after:%Y-%m-%d}  ({days_left} days left)")
+        print(
+            f"      self-signed: {self_signed}"
+            f"{'' if self_signed else '   <-- EB expects a self-signed cert'}"
+        )
+        print(
+            f"      valid {not_before:%Y-%m-%d} -> {not_after:%Y-%m-%d}  ({days_left} days left)"
+        )
         if days_left < 0:
             print("FAIL  certificate has EXPIRED — upload a fresh one")
             ok = False
@@ -407,20 +450,22 @@ def cmd_verify(_args: argparse.Namespace) -> int:
         else:
             print("FAIL  private key does NOT match the certificate.")
             print("      This is the #1 cause of a 401 from Enable Banking.")
-            print("      Re-upload the certificate that matches this key, or use the other key.")
+            print(
+                "      Re-upload the certificate that matches this key, or use the other key."
+            )
             ok = False
 
     if shown_app_id == "(not set)":
         print()
         print("NEXT  no app_id yet. Copy it from the Control Panel, then re-run with:")
-        print(f"      python3 tools/probe_aspsps.py --app-id <uuid> probe")
+        print("      python3 tools/probe_aspsps.py --app-id <uuid> probe")
 
     print()
     print("RESULT:", "ready to probe" if ok else "NOT ready - fix the FAILs above")
     return 0 if ok else 1
 
 
-def http_get(url: str, token: str) -> tuple[int, bytes, dict]:
+def http_get(url: str, token: str) -> tuple[int, bytes, dict[str, str]]:
     """Minimal HTTPS GET. Uses urllib so this script has one dependency, not two."""
     import urllib.error
     import urllib.request
@@ -455,7 +500,9 @@ def cmd_probe(args: argparse.Namespace) -> int:
         print()
         if status in (401, 403):
             print("Likely causes:")
-            print("  - The JWT is signed with a different key than the certificate you uploaded.")
+            print(
+                "  - The JWT is signed with a different key than the certificate you uploaded."
+            )
             print("  - The app_id does not match the uploaded certificate.")
             print("  - The app is still 'pending' in the Control Panel.")
         return 1
@@ -466,20 +513,34 @@ def cmd_probe(args: argparse.Namespace) -> int:
     print(f"HTTP 200 — {len(aspsps)} ASPSPs for {args.country}")
     print()
 
-    wanted = ("rabobank", "revolut", "bunq", "ing", "abn amro", "abnamro",
-              "asps bank", "sns bank", "regiobank", "knab", "triodos", "de Volksbank")
+    wanted = (
+        "rabobank",
+        "revolut",
+        "bunq",
+        "ing",
+        "abn amro",
+        "abnamro",
+        "asps bank",
+        "sns bank",
+        "regiobank",
+        "knab",
+        "triodos",
+        "de Volksbank",
+    )
 
-    def matches(a: dict) -> bool:
-        name = (a.get("name") or "").lower()
-        return any(w in name for w in wanted)
+    def matches(a: dict[str, object]) -> bool:
+        name = cast("str", a.get("name") or "")
+        return any(w in name.lower() for w in wanted)
 
     print("=" * 78)
     print("  THE ANSWER")
     print("=" * 78)
-    for label, probe_names in (("Rabobank", ("rabobank",)),
-                               ("Revolut", ("revolut",))):
-        hits = [a for a in aspsps
-                if any(p in (a.get("name") or "").lower() for p in probe_names)]
+    for label, probe_names in (("Rabobank", ("rabobank",)), ("Revolut", ("revolut",))):
+        hits = [
+            a
+            for a in aspsps
+            if any(p in (a.get("name") or "").lower() for p in probe_names)
+        ]
         if hits:
             print(f"  {label:10} FOUND   -> {[h.get('name') for h in hits]}")
         else:
@@ -503,8 +564,9 @@ def cmd_probe(args: argparse.Namespace) -> int:
     for a in interesting:
         methods = a.get("auth_methods")
         if methods:
-            non_redirect = [m for m in methods
-                            if isinstance(m, str) and "redirect" not in m.lower()]
+            non_redirect = [
+                m for m in methods if isinstance(m, str) and "redirect" not in m.lower()
+            ]
             flag = "  <-- CHECK THIS" if non_redirect else ""
             print(f"  {a.get('name'):24} {methods}{flag}")
     print()
@@ -526,14 +588,19 @@ def cmd_probe(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument("--key", help="path to your existing RSA private key")
     p.add_argument("--crt", help="path to your existing certificate")
     p.add_argument("--app-id", help="app_id UUID, instead of writing it to a file")
     sub = p.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("keygen", help="generate RSA key + self-signed cert").set_defaults(fn=cmd_keygen)
-    sub.add_parser("verify", help="check your key/cert pair before calling the API").set_defaults(fn=cmd_verify)
+    sub.add_parser("keygen", help="generate RSA key + self-signed cert").set_defaults(
+        fn=cmd_keygen
+    )
+    sub.add_parser(
+        "verify", help="check your key/cert pair before calling the API"
+    ).set_defaults(fn=cmd_verify)
     probe = sub.add_parser("probe", help="call GET /aspsps and summarize")
     probe.add_argument("--country", default="NL")
     probe.set_defaults(fn=cmd_probe)
@@ -549,7 +616,8 @@ def main() -> int:
     if args.app_id:
         os.environ["EB_APP_ID"] = args.app_id
 
-    return args.fn(args)
+    fn = cast("Callable[[argparse.Namespace], int]", args.fn)
+    return fn(args)
 
 
 if __name__ == "__main__":

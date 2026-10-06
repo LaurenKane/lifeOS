@@ -52,9 +52,14 @@ dev = [
 
 [project.scripts]
 lifeos = "main:app"
+lifeos-cli = "cli:main"
 
 [tool.ruff]
 line-length = 88
+# tools/bankparse/ is a frozen EVIDENCE RECORD, not live code: the reference
+# parsers that produced docs/research/11-real-export-verification.md and ADR
+# 0003. It stays as-is and is covered by that doc, not by tests or lint.
+extend-exclude = ["tools/bankparse"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "B", "C", "T"]
@@ -66,8 +71,14 @@ select = ["E", "F", "I", "N", "W", "B", "C", "T"]
 # Generated revision stubs follow Alembic's fixed layout, and the CLI's whole
 # job is printing to stdout.
 "backend/*/alembic/versions/*.py" = ["E501"]
+# A command line that cannot print is not a command line: reporting a replay
+# on stdout (and refusing one on stderr) is what `cli.py` is for.
+"backend/cli.py" = ["T201"]
 # FastAPI's dependency-injection idiom is a call in a default argument.
 "backend/finance/api/routes/imports.py" = ["B008"]
+# These two are command-line tools whose whole job is printing to stdout.
+"tools/probe_aspsps.py" = ["T201", "E501", "C901"]
+"tools/rm_guard.py" = ["T201", "E501", "C901"]
 
 [tool.mypy]
 strict = true
@@ -76,9 +87,20 @@ warn_unreachable = true
 ignore_missing_imports = false
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
+# tools/bankparse/ is a frozen EVIDENCE RECORD, not live code (see the
+# extend-exclude note under [tool.ruff]); it is covered by
+# docs/research/11-real-export-verification.md, not by the typecheck.
+exclude = '^tools/bankparse/'
 # backend/ is the import root, so `core` and `finance` are top-level packages.
 mypy_path = "backend"
 explicit_package_bases = false
+
+# `cryptography` is an optional credential-tooling dependency for the live
+# tool tools/probe_aspsps.py (LifeOS-17), not an application dependency.
+# Prefer this override over adding a runtime dependency.
+[[tool.mypy.overrides]]
+module = ["cryptography", "cryptography.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 # backend/tests is cross-module only; a module's own tests live beside it in

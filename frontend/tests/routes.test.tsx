@@ -25,21 +25,30 @@ import { TransactionsProvider } from "@/features/finance/transactions/provider";
 import { ReviewProvider } from "@/features/finance/review/provider";
 import { ImportsProvider } from "@/features/finance/imports/provider";
 import { BudgetsProvider } from "@/features/finance/budgets/provider";
+import { CategoriesProvider } from "@/features/finance/categories/provider";
 
-/** Mount the full provider + route tree at the given path. */
+/** Mount the full provider + route tree at the given path.
+ *
+ * The nesting matches `src/main.tsx`, which is the whole point of this helper:
+ * a provider tree here that differs from the app's is a test that passes against
+ * a shape the product never runs. `CategoriesProvider` sits outside
+ * `TransactionsProvider` for the same reason it does there — the transactions
+ * list reads the category names. */
 function renderAt(path: string) {
   const router = createMemoryRouter(Routes, { initialEntries: [path] });
   return render(
     <AccountsProvider>
-      <TransactionsProvider>
-        <ReviewProvider>
-          <ImportsProvider>
-            <BudgetsProvider>
-              <RouterProvider router={router} />
-            </BudgetsProvider>
-          </ImportsProvider>
-        </ReviewProvider>
-      </TransactionsProvider>
+      <CategoriesProvider>
+        <TransactionsProvider>
+          <ReviewProvider>
+            <ImportsProvider>
+              <BudgetsProvider>
+                <RouterProvider router={router} />
+              </BudgetsProvider>
+            </ImportsProvider>
+          </ReviewProvider>
+        </TransactionsProvider>
+      </CategoriesProvider>
     </AccountsProvider>,
   );
 }
@@ -74,7 +83,9 @@ describe("route tree", () => {
   it.each([
     ["/finance/accounts", "Accounts", /no accounts yet/i],
     ["/finance/transactions", "Transactions", /nothing recorded yet/i],
-    ["/finance/review", "Review queue", /no items in review queue/i],
+    ["/finance/review", "Review queue", /nothing in the queue/i],
+    ["/finance/categories", "Categories", /no categories at all/i],
+    ["/finance/categories/rules", "Categorization rules", /no rules yet/i],
     ["/finance/imports", "Imports", /no import batches/i],
     ["/finance/budgets", "Budgets", /no budgets defined/i],
   ])("renders the %s page", async (path, heading, emptyText) => {

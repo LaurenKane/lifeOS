@@ -12,16 +12,65 @@
  * worth stating where the temptation is. It says what will happen before it is
  * pressed, the request is sent, and the ledger's refusal is shown in its own
  * words. The record stays exactly where it was.
+ *
+ * THE CATEGORY FIELD IS A PICKER, AND THE REMEMBER BOX IS OFF.
+ *
+ * It used to be a monospace text box holding a raw `category_id`. That asked
+ * the user to know an internal identifier, which is the one thing nobody
+ * standing at a transaction can do, and it made the whole ledger's spending
+ * taxonomy unreadable from the screen where you correct it. `CategoryPicker`
+ * replaces it with the names, grouped by kind.
+ *
+ * The "remember this payee" checkbox is the other half, and its default is
+ * UNCHECKED, which is a correctness decision rather than a cautious one:
+ *
+ *   - A correction and a lesson are different acts. You fix this transaction;
+ *     you do not decide what every future transaction from the same payee means.
+ *   - The learned rule is stored at priority 500 and outlives the correction. It
+ *     keeps firing long after this screen is closed, and it is only deleted by
+ *     going to the rules page and removing it by name.
+ *   - A silently-taught rule is a rule the user never saw. This product's
+ *     position is that the user owns the data and overrides the machine, and a
+ *     machine that teaches without asking has stopped being overridable in the
+ *     one place it matters most.
+ *
+ * The confirmation reports the server's `learned` flag and not what was asked
+ * for. Those differ: a description that reduces to no learnable pattern is
+ * refused with a 422, and "remembered" printed over a lesson nobody was taught
+ * is the exact failure this screen exists to avoid.
  */
 import React from "react";
 import { Link, useParams } from "react-router-dom";
 import { AppShell } from "@/components/AppShell";
 import { Amount, Field, Notice, PageHeader, Panel, Skeleton } from "@/components/primitives";
 import { describeError } from "@/lib/apiClient";
+import { CategoryPicker } from "@/features/finance/categories/category-picker";
+import { categoryName } from "@/features/finance/categories/category-name";
+import { useCategoriesContext } from "@/features/finance/categories/use-categories";
 import { useTransactionsContext, useTransaction } from "./use-transactions";
 import type { DeleteOutcome } from "./use-transactions";
 
 const COUNTER_ACCOUNT_NAME = "Expenses (system)";
+
+/** What the last save did, in words. The four outcomes are genuinely different
+ * facts about the ledger and none of them can be derived from the other.
+ *
+ * The remembered case names NO pattern, and that is deliberate. The stored
+ * pattern is `stable_payee_pattern(raw_description)`: trailing numeric tokens
+ * dropped, at most four leading tokens kept, lowercased. Computing that here
+ * would be a second implementation of a server rule that can change, and it
+ * would be wrong the moment it did — printing a pattern that is not the one
+ * stored is worse than printing none. So the confirmation says a rule was
+ * stored and links to the rules page, which is where the actual text is
+ * readable. */
+type SavedState =
+  | { kind: "corrected"; categoryName: string }
+  /* Asked to remember, and the server says it stored the lesson. */
+  | { kind: "remembered"; categoryName: string }
+  /* Asked to remember, and the server says it did not — with the reason, which
+   * is the only part that says what to do next. */
+  | { kind: "not-remembered"; categoryName: string; reason: string }
+  | { kind: "empty" };
 
 export const TransactionDetailPage: React.FC = () => {
   const params = useParams();
@@ -29,15 +78,36 @@ export const TransactionDetailPage: React.FC = () => {
   const { data, loading, error, reload } = useTransaction(id === null || Number.isNaN(id) ? null : id);
   const { updateTransaction, deleteTransaction } = useTransactionsContext();
 
-  const [category, setCategory] = React.useState("");
+  const { categories } = useCategoriesContext();
+  const [categoryId, setCategoryId] = React.useState("");
+  const [remember, setRemember] = React.useState(false);
   const [entryDate, setEntryDate] = React.useState("");
   const [saving, setSaving] = React.useState(false);
-  const [saved, setSaved] = React.useState<string | null>(null);
+  const [saved, setSaved] = React.useState<SavedState | null>(null);
   const [refused, setRefused] = React.useState<string | null>(null);
   const [outcome, setOutcome] = React.useState<DeleteOutcome | null>(null);
   const [asking, setAsking] = React.useState(false);
 
   const record = data;
+
+  /* The chosen category as a CATEGORY, so every sentence below can name it
+   * rather than print an id. Three states, and the difference matters:
+   *
+   *   - `categoryId === ""` — nothing picked. The default, and the reason the
+   *     remember box is disabled.
+   *   - picked, and the id is in the list — the ordinary case.
+   *   - picked, and the id is NOT in the list — only reachable if the category
+   *     read failed or the record names a category this build cannot see. The
+   *     picker cannot produce it, so `chosen` is undefined and `chosenId` is
+   *     still sent, because the record's own id is a real answer and refusing to
+   *     save it would be worse than saying what it is.
+   */
+  const pickedId = categoryId === "" ? null : Number.parseInt(categoryId, 10);
+  const chosen =
+    pickedId === null || Number.isNaN(pickedId)
+      ? null
+      : categories.find((category) => category.id === pickedId);
+  const chosenId = pickedId !== null && !Number.isNaN(pickedId) ? pickedId : undefined;
 
   const save = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -51,24 +121,57 @@ export const TransactionDetailPage: React.FC = () => {
       // Only what the user actually touched. An absent field means "leave
       // alone" to a PATCH; sending `entry_date` unchanged would silently
       // restate a value this screen cannot read back.
-      const patch: { category_id?: number; entry_date?: string } = {};
-      if (category.trim() !== "") {
-        const parsed = Number.parseInt(category.trim(), 10);
-        if (Number.isNaN(parsed) || parsed < 1) {
-          throw new Error("A category is a ledger id — a whole number of 1 or more.");
+      const patch: { category_id?: number; entry_date?: string; learn?: boolean } = {};
+      if (chosenId !== undefined) {
+        patch.category_id = chosenId;
+        /* `learn` travels ONLY when it was ticked AND there is a category to
+         * teach. The server keys a learned rule on the record's own frozen
+         * `raw_description`, so `learn` without a category is a flag attached to
+         * nothing — and sending it anyway would be claiming an intention the
+         * request cannot carry out. */
+        if (remember) {
+          patch.learn = true;
         }
-        patch.category_id = parsed;
       }
       if (entryDate.trim() !== "") {
         patch.entry_date = entryDate;
       }
       if (Object.keys(patch).length === 0) {
-        setSaved("Nothing to change. Fill in a category or an entry date.");
+        setSaved({ kind: "empty" });
       } else {
-        await updateTransaction(record.id, patch);
-        setCategory("");
+        const updated = await updateTransaction(record.id, patch);
+        const named = categoryName(chosen, chosenId ?? record.category_id ?? 0);
+        /* `learn` was only sent alongside a category, so a "remembered"
+           confirmation always has one to name. The guard is here because this
+           function has three branches and the two that do not remember must not
+           be able to print `undefined` into a sentence about the ledger. */
+        /* The three outcomes, decided on the response's own `learned` flag and
+         * not on what the form asked for. A description that reduces to no
+         * learnable pattern comes back with `learned` false and a 422 or an
+         * ignored flag, and the correction still stands — so the message says
+         * the correction landed AND that nothing was taught, rather than
+         * collapsing both into "saved". */
+        setSaved(
+          remember && updated.learned
+            ? {
+                kind: "remembered",
+                categoryName: named,
+              }
+            : remember
+              ? {
+                  kind: "not-remembered",
+                  categoryName: named,
+                  reason:
+                    "The ledger accepted the category but stored no rule for this description.",
+                }
+              : { kind: "corrected", categoryName: named },
+        );
+        setCategoryId("");
         setEntryDate("");
-        setSaved("Saved. This is what the ledger holds now.");
+        /* The checkbox resets too, and not for tidiness: leaving it ticked means
+         * the NEXT correction on this record would also teach, silently, which is
+         * the behaviour this affordance exists to prevent. */
+        setRemember(false);
         reload();
       }
     } catch (cause) {
@@ -164,11 +267,28 @@ export const TransactionDetailPage: React.FC = () => {
                       all accounts
                     </Link>
                   </Row>
+                  {/* The category by NAME, with its id beside it. This row used to
+                      print a bare `category_id`, which is the same defect the
+                      picker was introduced to fix, in the one place a user reads
+                      what a transaction currently is. The id stays: it is what the
+                      ledger and every other screen agree on. */}
                   <Row term="Category">
                     {record.category_id === null ? (
                       <span className="text-money-out">none — still in the queue</span>
                     ) : (
-                      <span className="font-mono">{record.category_id}</span>
+                      <span className="flex flex-wrap items-baseline gap-x-2">
+                        <span className="font-medium">
+                          {categoryName(
+                            categories.find(
+                              (candidate) => candidate.id === record.category_id,
+                            ),
+                            record.category_id,
+                          )}
+                        </span>
+                        <span className="font-mono text-xs text-muted-foreground">
+                          id {record.category_id}
+                        </span>
+                      </span>
                     )}
                   </Row>
                   <Row term="Journal entry">
@@ -235,17 +355,66 @@ export const TransactionDetailPage: React.FC = () => {
                 <Field
                   label="Category"
                   htmlFor="txn-category"
-                  hint="The id of the category this belongs to. Setting it takes the row out of the queue."
+                  hint={
+                    pickedId === null
+                      ? record.category_id === null
+                        ? "This transaction has no category, which is why it is in the queue. Choosing one here files it."
+                        : "Choosing a category files this transaction under it. Leave empty to change nothing."
+                      : `This transaction will be filed as ${categoryName(chosen, pickedId)}.`
+                  }
                 >
-                  <input
+                  <CategoryPicker
                     id="txn-category"
-                    className="field font-mono"
-                    inputMode="numeric"
-                    value={category}
-                    placeholder={record.category_id === null ? "not set" : `${record.category_id}`}
-                    onChange={(event) => setCategory(event.target.value)}
+                    value={categoryId}
+                    onChange={setCategoryId}
+                    placeholder={
+                      record.category_id === null
+                        ? "No category — pick one to file it"
+                        : "Change the category"
+                    }
                   />
                 </Field>
+
+                {/* The learn affordance. A checkbox, unchecked, with the
+                    consequence in the same block as the control — not in a
+                    tooltip, not on the rules page, not remembered from last time.
+                    The consequence is the whole point: a learned rule outlives
+                    this correction and keeps firing. */}
+                <div
+                  className={
+                    chosen === null
+                      ? "rounded-md bg-ground px-3 py-3 opacity-60"
+                      : "rounded-md bg-ground px-3 py-3"
+                  }
+                >
+                  <label
+                    htmlFor="txn-learn"
+                    className="flex cursor-pointer items-start gap-2.5"
+                  >
+                    <input
+                      id="txn-learn"
+                      type="checkbox"
+                      checked={remember}
+                      /* Disabled until a category is chosen, because a lesson
+                         needs a lesson's subject: the server keys a learned rule
+                         on this transaction's own description, so there is
+                         nothing to teach without saying what it means. */
+                      disabled={chosen === null}
+                      onChange={(event) => setRemember(event.target.checked)}
+                      className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-primary"
+                    />
+                    <span className="min-w-0">
+                      <span className="block text-sm font-medium">
+                        Remember this payee
+                      </span>
+                      <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
+                        {pickedId === null
+                          ? "Choose a category first. There is nothing to remember until the transaction says what it is."
+                          : `Future descriptions from this payee will be filed as ${categoryName(chosen, pickedId)} without asking. It is saved as a rule at priority 500, below any rule you wrote by hand, and it keeps applying until you delete it on the rules page.`}
+                      </span>
+                    </span>
+                  </label>
+                </div>
 
                 <Field
                   label="Entry date"
@@ -261,7 +430,49 @@ export const TransactionDetailPage: React.FC = () => {
                   />
                 </Field>
 
-                {saved !== null && <Notice tone="info" label="Saved">{saved}</Notice>}
+                {saved !== null && (
+                  <Notice
+                    tone={saved.kind === "not-remembered" ? "warning" : "info"}
+                    label={
+                      saved.kind === "remembered"
+                        ? "Filed, and remembered"
+                        : saved.kind === "not-remembered"
+                          ? "Filed — but not remembered"
+                          : saved.kind === "empty"
+                            ? "Nothing to change"
+                            : "Filed"
+                    }
+                  >
+                    {saved.kind === "remembered" && (
+                      <>
+                        This transaction is {saved.categoryName}, and a learned rule
+                        now points at it, so the next description from this payee
+                        arrives already filed. The rule matches on the payee's stable
+                        text, not on the order reference, so the next one can carry a
+                        different number.{" "}
+                        <Link
+                          to="/finance/categories/rules"
+                          className="underline decoration-dotted underline-offset-2"
+                        >
+                          See the rule
+                        </Link>
+                        .
+                      </>
+                    )}
+                    {saved.kind === "not-remembered" && (
+                      <>
+                        This transaction is {saved.categoryName}. {saved.reason} The
+                        next one from this payee will ask again.
+                      </>
+                    )}
+                    {saved.kind === "corrected" && (
+                      <>This transaction is now {saved.categoryName}. Only this one changed.</>
+                    )}
+                    {saved.kind === "empty" && (
+                      <>Pick a category or fill in an entry date. Nothing has been sent.</>
+                    )}
+                  </Notice>
+                )}
                 {refused !== null && (
                   <Notice tone="error" label="The ledger refused this">
                     {refused}
@@ -298,3 +509,5 @@ const Row: React.FC<{
     <dd className="mt-1 text-sm">{children}</dd>
   </div>
 );
+
+

@@ -14,6 +14,8 @@ import { AccountsPage } from "@/features/finance/accounts/page";
 import { TransactionsPage } from "@/features/finance/transactions/page";
 import { TransactionDetailPage } from "@/features/finance/transactions/detail";
 import { ReviewPage } from "@/features/finance/review/page";
+import { CategoriesPage } from "@/features/finance/categories/page";
+import { RulesPage } from "@/features/finance/categories/rules-page";
 import { ImportsPage } from "@/features/finance/imports/page";
 import { BudgetsPage } from "@/features/finance/budgets/page";
 import { OverviewPage } from "@/features/finance/overview/page";
@@ -42,6 +44,18 @@ export const Routes: RouteObject[] = [
   {
     path: "/finance/review",
     element: <ReviewPage />,
+  },
+  {
+    // The two halves of the categorization surface. The rules screen is the
+    // editable set and the category screen is the inventory it points at; both
+    // are static, so both rank above the `/finance/transactions/:id` segment
+    // regardless of the order they are declared in.
+    path: "/finance/categories/rules",
+    element: <RulesPage />,
+  },
+  {
+    path: "/finance/categories",
+    element: <CategoriesPage />,
   },
   {
     path: "/finance/imports",

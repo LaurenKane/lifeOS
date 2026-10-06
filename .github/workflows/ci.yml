@@ -60,17 +60,17 @@ jobs:
         run: uv sync --frozen --extra dev
 
       - name: ruff check
-        run: uv run --frozen ruff check backend
+        run: uv run --frozen ruff check backend tools
 
       - name: ruff format --check
-        run: uv run --frozen ruff format --check backend
+        run: uv run --frozen ruff format --check backend tools
 
       # --strict with disallow_any_explicit is set in pyproject.toml and must
       # not be relaxed. The targeted `# type: ignore[explicit-any]` comments
       # on pydantic model classes are deliberate: pydantic's own generics widen
       # the type, and those classes are verified not to mask a real Any.
       - name: mypy
-        run: uv run --frozen mypy --strict backend
+        run: uv run --frozen mypy --strict backend tools
 
       # testpaths in pyproject.toml covers backend/tests, the finance module's
       # own tests, and the repo-level tests/ directory. The addopts there

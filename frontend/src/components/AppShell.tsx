@@ -22,11 +22,23 @@
 import React from "react";
 import { NavLink } from "react-router-dom";
 
+/* ONE ENTRY FOR TWO SCREENS, AND THE `end` PROP IS WHAT MAKES IT ONE.
+ *
+ * `/finance/categories` and `/finance/categories/rules` are two addresses for
+ * one subject, and a masthead that lists both would be a navigation offering
+ * the same choice twice. "Categories" goes to the inventory; the rules screen
+ * links to it and back, so a user who arrived at the rules by typing a URL is
+ * one click from the categories and vice versa.
+ *
+ * `end` is set on the link, so "Categories" stays quiet while the rules screen
+ * is open. Without it React Router would mark both active, which on a masthead
+ * means two lit items and no indication of which page you are on. */
 const NAV: ReadonlyArray<{ to: string; label: string }> = [
   { to: "/", label: "Overview" },
   { to: "/finance/accounts", label: "Accounts" },
   { to: "/finance/transactions", label: "Transactions" },
   { to: "/finance/review", label: "Review" },
+  { to: "/finance/categories", label: "Categories" },
   { to: "/finance/imports", label: "Imports" },
   { to: "/finance/budgets", label: "Budgets" },
 ];
@@ -64,7 +76,16 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
             sections the bug wins. The gap is the gap. */}
         <nav aria-label="Sections" className="flex flex-wrap items-center gap-x-1 gap-y-1">
           {NAV.map((item) => (
-            <NavLink key={item.to} to={item.to} end={item.to === "/"} className={linkClass}>
+            <NavLink
+              key={item.to}
+              to={item.to}
+              /* Exact matching on every entry, not just the root. A prefix match
+                 would light "Transactions" while the record page is open and
+                 "Categories" while the rules screen is — the same two-lit-item
+                 defect the masthead comment above describes. */
+              end
+              className={linkClass}
+            >
               {item.label}
             </NavLink>
           ))}

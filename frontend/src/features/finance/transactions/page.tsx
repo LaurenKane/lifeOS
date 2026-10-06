@@ -26,9 +26,12 @@ import { Amount, EmptyState, Field, Notice, PageHeader, Panel, Skeleton } from "
 import { describeError } from "@/lib/apiClient";
 import { currencyDecimals, formatMinorUnits, parseSignedAmount, todayIso } from "@/lib/money";
 import { cn } from "@/lib/utils";
+import { categoryName } from "@/features/finance/categories/category-name";
+import { useCategoriesContext } from "@/features/finance/categories/use-categories";
 import { useAccountsContext } from "../accounts/use-accounts";
 import { useTransactionsContext, useUncategorized } from "./use-transactions";
 import type { TransactionSummary } from "./types";
+import type { Category } from "@/features/finance/categories/types";
 
 /** A row's cadence, capped so a long list arrives as a cascade rather than a
  * queue. The cap lives here, next to the constant it applies to. */
@@ -40,6 +43,7 @@ const stagger = (index: number): React.CSSProperties => ({
 
 export const TransactionsPage: React.FC = () => {
   const { data, loading, error, reload } = useTransactionsContext();
+  const { categories } = useCategoriesContext();
   const [queueOnly, setQueueOnly] = React.useState(false);
   const queue = useUncategorized(queueOnly);
 
@@ -124,6 +128,7 @@ export const TransactionsPage: React.FC = () => {
                 <TransactionRow
                   key={transaction.id}
                   transaction={transaction}
+                  categories={categories}
                   style={stagger(index)}
                 />
               ))}
@@ -172,8 +177,12 @@ const STATUS_TONE: Record<string, string> = {
 
 const TransactionRow: React.FC<{
   transaction: TransactionSummary;
+  /** Passed down rather than read from context here, because the row is a plain
+   * presentational component and taking the list as an argument is what lets it
+   * be rendered in a test without mounting a provider. */
+  categories: readonly Category[];
   style: React.CSSProperties;
-}> = ({ transaction, style }) => (
+}> = ({ transaction, categories, style }) => (
   <li className="rise-row" style={style}>
     <Link
       to={`/finance/transactions/${transaction.id}`}
@@ -202,8 +211,24 @@ const TransactionRow: React.FC<{
               no category
             </span>
           ) : (
-            <span className="font-mono text-xs text-muted-foreground">
-              {transaction.category_id}
+            /* The category's NAME, with the id kept beside it. A bare number
+               here was the same defect the detail page's picker fixed, one
+               screen earlier: the list is where a user decides which
+               transaction to open, and "12" cannot tell them whether they are
+               looking at groceries or a transfer. The id stays because it is what
+               the ledger agrees on and what a user quotes when checking a rule. */
+            <span className="flex flex-wrap items-baseline gap-x-1.5 text-xs text-muted-foreground">
+              <span>
+                {categoryName(
+                  categories.find(
+                    (candidate) => candidate.id === transaction.category_id,
+                  ),
+                  transaction.category_id,
+                )}
+              </span>
+              <span className="font-mono text-[0.6875rem] tabular-nums opacity-70">
+                {transaction.category_id}
+              </span>
             </span>
           )}
         </span>

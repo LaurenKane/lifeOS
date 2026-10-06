@@ -29,6 +29,7 @@ from main import create_app
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import DBAPIError
 
+from finance.api.transfer_linker import link_transfers
 from finance.db import get_engine, get_sessionmaker
 from finance.domain.services.manual_posting import SYSTEM_EXPENSE_ACCOUNT_NAME
 
@@ -834,6 +835,60 @@ class TestReimportAndInvariants:
                         ),
                         {"id": record_id},
                     )
+
+
+# ---------------------------------------------------------------------------
+# The generic transfer sweep leaves a card payment alone
+# ---------------------------------------------------------------------------
+
+
+class TestLinkerLeavesCardPaymentsAlone:
+    def test_link_transfers_adds_no_match_over_a_card_payment(
+        self, client: TestClient, engine: Engine, seeded: dict[str, int]
+    ) -> None:
+        """The card payment's match is the card writer's, not the sweep's.
+
+        After both statements land there is exactly one `transfer_match`
+        (`auto_card_payment`): the paying leg is real, the missing side is
+        synthesized, and the generic sweep must not link a placeholder to a
+        stranger. Running `link_transfers` over that ledger adds zero matches
+        and the stored row is byte-for-byte the one the import wrote.
+        """
+        upload(
+            client,
+            amex(AMEX_JULY),
+            provider="amex_pdf",
+            account_id=seeded["card"],
+            filename=AMEX_JULY,
+        )
+        upload(
+            client,
+            rabo(RABO_JUNE),
+            provider="rabobank_pdf",
+            account_id=seeded["checking"],
+            filename=RABO_JUNE,
+        )
+        before = _rows(
+            engine,
+            "SELECT match_method, confidence, journal_line_id_out,"
+            " journal_line_id_in, confirmed_at FROM finance.transfer_match"
+            " ORDER BY id",
+        )
+        assert len(before) == 1, before
+        assert before[0][0] == "auto_card_payment"
+
+        with get_sessionmaker()() as session:
+            with session.begin():
+                report = link_transfers(session)
+
+        assert report.auto_matched == 0, report
+        after = _rows(
+            engine,
+            "SELECT match_method, confidence, journal_line_id_out,"
+            " journal_line_id_in, confirmed_at FROM finance.transfer_match"
+            " ORDER BY id",
+        )
+        assert after == before
 
 
 class TestCardPaymentIsNotUncategorisedSpending:

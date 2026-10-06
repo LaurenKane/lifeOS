@@ -128,8 +128,19 @@ _SUMMARY_HEADER_RE = re.compile(
 _CLOSING_LABEL_RE = re.compile(r"Closing")
 _BALANCE_LABEL_RE = re.compile(r"\bBalance\b")
 _PAGE_NUMBER_RE = re.compile(r"Page\s+\d+\s+of\s+\d+")
+# The running header repeats at the top of every page, just after the form feed:
+# "EUR Statement", the generated stamp "Generated on the <d> <Mon> <year>", then
+# the bank name. The stamp carries its date, so an earlier version that matched
+# the bare prefix "Generated on the" as a whole line left the dated line in the
+# body; `_absorb_continuation` then folded it onto the last row of the previous
+# page as a wrapped-description tail (LifeOS-qvv). Anchored to the WHOLE line, so
+# a genuine wrapped description can never be mistaken for the stamp, and the date
+# is optional so a statement that prints a bare stamp is still covered.
 _RUNNING_HEADER_RE = re.compile(
-    r"^\s*(EUR Statement|Generated on the|Revolut Bank UAB \(Netherlands Branch\))\s*$"
+    r"^\s*(?:EUR Statement"
+    r"|Generated on the(?:\s+\d{1,2}\s+[A-Z][a-z]{2,4}\s+\d{4})?"
+    r"|Revolut Bank UAB \(Netherlands Branch\))\s*$",
+    re.I,
 )
 
 _IBAN_RE = re.compile(r"\b([A-Z]{2}\d{2}[A-Z0-9]{10,30})\b")
@@ -524,7 +535,12 @@ def iter_transactions(
     return [
         _finish(
             item,
-            section_name_for=_section_of(product),
+            # The ROW's product, not the loop's: `product` still holds the
+            # LAST section's name by the time this comprehension runs, so
+            # reading it here attributed every row of the file to that
+            # section — all 340 Account rows landed on the Deposit account.
+            # Each staged row carries the section it was parsed under.
+            section_name_for=_section_of(item.product),
             account_id_for=lambda name: per_section.get(
                 name, account_id if name == "account" else None
             ),

@@ -10,17 +10,23 @@ keeping the choice written down so it is not re-derived.
 `docs/ARCHITECTURE-PROPOSAL.md` §E defines ~15 tables in one flat list with no schema
 qualification. Two things make the placement question real rather than cosmetic.
 
-**One: the `no_cross_schema_fk` invariant forbids qualified references.** `invariants.yaml`
-declares it as a `forbid_regex` over `backend/`:
+**One: the `no_cross_schema_fk` invariant forbids qualified references.** It was
+once a `forbid_regex` over `backend/` in `invariants.yaml`:
 
 ```
 (?i)\bREFERENCES\s+(?!\s*"?public"?\s*\.\s*)"?([a-z_][a-z0-9_]*)"?\s*\.
 ```
 
-So `REFERENCES core.currency(code)` fails CI while unqualified `REFERENCES currency(code)` is
-allowed. The regex inspects only the `REFERENCES` keyword, so `CREATE TABLE finance.x` is
-invisible to it — the invariant constrains how tables may point at each other, not where they
-may be declared.
+That static checker — file and regex together — was deleted in commit
+`8bdfd57`, and the invariant is now enforced where a regex never could reach:
+the `trg_no_cross_schema_fk` event trigger on `ddl_command_end`, installed by
+`backend/db_bootstrap.sql`. It aborts any DDL that creates a cross-schema FK,
+in the DDL's own transaction, even for the superuser role the app runs as
+(a superuser bypasses USAGE/GRANT checks, so grants were never an option).
+The shape of the rule is unchanged: it constrains how tables may point at
+each other, not where they may be declared — so `REFERENCES
+core.currency(code)` is refused at DDL time while unqualified
+`REFERENCES currency(code)` and `CREATE TABLE finance.x` are untouched.
 
 **Two: §E is a single FK-connected graph, not a set of independent tables.** `account` →
 `institution` and `currency`; `exchange_rate` → `currency`; `source_record` → `import_batch`,
@@ -41,8 +47,8 @@ preference) and the **`core` Postgres schema** (created by the `db_bootstrap` st
 
 This is not a tradeoff. Splitting §E is **unimplementable** under the project's own invariant:
 moving `currency`, `institution`, `account` or `import_batch` into `core` forces every table
-that references them to write `REFERENCES core.<table>`, which `no_cross_schema_fk` rejects.
-There is no version of "reference tables in `core`" that passes CI.
+that references them to write `REFERENCES core.<table>`, which the event trigger refuses at
+DDL time. There is no version of "reference tables in `core`" that the database will accept.
 
 ### Why not use `public`
 
@@ -80,6 +86,8 @@ that owns no table still owns a schema, because migration history is per-schema
   `make db-shell` sets `PGOPTIONS` so humans get the same resolution as the application.
 - **The `GRANT ALL ON SCHEMA core|finance TO lifeos` in the bootstrap is not an enforcement of
   `no_cross_schema_fk`.** A role owning both schemas can create a cross-schema foreign key
-  freely. The regex is the enforcement; the grants are convenience. Tightening this to a role
-  that does not hold `USAGE` on the other schema is deferred, and is tracked as its own bead
-  rather than folded into M1.
+  freely, and this role is a superuser besides, so a USAGE revoke would bind nobody. The
+  enforcement is the `trg_no_cross_schema_fk` event trigger: it aborts cross-schema DDL
+  even for the superuser. Tightening this further to a non-superuser per-schema DDL role
+  is a deliberate future option, not needed today — the trigger binds every writer the
+  project actually has.

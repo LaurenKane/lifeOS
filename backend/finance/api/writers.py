@@ -54,7 +54,7 @@ exactly the divergence `manual_posting.py` was extracted to prevent.
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Final, Protocol
@@ -336,6 +336,7 @@ def open_import_batch(
     source_filename: str | None = None,
     source_checksum: str | None = None,
     raw_payload: object | None = None,
+    section_account_ids: Mapping[str, int] | None = None,
     stats: dict[str, object] | None = None,
 ) -> int:
     """Open an `import_batch` and return its id.
@@ -361,6 +362,11 @@ def open_import_batch(
         source_checksum: SHA-256 of the uploaded bytes.
         raw_payload: What a replay reads. JSONB, so a caller that stores a file
             gzips and base64s it first — see `routes/imports.py`.
+        section_account_ids: The per-section account mapping the upload used
+            (Revolut Account/Deposit), stored so a replay re-attributes each
+            row exactly as the import did. Copied rather than kept by
+            reference, because the caller's dict outlives this call and a
+            later mutation must not rewrite what the batch remembers.
         stats: JSONB counters. Defaults to `{}` at the column level.
 
     Returns:
@@ -383,6 +389,7 @@ def open_import_batch(
         source_filename=source_filename,
         source_checksum=source_checksum,
         raw_payload=raw_payload,
+        section_account_ids=dict(section_account_ids) if section_account_ids else None,
         stats=dict(stats or {}),
         completed_at=func.now(),
     )
@@ -516,6 +523,30 @@ def _add_source_record(
     return record.id
 
 
+def _attach_source_record(
+    session: Session,
+    *,
+    record: SourceRecord,
+    journal_entry_id: int | None,
+    status: TransactionStatus,
+    error_message: str | None,
+) -> int:
+    """Point an existing `source_record` at a (re-)built entry and return its id.
+
+    The replay path (`finance.api.replay`): the raw side already exists, so no
+    new row is inserted and no fingerprint is computed — computing one would hit
+    `uq_sr_fingerprint` on the row it came from. Only the three columns the
+    immutability trigger does NOT protect are written: `journal_entry_id`,
+    `status` and `error_message`. Everything else on the record is evidence and
+    stays exactly as the import left it.
+    """
+    record.journal_entry_id = journal_entry_id
+    record.status = status.value
+    record.error_message = error_message
+    session.flush()
+    return record.id
+
+
 def write_posted_transaction(
     session: Session,
     *,
@@ -531,6 +562,7 @@ def write_posted_transaction(
     provider_txn_id: str | None = None,
     status: TransactionStatus = TransactionStatus.POSTED,
     leg_builder: LegBuilder | None = None,
+    source_record_id: int | None = None,
 ) -> int:
     """Write one `source_record` and post it to the ledger. Return its id.
 
@@ -584,12 +616,17 @@ def write_posted_transaction(
             implementation of that arithmetic anywhere in the API. A caller that
             substitutes something else is running a test, and says so in a comment
             where it does it.
+        source_record_id: An existing `source_record` to re-link instead of
+            inserting one. The replay path: no fingerprint is computed and
+            `uq_sr_fingerprint` is never touched. None is the normal path — a
+            new row for a new transaction — and every current caller passes it.
 
     Returns:
         The new `source_record` id.
 
     Raises:
         ReferenceNotFound: `funding_account_id` names no account → 404.
+            `source_record_id` names no record, when one is given.
         PostingRefused: unknown currency, missing FX rate, a currency that
             contradicts its account, or a counter-leg the domain rules refuse →
             422.
@@ -662,19 +699,30 @@ def write_posted_transaction(
             )
         )
 
-    return _add_source_record(
+    if source_record_id is None:
+        return _add_source_record(
+            session,
+            batch_id=batch_id,
+            account_id=funding.id,
+            description=description,
+            amount=stored,
+            booked_date=booked_date,
+            raw_data=raw_data,
+            raw_posting_date=raw_posting_date,
+            occurrence_index=occurrence_index,
+            provider_txn_id=provider_txn_id,
+            status=status,
+            journal_entry_id=entry.id,
+            error_message=None,
+        )
+    record = session.get(SourceRecord, source_record_id)
+    if record is None:
+        raise ReferenceNotFound("source_record", source_record_id)
+    return _attach_source_record(
         session,
-        batch_id=batch_id,
-        account_id=funding.id,
-        description=description,
-        amount=stored,
-        booked_date=booked_date,
-        raw_data=raw_data,
-        raw_posting_date=raw_posting_date,
-        occurrence_index=occurrence_index,
-        provider_txn_id=provider_txn_id,
-        status=status,
+        record=record,
         journal_entry_id=entry.id,
+        status=status,
         error_message=None,
     )
 
@@ -693,6 +741,7 @@ def write_unposted_transaction(
     occurrence_index: int = 1,
     provider_txn_id: str | None = None,
     status: TransactionStatus = TransactionStatus.PENDING,
+    source_record_id: int | None = None,
 ) -> int:
     """Store one parsed row WITHOUT posting it, and return its id.
 
@@ -739,12 +788,16 @@ def write_unposted_transaction(
         provider_txn_id: The provider's own id, or None.
         status: `PENDING` puts the row in the uncategorised queue's sibling index
             (`idx_sr_open_pending`); `IMPORTED` leaves it raw and unclaimed.
+        source_record_id: An existing `source_record` to re-link instead of
+            inserting one. The replay path: the unposted state is restored onto
+            the same row. None inserts, as before.
 
     Returns:
         The new `source_record` id, with no `journal_entry_id`.
 
     Raises:
         ReferenceNotFound: `account_id` names no account → 404.
+            `source_record_id` names no record, when one is given.
     """
     if status is TransactionStatus.POSTED:
         msg = (
@@ -753,19 +806,30 @@ def write_unposted_transaction(
         )
         raise ValueError(msg)
     _require_account(session, account_id)
-    return _add_source_record(
+    if source_record_id is None:
+        return _add_source_record(
+            session,
+            batch_id=batch_id,
+            account_id=account_id,
+            description=description,
+            amount=amount,
+            booked_date=booked_date,
+            raw_data=raw_data,
+            raw_posting_date=raw_posting_date,
+            occurrence_index=occurrence_index,
+            provider_txn_id=provider_txn_id,
+            status=status,
+            journal_entry_id=None,
+            error_message=error_message,
+        )
+    record = session.get(SourceRecord, source_record_id)
+    if record is None:
+        raise ReferenceNotFound("source_record", source_record_id)
+    return _attach_source_record(
         session,
-        batch_id=batch_id,
-        account_id=account_id,
-        description=description,
-        amount=amount,
-        booked_date=booked_date,
-        raw_data=raw_data,
-        raw_posting_date=raw_posting_date,
-        occurrence_index=occurrence_index,
-        provider_txn_id=provider_txn_id,
-        status=status,
+        record=record,
         journal_entry_id=None,
+        status=status,
         error_message=error_message,
     )
 
@@ -973,6 +1037,7 @@ def _attach_card_payment_source(
     raw_posting_date: dt.date | None,
     occurrence_index: int,
     provider_txn_id: str | None,
+    source_record_id: int | None = None,
 ) -> int:
     """Attach the incoming row to an EXISTING entry and store the match."""
     _insert_transfer_match(
@@ -983,19 +1048,30 @@ def _attach_card_payment_source(
         confidence=confidence,
         confirmed=confirmed,
     )
-    return _add_source_record(
+    if source_record_id is None:
+        return _add_source_record(
+            session,
+            batch_id=batch_id,
+            account_id=account_id,
+            description=description,
+            amount=amount,
+            booked_date=booked_date,
+            raw_data=raw_data,
+            raw_posting_date=raw_posting_date,
+            occurrence_index=occurrence_index,
+            provider_txn_id=provider_txn_id,
+            status=TransactionStatus.POSTED,
+            journal_entry_id=entry_id,
+            error_message=None,
+        )
+    record = session.get(SourceRecord, source_record_id)
+    if record is None:
+        raise ReferenceNotFound("source_record", source_record_id)
+    return _attach_source_record(
         session,
-        batch_id=batch_id,
-        account_id=account_id,
-        description=description,
-        amount=amount,
-        booked_date=booked_date,
-        raw_data=raw_data,
-        raw_posting_date=raw_posting_date,
-        occurrence_index=occurrence_index,
-        provider_txn_id=provider_txn_id,
-        status=TransactionStatus.POSTED,
+        record=record,
         journal_entry_id=entry_id,
+        status=TransactionStatus.POSTED,
         error_message=None,
     )
 
@@ -1039,6 +1115,7 @@ def _rewrite_posted_expense_as_card_payment(
     raw_posting_date: dt.date | None,
     occurrence_index: int,
     provider_txn_id: str | None,
+    source_record_id: int | None = None,
 ) -> int:
     """Turn an already-posted expense entry into the card-payment transfer.
 
@@ -1102,6 +1179,7 @@ def _rewrite_posted_expense_as_card_payment(
         raw_posting_date=raw_posting_date,
         occurrence_index=occurrence_index,
         provider_txn_id=provider_txn_id,
+        source_record_id=source_record_id,
     )
 
 
@@ -1135,6 +1213,7 @@ def _attach_auto(
     entry_id: int,
     out_line_id: int,
     in_line_id: int,
+    source_record_id: int | None = None,
 ) -> int:
     """Attach the row to an existing entry with the automatic match method."""
     return _attach_card_payment_source(
@@ -1154,6 +1233,7 @@ def _attach_auto(
         raw_posting_date=ctx.raw_posting_date,
         occurrence_index=ctx.occurrence_index,
         provider_txn_id=ctx.provider_txn_id,
+        source_record_id=source_record_id,
     )
 
 
@@ -1163,6 +1243,7 @@ def _build_new_card_payment_entry(
     *,
     statement_account_id: int,
     synthesized_account_id: int,
+    source_record_id: int | None = None,
 ) -> int:
     """The first import for a payment: real leg + synthesized missing leg."""
     legs = build_card_payment_legs(
@@ -1183,24 +1264,40 @@ def _build_new_card_payment_entry(
     session.add(entry)
     session.flush()
     _write_card_payment_legs(session, entry_id=entry.id, legs=flagged)
-    return _add_source_record(
+    if source_record_id is None:
+        return _add_source_record(
+            session,
+            batch_id=ctx.batch_id,
+            account_id=statement_account_id,
+            description=ctx.description,
+            amount=ctx.stored,
+            booked_date=ctx.booked_date,
+            raw_data=ctx.raw_data,
+            raw_posting_date=ctx.raw_posting_date,
+            occurrence_index=ctx.occurrence_index,
+            provider_txn_id=ctx.provider_txn_id,
+            status=TransactionStatus.POSTED,
+            journal_entry_id=entry.id,
+            error_message=None,
+        )
+    record = session.get(SourceRecord, source_record_id)
+    if record is None:
+        raise ReferenceNotFound("source_record", source_record_id)
+    return _attach_source_record(
         session,
-        batch_id=ctx.batch_id,
-        account_id=statement_account_id,
-        description=ctx.description,
-        amount=ctx.stored,
-        booked_date=ctx.booked_date,
-        raw_data=ctx.raw_data,
-        raw_posting_date=ctx.raw_posting_date,
-        occurrence_index=ctx.occurrence_index,
-        provider_txn_id=ctx.provider_txn_id,
-        status=TransactionStatus.POSTED,
+        record=record,
         journal_entry_id=entry.id,
+        status=TransactionStatus.POSTED,
         error_message=None,
     )
 
 
-def _write_card_statement_row(session: Session, ctx: _CardPaymentContext) -> int:
+def _write_card_statement_row(
+    session: Session,
+    ctx: _CardPaymentContext,
+    *,
+    source_record_id: int | None = None,
+) -> int:
     """The card statement's row: match a synthesized card leg, rewrite, or build."""
     candidates = _find_synthesized_card_payment_legs(
         session,
@@ -1222,6 +1319,7 @@ def _write_card_statement_row(session: Session, ctx: _CardPaymentContext) -> int
                 session, entry_id=entry_id, account_id=ctx.paying.id
             ),
             in_line_id=candidates[0].journal_line_id,
+            source_record_id=source_record_id,
         )
 
     expenses = _find_posted_expense_counterparts(
@@ -1249,16 +1347,23 @@ def _write_card_statement_row(session: Session, ctx: _CardPaymentContext) -> int
             raw_posting_date=ctx.raw_posting_date,
             occurrence_index=ctx.occurrence_index,
             provider_txn_id=ctx.provider_txn_id,
+            source_record_id=source_record_id,
         )
     return _build_new_card_payment_entry(
         session,
         ctx,
         statement_account_id=ctx.card.id,
         synthesized_account_id=ctx.paying.id,
+        source_record_id=source_record_id,
     )
 
 
-def _write_paying_statement_row(session: Session, ctx: _CardPaymentContext) -> int:
+def _write_paying_statement_row(
+    session: Session,
+    ctx: _CardPaymentContext,
+    *,
+    source_record_id: int | None = None,
+) -> int:
     """The paying statement's row: match a synthesized paying leg, or build."""
     candidates = _find_synthesized_card_payment_legs(
         session,
@@ -1280,12 +1385,14 @@ def _write_paying_statement_row(session: Session, ctx: _CardPaymentContext) -> i
             in_line_id=_real_line_in_entry(
                 session, entry_id=entry_id, account_id=ctx.card.id
             ),
+            source_record_id=source_record_id,
         )
     return _build_new_card_payment_entry(
         session,
         ctx,
         statement_account_id=ctx.paying.id,
         synthesized_account_id=ctx.card.id,
+        source_record_id=source_record_id,
     )
 
 
@@ -1303,6 +1410,7 @@ def write_card_payment(
     raw_posting_date: dt.date | None = None,
     occurrence_index: int = 1,
     provider_txn_id: str | None = None,
+    source_record_id: int | None = None,
 ) -> int:
     """Write one flagged card payment, matching the other side if it exists.
 
@@ -1335,12 +1443,15 @@ def write_card_payment(
         raw_posting_date: A second date the provider stated, when any.
         occurrence_index: This row's content-only rank in its batch.
         provider_txn_id: The provider's own id, or None on the v1 PDF paths.
+        source_record_id: An existing `source_record` to re-link instead of
+            inserting one. The replay path. None inserts, as before.
 
     Returns:
         The new `source_record` id, linked to a posted `journal_entry`.
 
     Raises:
         ReferenceNotFound: An account id names no account → 404.
+            `source_record_id` names no record, when one is given.
         PostingRefused: A missing rate, a currency mismatch, or two candidates
             for the other side → 422. The caller stores the row unposted.
     """
@@ -1386,8 +1497,10 @@ def write_card_payment(
         provider_txn_id=provider_txn_id,
     )
     if statement_account_id == card.id:
-        return _write_card_statement_row(session, ctx)
-    return _write_paying_statement_row(session, ctx)
+        return _write_card_statement_row(
+            session, ctx, source_record_id=source_record_id
+        )
+    return _write_paying_statement_row(session, ctx, source_record_id=source_record_id)
 
 
 def leg_count(session: Session, *, source_record_id: int) -> int:
