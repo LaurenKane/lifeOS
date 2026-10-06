@@ -24,6 +24,7 @@ import { TransactionsProvider } from "@/features/finance/transactions/provider";
 import { ReviewProvider } from "@/features/finance/review/provider";
 import { ImportsProvider } from "@/features/finance/imports/provider";
 import { BudgetsProvider } from "@/features/finance/budgets/provider";
+import { CategoriesProvider } from "@/features/finance/categories/provider";
 
 const ACCOUNT = {
   id: 1,
@@ -86,19 +87,28 @@ const stubApi = (handlers: Record<string, (init?: RequestInit) => { status: numb
   return calls;
 };
 
+/** Mount the full provider tree, matching `src/main.tsx`.
+ *
+ * `CategoriesProvider` sits between the two, and the order is load-bearing: the
+ * transactions list reads the category names to show a category instead of a bare
+ * id, so a provider nested inside its own consumer would throw on first render.
+ * A test tree that differs from the app's is a test that passes against a shape
+ * the product never runs. */
 const renderAt = (path: string) => {
   const router = createMemoryRouter(Routes, { initialEntries: [path] });
   return render(
     <AccountsProvider>
-      <TransactionsProvider>
-        <ReviewProvider>
-          <ImportsProvider>
-            <BudgetsProvider>
-              <RouterProvider router={router} />
-            </BudgetsProvider>
-          </ImportsProvider>
-        </ReviewProvider>
-      </TransactionsProvider>
+      <CategoriesProvider>
+        <TransactionsProvider>
+          <ReviewProvider>
+            <ImportsProvider>
+              <BudgetsProvider>
+                <RouterProvider router={router} />
+              </BudgetsProvider>
+            </ImportsProvider>
+          </ReviewProvider>
+        </TransactionsProvider>
+      </CategoriesProvider>
     </AccountsProvider>,
   );
 };
@@ -112,6 +122,22 @@ const baseHandlers = () => ({
   "GET /accounts/natures": () => ({ status: 200, body: ["asset", "liability", "equity"] }),
   "GET /transactions": () => ({ status: 200, body: [TRANSACTION] }),
   "GET /transactions/7": () => ({ status: 200, body: TRANSACTION }),
+  /* The categories the detail page's picker offers. Without these the picker is
+     empty and a correction cannot be expressed at all — which is exactly the
+     state the old raw-id textbox was in and the picker exists to fix. */
+  "GET /categories": () => ({
+    status: 200,
+    body: [
+      { id: 2, name: "Groceries", kind: "expense", is_system: true },
+      { id: 3, name: "Dining out", kind: "expense", is_system: false },
+      { id: 4, name: "Salary", kind: "income", is_system: true },
+    ],
+  }),
+  "GET /categories/kinds": () => ({
+    status: 200,
+    body: ["expense", "income", "transfer", "investment"],
+  }),
+  "GET /categories/rules": () => ({ status: 200, body: [] }),
 });
 
 describe("transactions page", () => {
@@ -309,7 +335,13 @@ describe("transaction detail — deleting", () => {
 
     // Only two fields are ledger facts. An amount box that silently does
     // nothing would be worse than no amount box.
-    expect(screen.getByLabelText(/category/i)).toBeInTheDocument();
+    //
+    // The category field is a SELECT offering names, not a text box asking for
+    // a ledger id: the assertion is on the control's type so a regression back
+    // to the raw-id textbox fails here rather than passing a
+    // `getByLabelText` that both controls satisfy.
+    const picker = screen.getByLabelText(/^category$/i);
+    expect(picker.tagName).toBe("SELECT");
     expect(screen.getByLabelText(/entry date/i)).toBeInTheDocument();
     expect(screen.queryByLabelText(/^amount$/i)).not.toBeInTheDocument();
     expect(screen.getByText(/a correction is a reversal/i)).toBeInTheDocument();
@@ -323,7 +355,9 @@ describe("transaction detail — deleting", () => {
     renderAt("/finance/transactions/7");
     await screen.findByRole("heading", { name: /jumbo 4321/i });
 
-    await userEvent.type(screen.getByLabelText(/category/i), "3");
+    // The id is still what goes on the wire — the picker sends the name's id,
+    // because the id is what the ledger stores and the only thing it accepts.
+    await userEvent.selectOptions(screen.getByLabelText(/^category$/i), "3");
     await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
 
     await waitFor(() => {

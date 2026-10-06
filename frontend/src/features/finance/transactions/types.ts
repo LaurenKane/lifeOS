@@ -48,6 +48,17 @@ export const TransactionSummarySchema = z.object({
   journal_entry_id: z.number().int().nullable(),
   transfer_match_id: z.number().int().nullable(),
   category_id: z.number().int().nullable(),
+  /** True ONLY on the `PATCH` response that taught the system — the correction
+   * was stored as a learned rule in the same transaction. Every other response
+   * carries False, because nothing was learned there.
+   *
+   * So this flag is the answer to "did the correction stick for next time", and
+   * it is not derivable from anything else in the payload: the same category
+   * lands either way. The screen that asks "remember this payee" reports what
+   * came back rather than what it asked for, because the two differ — a
+   * description that normalises to nothing is refused with a 422, and a UI that
+   * claimed success would be claiming a lesson nobody was taught. */
+  learned: z.boolean().default(false),
 });
 export type TransactionSummary = z.infer<typeof TransactionSummarySchema>;
 
@@ -78,6 +89,15 @@ export type ManualTransactionRequest = z.infer<typeof ManualTransactionRequestSc
 export const ManualTransactionUpdateSchema = z.object({
   category_id: z.number().int().min(1).nullable().optional(),
   entry_date: IsoDate.nullable().optional(),
+  /** Teach the system this correction, as well as recording it.
+   *
+   * Only honoured alongside a `category_id` — the server stores a learned rule
+   * keyed on the record's own frozen `raw_description`, so there is nothing to
+   * attach a lesson to without one. Deliberately ABSENT by default rather than
+   * `false`: a correction is a correction, and silently teaching the system is
+   * the one thing on this screen a user did not ask for. The flag is sent only
+   * when the checkbox is ticked. */
+  learn: z.boolean().optional(),
 });
 export type ManualTransactionUpdate = z.infer<typeof ManualTransactionUpdateSchema>;
 
