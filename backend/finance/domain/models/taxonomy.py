@@ -39,31 +39,44 @@ class Merchant(Base):
 
     One row per real merchant, so that eleven different spellings of a
     supermarket collapse onto one identity and one set of transactions.
+    `category_id` is what layers 3-4 match on: a merchant the user filed by
+    hand is a curated fact, and a NULL means the name is known but unfiled,
+    so it feeds nothing.
     """
 
     __tablename__ = "merchant"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    category_id: Mapped[int | None] = mapped_column(
+        ForeignKey("category.id"), nullable=True
+    )
     created_at: Mapped[datetime] = created_at_column()
 
 
 class MerchantAlias(Base):
-    """One observed raw string, and how sure we are it means that merchant.
+    """One observed raw string mapped to a category, with its confidence.
 
-    `raw_string` is the whole point of the table, and it is globally UNIQUE:
-    one string maps to one merchant or the mapping is not a mapping. `confidence`
-    is what the matcher believed at the time, kept rather than overwritten, so a
-    decision that turns out wrong can be found by querying for low confidence
-    instead of by hoping somebody notices.
+    An alias maps `raw_string` to a CATEGORY, not only to a merchant: the
+    canonical `merchant_id` is an optional annotation for a row the system
+    already identified, while `category_id` is what layer 2 actually matches
+    on. `raw_string` is globally UNIQUE: one string maps to one category or
+    the mapping is not a mapping. `confidence` is what the matcher believed
+    at the time, kept rather than overwritten, so a decision that turns out
+    wrong can be found by querying for low confidence instead of by hoping
+    somebody notices. Rows with no `category_id` feed nothing.
     """
 
     __tablename__ = "merchant_alias"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    # CASCADE: an alias with no merchant is a string that matches nothing.
-    merchant_id: Mapped[int] = mapped_column(
-        ForeignKey("merchant.id", ondelete="CASCADE"), nullable=False
+    # Nullable: an alias is raw_string -> category; the canonical merchant is
+    # optional, not the target.
+    merchant_id: Mapped[int | None] = mapped_column(
+        ForeignKey("merchant.id", ondelete="CASCADE"), nullable=True
+    )
+    category_id: Mapped[int | None] = mapped_column(
+        ForeignKey("category.id"), nullable=True
     )
     # 'ALBERT HEIJN 1234 AMSTERDAM' - the bank's string, verbatim and
     # unnormalised. This is the trigram-search key (idx_alias_raw).

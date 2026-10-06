@@ -53,12 +53,15 @@ __all__ = [
 # unrelated words score 0.0, so there is a wide empty band between them.
 FUZZY_THRESHOLD = 0.6
 
-# Confidence assigned to each layer. The two that involve guessing stay low, so
-# a low-confidence result is visibly distinguishable from a rule the user wrote.
+# Confidence assigned to each layer. Layer 3 sits at the auto bar on purpose:
+# a merchant the user categorised by hand is a curated fact like a hand rule,
+# not a guess, so it clears `is_auto` and files the transaction. Layer 4
+# (fuzzy, 0.60) stays below the bar on purpose and is advisory only: persisting
+# a guess would silently drain the review queue.
 _CONFIDENCE: dict[int, Decimal] = {
     1: Decimal("1.00"),
     2: Decimal("0.90"),
-    3: Decimal("0.75"),
+    3: Decimal("0.90"),
     4: Decimal("0.60"),
     5: Decimal("1.00"),
 }

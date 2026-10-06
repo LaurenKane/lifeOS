@@ -36,11 +36,12 @@ from finance.domain.models.taxonomy import CategoryRule as CategoryRuleRow
 from finance.domain.services.categorize import (
     CategorizeResult,
     CategoryRule,
+    MerchantAlias,
     categorize_transaction,
     stable_payee_pattern,
 )
 from finance.ingestion.fingerprint import normalize_description
-from finance.ingestion.rules import load_rules
+from finance.ingestion.rules import load_aliases, load_known_merchants, load_rules
 
 __all__ = [
     "LEARNED_RULE_PRIORITY",
@@ -60,9 +61,13 @@ LEARNED_RULE_PRIORITY: Final = 500
 
 
 def categorize_with_rules(
-    rules: Sequence[CategoryRule], *, description: str
+    rules: Sequence[CategoryRule],
+    *,
+    description: str,
+    merchant_aliases: Sequence[MerchantAlias] = (),
+    known_merchants: dict[str, int] | None = None,
 ) -> CategorizeResult:
-    """Run the engine over preloaded rules with the pipeline normalizer.
+    """Run the engine over preloaded inputs with the pipeline normalizer.
 
     The normalizer is `normalize_description`, not the engine's whitespace
     fallback: the fallback does not strip provider bookkeeping markers, so a
@@ -71,18 +76,28 @@ def categorize_with_rules(
     depend on ingestion.
     """
     return categorize_transaction(
-        description, rules=rules, normalize=normalize_description
+        description,
+        rules=rules,
+        merchant_aliases=merchant_aliases,
+        known_merchants=known_merchants,
+        normalize=normalize_description,
     )
 
 
 def categorize_description(session: Session, *, description: str) -> CategorizeResult:
-    """Run the engine over the currently stored rules. Read-only.
+    """Run the engine over the currently stored rules, aliases and merchants.
 
-    Loads via `load_rules` — the only loader — and matches exactly as
-    `categorize_with_rules` does. Single-shot callers only; row loops
-    preload once and call `categorize_with_rules` instead.
+    Loads via `load_rules`, `load_aliases` and `load_known_merchants` — the
+    only loaders — and matches exactly as `categorize_with_rules` does.
+    Read-only. Single-shot callers only; row loops preload once and call
+    `categorize_with_rules` instead.
     """
-    return categorize_with_rules(load_rules(session), description=description)
+    return categorize_with_rules(
+        load_rules(session),
+        description=description,
+        merchant_aliases=load_aliases(session),
+        known_merchants=load_known_merchants(session),
+    )
 
 
 def categorize_posted_record(
@@ -92,6 +107,8 @@ def categorize_posted_record(
     account_id: int,
     description: str,
     rules: Sequence[CategoryRule] | None = None,
+    merchant_aliases: Sequence[MerchantAlias] | None = None,
+    known_merchants: dict[str, int] | None = None,
 ) -> int | None:
     """Categorize one posted row's funding leg, when the engine is sure.
 
@@ -103,8 +120,9 @@ def categorize_posted_record(
     queue served by `idx_jl_uncat`, and a wrong category is worse than an
     empty one because the user cannot see a category they did not choose.
 
-    `rules` lets row loops preload once instead of once per row; None loads,
-    which is what single-shot callers want.
+    `rules`, `merchant_aliases` and `known_merchants` let row loops preload
+    once instead of once per row; None loads, which is what single-shot
+    callers want.
 
     Returns the persisted category id, or None when the engine declined.
     Never begins or commits; the caller owns the transaction.
@@ -122,7 +140,20 @@ def categorize_posted_record(
     if line_id is None:
         return None
     loaded = load_rules(session) if rules is None else rules
-    result = categorize_with_rules(loaded, description=description)
+    if merchant_aliases is None:
+        loaded_aliases: Sequence[MerchantAlias] = load_aliases(session)
+    else:
+        loaded_aliases = merchant_aliases
+    if known_merchants is None:
+        loaded_merchants: dict[str, int] = load_known_merchants(session)
+    else:
+        loaded_merchants = known_merchants
+    result = categorize_with_rules(
+        loaded,
+        description=description,
+        merchant_aliases=loaded_aliases,
+        known_merchants=loaded_merchants,
+    )
     if not result.is_auto:
         return None
     line = session.get(JournalLine, int(line_id))

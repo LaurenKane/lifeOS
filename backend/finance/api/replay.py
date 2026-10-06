@@ -68,7 +68,7 @@ from finance.api.writers import (
 )
 from finance.domain.models.importer import ImportBatch, SourceRecord
 from finance.domain.models.ledger import JournalEntry, JournalLine
-from finance.ingestion.rules import load_rules
+from finance.ingestion.rules import load_aliases, load_known_merchants, load_rules
 from finance.public import RawRecord, TransactionStatus
 
 __all__ = ["ReplayError", "ReplayReport", "replay_batch"]
@@ -522,6 +522,8 @@ def _categorize(
     the import never restores, because it has nothing to restore.
     """
     rules = load_rules(session)
+    aliases = load_aliases(session)
+    merchants = load_known_merchants(session)
     entry_description: dict[int, str] = {}
     entry_records: dict[int, list[int]] = {}
     rows = session.execute(
@@ -551,7 +553,12 @@ def _categorize(
     applied = 0
     for line in lines:
         description = entry_description[line.journal_entry_id]
-        result = categorize_with_rules(rules, description=description)
+        result = categorize_with_rules(
+            rules,
+            description=description,
+            merchant_aliases=aliases,
+            known_merchants=merchants,
+        )
         if result.is_auto:
             line.category_id = result.category_id
             applied += 1

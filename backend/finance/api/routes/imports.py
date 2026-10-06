@@ -57,7 +57,7 @@ from finance.ingestion.dedupe import (
     fingerprint_account_scope,
 )
 from finance.ingestion.fingerprint import compute_fingerprint
-from finance.ingestion.rules import load_rules
+from finance.ingestion.rules import load_aliases, load_known_merchants, load_rules
 from finance.public import RawRecord, TransactionStatus
 
 router = APIRouter(tags=["finance"], prefix="/imports")
@@ -797,6 +797,8 @@ def _persist(
         # re-reading the whole table per row would be O(rows) queries for a
         # file whose 351 rows already cost one point lookup each.
         rules = load_rules(session)
+        aliases = load_aliases(session)
+        merchants = load_known_merchants(session)
 
         for record, rank in zip(records, ranks, strict=True):
             money = _money(record)
@@ -907,6 +909,8 @@ def _persist(
                 account_id=row_account,
                 description=record.description,
                 rules=rules,
+                merchant_aliases=aliases,
+                known_merchants=merchants,
             )
             created += 1
 
