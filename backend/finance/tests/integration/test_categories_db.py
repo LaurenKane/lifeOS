@@ -191,6 +191,23 @@ class TestCreateCategory:
         )
         assert stored == [(_as_int(parent["id"]),)]
 
+    def test_child_category_lists_its_parent_id(
+        self, client: TestClient, engine: Engine, seeded: dict[str, int]
+    ) -> None:
+        """The tree the UI draws comes from the API: GET lists `parent_id`,
+        None for a root and the parent's id for a child."""
+        del engine, seeded
+        parent = _create_category(client, "Leisure")
+        child = _create_category(client, "Games", parent_id=_as_int(parent["id"]))
+        assert child["parent_id"] == _as_int(parent["id"])
+        assert parent["parent_id"] is None
+
+        response = client.get("/api/v1/categories")
+        assert response.status_code == 200, response.text
+        by_id = {row["id"]: row for row in response.json()}
+        assert by_id[_as_int(child["id"])]["parent_id"] == _as_int(parent["id"])
+        assert by_id[_as_int(parent["id"])]["parent_id"] is None
+
 
 class TestCreateCategoryRefusals:
     def test_duplicate_name_under_same_parent_conflicts(
@@ -320,22 +337,48 @@ class TestRules:
 
 
 class TestDeleteRule:
-    def test_delete_removes_and_repeat_is_not_found(
+    def test_delete_by_id_removes_and_repeat_is_not_found(
         self, client: TestClient, engine: Engine, seeded: dict[str, int]
     ) -> None:
-        """Delete by text removes the row; deleting it again is a 404,
+        """Delete by id removes the row; deleting it again is a 404,
         because deleting nothing and reporting success would make a typo
         look like an edit."""
         del engine, seeded
         dining = _create_category(client, "Dining")
-        _create_rule(client, "jumbo", _as_int(dining["id"]))
+        rule = _create_rule(client, "jumbo", _as_int(dining["id"]))
+        rule_id = _as_int(rule["id"])
 
-        first = client.delete("/api/v1/categories/rules/jumbo")
+        first = client.delete(f"/api/v1/categories/rules/{rule_id}")
         assert first.status_code == 200, first.text
         assert [row["description_pattern"] for row in _rule_list(client)] == []
 
-        repeat = client.delete("/api/v1/categories/rules/jumbo")
+        repeat = client.delete(f"/api/v1/categories/rules/{rule_id}")
         assert repeat.status_code == 404, repeat.text
+
+    def test_delete_rule_whose_pattern_contains_a_slash(
+        self, client: TestClient, engine: Engine, seeded: dict[str, int]
+    ) -> None:
+        """A pattern with '/' lists fine but could never survive a
+        single-segment path delete; by id it deletes like any other."""
+        del engine, seeded
+        dining = _create_category(client, "Dining")
+        rule = _create_rule(client, "bakker/straat", _as_int(dining["id"]))
+        rule_id = _as_int(rule["id"])
+
+        patterns = [row["description_pattern"] for row in _rule_list(client)]
+        assert "bakker/straat" in patterns
+
+        deleted = client.delete(f"/api/v1/categories/rules/{rule_id}")
+        assert deleted.status_code == 200, deleted.text
+        assert [row["description_pattern"] for row in _rule_list(client)] == []
+
+    def test_delete_unknown_rule_id_is_not_found(
+        self, client: TestClient, engine: Engine, seeded: dict[str, int]
+    ) -> None:
+        """An id naming no row is a 404, not a silent success."""
+        del engine, seeded
+        response = client.delete("/api/v1/categories/rules/999999")
+        assert response.status_code == 404, response.text
 
 
 class TestRuleTieIn:

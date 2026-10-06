@@ -3,11 +3,15 @@
  *
  * The behaviours asserted here are the ones that would make this page lie:
  *
- *   1. THE GROUPING IS BY KIND AND THE PAGE SAYS WHY. `CategorySummary` does not
- *      carry `parent_id`, so the screen cannot draw a tree and does not pretend
- *      to. The test asserts the caveat is stated, because a page that quietly
- *      showed a flat list under a heading implying hierarchy would be a
- *      fabricated tree on a finance screen.
+ *   1. THE TREE IS DRAWN FROM `parent_id`, INSIDE THE KIND SECTIONS. `kind`
+ *      decides a balance's sign, so it is what a section is named after, and
+ *      the parent nests within one. The tests assert a child renders under its
+ *      parent, and assert the page says why a parent and a child may be of
+ *      different kinds rather than quietly re-homing the child.
+ *
+ *      The seed data here has no parent, so the nesting assertions bring their
+ *      own categories — which is also the point: a flat list must not be
+ *      mistaken for a working tree just because the shipped categories are flat.
  *
  *   2. SYSTEM CATEGORIES ARE VISIBLE AND MARKED. They are the ones a transaction
  *      can be filed under, so hiding them makes the page wrong — but they carry
@@ -28,10 +32,15 @@ import { ReviewProvider } from "@/features/finance/review/provider";
 import { ImportsProvider } from "@/features/finance/imports/provider";
 import { BudgetsProvider } from "@/features/finance/budgets/provider";
 
-const GROCERIES = { id: 12, name: "Groceries", kind: "expense", is_system: true } as const;
-const SALARY = { id: 40, name: "Salary", kind: "income", is_system: true } as const;
-const TRANSFER = { id: 55, name: "Own transfer", kind: "transfer", is_system: false } as const;
+const GROCERIES = { id: 12, name: "Groceries", kind: "expense", is_system: true, parent_id: null } as const;
+const SALARY = { id: 40, name: "Salary", kind: "income", is_system: true, parent_id: null } as const;
+const TRANSFER = { id: 55, name: "Own transfer", kind: "transfer", is_system: false, parent_id: null } as const;
+/** A child of Groceries, same kind. This is what `parent_id` is for, and it is
+ * absent from the shipped set above on purpose: a page that only ever renders
+ * top-level rows would pass every other assertion on this file. */
+const ORGANIC = { id: 78, name: "Organic", kind: "expense", is_system: false, parent_id: 12 } as const;
 const CATEGORIES = [GROCERIES, SALARY, TRANSFER];
+const NESTED = [...CATEGORIES, ORGANIC];
 
 const stubApi = (
   handlers: Record<string, (init?: RequestInit) => { status: number; body: unknown }>,
@@ -110,25 +119,136 @@ describe("categories — reading the list", () => {
     vi.unstubAllGlobals();
   });
 
-  it("groups by kind and states that a parent tree is not available", async () => {
-    stubApi(baseHandlers());
+  it("keeps kind as the section and nests by parent inside it", async () => {
+    stubApi(baseHandlers({ "GET /categories": () => ({ status: 200, body: NESTED }) }));
     renderAt("/finance/categories");
 
     expect(await screen.findByRole("heading", { name: "Categories" })).toBeInTheDocument();
 
-    // Each kind is its own section, headed by what the kind DOES — "Expense"
+    // Each kind is still its own section, headed by what the kind DOES — "Expense"
     // alone says nothing; "a transaction in this category reduces the balance"
-    // is the sentence a reader needs before choosing.
+    // is the sentence a reader needs before choosing. `kind` decides a balance's
+    // sign, so it stays the rank the tree hangs from.
     const groups = screen.getAllByRole("heading", { level: 4 }).map((h) => h.textContent);
     expect(groups).toEqual(["Expense", "Income", "Transfer"]);
 
-    // The caveat is stated, not implied away.
+    // The child is INSIDE the parent's own list item, not merely later in the
+    // document: a child that renders as a sibling with an indent would look the
+    // same to a reader and mean something different.
+    const parent = (await screen.findByText("Groceries")).closest("li");
+    expect(parent).not.toBeNull();
+    expect(within(parent as HTMLElement).getByText("Organic")).toBeInTheDocument();
+    expect(within(parent as HTMLElement).getByText(/1 under it/i)).toBeInTheDocument();
+
+    // And the parent is a disclosure that starts open, so nothing in the tree is
+    // hidden by default. A folded category is a category the reader cannot see.
+    const summary = within(parent as HTMLElement).getByText("Groceries").closest("summary");
+    expect(summary).not.toBeNull();
+    expect((summary as HTMLElement).closest("details")).toHaveAttribute("open");
+  });
+
+  it("draws deeper levels as further nested lists", async () => {
+    /* Three levels, because one level could be an indent and three is a tree. */
+    const deep = [
+      ...CATEGORIES,
+      ORGANIC,
+      { id: 91, name: "Bakery", kind: "expense", is_system: false, parent_id: 78 },
+    ];
+    stubApi(baseHandlers({ "GET /categories": () => ({ status: 200, body: deep }) }));
+    renderAt("/finance/categories");
+
+    const level1 = (await screen.findByText("Organic")).closest("li");
+    expect(level1).not.toBeNull();
+    // One list inside another, not a paragraph of dashes.
+    const level2 = within(level1 as HTMLElement).getByText("Bakery").closest("li");
+    expect(level2).not.toBeNull();
     expect(
-      screen.getByText(/grouped by kind, not by parent/i),
-    ).toBeInTheDocument();
+      (level2 as HTMLElement).closest("ul") !== within(level1 as HTMLElement).getByText("Organic").closest("ul"),
+    ).toBe(true);
+    expect(within(level1 as HTMLElement).getByText(/1 under it/i)).toBeInTheDocument();
+  });
+
+  it("leaves a leaf row as a plain row with no control on it", async () => {
+    stubApi(baseHandlers({ "GET /categories": () => ({ status: 200, body: NESTED }) }));
+    renderAt("/finance/categories");
+
+    const child = (await screen.findByText("Organic")).closest("li");
+    expect(child).not.toBeNull();
+    /* A disclosure with nothing to disclose is a control that does nothing. */
+    expect((child as HTMLElement).querySelector("summary")).toBeNull();
+    expect((child as HTMLElement).querySelector("button")).toBeNull();
+  });
+
+  it("names a parent of another kind instead of drawing the link across sections", async () => {
+    /* The server does not require a child's kind to match its parent's, so this
+       is reachable data rather than a corner case. An income row drawn under an
+       expense parent would put it in the wrong section for a sign the ledger
+       computes. */
+    const crossed = [
+      ...CATEGORIES,
+      { id: 64, name: "Freelance", kind: "income", is_system: false, parent_id: 12 },
+    ];
+    stubApi(baseHandlers({ "GET /categories": () => ({ status: 200, body: crossed }) }));
+    renderAt("/finance/categories");
+
+    // It is listed under Income, not under Groceries in the Expense section.
+    const income = (await screen.findByRole("heading", { level: 4, name: "Income" }))
+      .closest("section");
+    const freelance = within(income as HTMLElement).getByText("Freelance");
+    expect(freelance).toBeInTheDocument();
+
+    // And it says which parent it belongs to, so the hierarchy is not silently
+    // disagreeing with the ledger.
+    const row = freelance.closest("li");
+    expect(within(row as HTMLElement).getByText(/filed under/i)).toBeInTheDocument();
+    expect(within(row as HTMLElement).getByText("Groceries")).toBeInTheDocument();
+
+    // The page states the rule rather than leaving it to be inferred.
+    expect(screen.getByText(/a parent and its child can be different kinds/i)).toBeInTheDocument();
+  });
+
+  it("says so when a parent_id names no category the page could read", async () => {
+    const dangling = [
+      ...CATEGORIES,
+      { id: 66, name: "Ghost branch", kind: "expense", is_system: false, parent_id: 999 },
+    ];
+    stubApi(baseHandlers({ "GET /categories": () => ({ status: 200, body: dangling }) }));
+    renderAt("/finance/categories");
+
+    const row = (await screen.findByText("Ghost branch")).closest("li");
+    expect(row).not.toBeNull();
+    /* It is shown, not dropped — every category in the list is on this page. */
+    expect(within(row as HTMLElement).getByText(/not among the categories this page could read/i)).toBeInTheDocument();
+  });
+
+  it("does not loop on a parent_id cycle", async () => {
+    /* `parent_id` is a plain self-reference and nothing forbids closing a cycle,
+       so a recursive walk over one never returns. The row has to render. */
+    const cyclic = [
+      ...CATEGORIES,
+      { id: 70, name: "A", kind: "expense", is_system: false, parent_id: 71 },
+      { id: 71, name: "B", kind: "expense", is_system: false, parent_id: 70 },
+    ];
+    stubApi(baseHandlers({ "GET /categories": () => ({ status: 200, body: cyclic }) }));
+    renderAt("/finance/categories");
+
+    /* Both are listed, each once. A walk that recursed into the cycle would hang
+       or repeat rows; one that gave up on the pair would drop two categories the
+       user has. Scoped to the panel, because the create form's parent picker
+       offers the same names as `<option>` text. */
+    const panel = (await screen.findByRole("heading", { name: "Every category" })).closest(
+      "section",
+    );
+    expect(within(panel as HTMLElement).getByText("A")).toBeInTheDocument();
+    expect(within(panel as HTMLElement).getByText("B")).toBeInTheDocument();
+    expect(within(panel as HTMLElement).getAllByText("A")).toHaveLength(1);
+    expect(within(panel as HTMLElement).getAllByText("B")).toHaveLength(1);
+    /* And it says why, rather than showing a top-level row that silently claims
+       to have no parent. Once, on the row that sits at the top — the other is
+       drawn beneath it, which is where its own `parent_id` says it belongs. */
     expect(
-      screen.getByText(/no read endpoint returns that link/i),
-    ).toBeInTheDocument();
+      within(panel as HTMLElement).getAllByText(/lists this category as ITS parent/i),
+    ).toHaveLength(1);
   });
 
   it("lists every category, marking the ones that ship with the ledger", async () => {
@@ -210,13 +330,16 @@ describe("categories — creating one", () => {
     ).toBeInTheDocument();
   });
 
-  it("sends the parent when one is chosen", async () => {
+  it("sends the parent when one is chosen, and the new row nests under it", async () => {
     let created: Record<string, unknown> | null = null;
     stubApi(
       baseHandlers({
         "POST /categories": (init) => {
           created = JSON.parse(String(init?.body));
-          return { status: 201, body: { id: 78, ...created, is_system: false } };
+          return {
+            status: 201,
+            body: { id: 88, ...created, is_system: false, parent_id: GROCERIES.id },
+          };
         },
       }),
     );
@@ -230,6 +353,14 @@ describe("categories — creating one", () => {
       expect(created).not.toBeNull();
     });
     expect(created).toEqual({ name: "Filter coffee", kind: "expense", parent_id: GROCERIES.id });
+
+    /* The created row comes back with `parent_id` — the server's own `CategorySummary`
+       — and it lands inside its parent's branch rather than at the top of the
+       section. Before `parent_id` was returned this was impossible to check: the
+       screen could only append the row and hope. */
+    const parent = (await screen.findByText("Groceries")).closest("li");
+    expect(parent).not.toBeNull();
+    expect(within(parent as HTMLElement).getByText("Filter coffee")).toBeInTheDocument();
   });
 
   it("keeps the button closed until there is a name", async () => {

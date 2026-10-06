@@ -35,11 +35,18 @@
  * whenever it is NOT 1.00, because a rule the server scored lower is a fact
  * worth surfacing the moment one exists.
  *
- * THE DELETE BUTTON IS NOT ROW-DECORATIVE.
- * `DELETE /categories/rules/{pattern}` removes EVERY rule carrying that text,
- * hand and learned alike, and it addresses them by text rather than by id. So
- * the count of affected rules is stated in the button's own accessible name and
- * the confirmation says it in words before anything is sent. */
+ * THE DELETE BUTTON IS NOT ROW-DECORATIVE, AND IT IS NOT HALF-ENABLED.
+ * `DELETE /categories/rules/{rule_id}` removes exactly ONE rule and addresses it
+ * by an integer. The button is therefore live on every row, including the two
+ * that used to carry an apology: a pattern holding a slash (`bakker/straat`) and
+ * a rule with no pattern at all. Neither is unaddressable by id — a slash splits
+ * one path segment in two, and a missing pattern is only a fact about what the
+ * rule matches on — so a disabled button on either row would be a control
+ * refusing to do something the ledger will do.
+ *
+ * The id is in the button's accessible name for the case where two rows are
+ * otherwise identical: two rules may share one pattern, and "Delete" on both
+ * names the same thing twice. */
 import React from "react";
 import { cn } from "@/lib/utils";
 import type { Category, CategoryRule } from "./types";
@@ -51,43 +58,19 @@ const LEARNED_CONFIDENCE = "1.00";
 export const RuleLine: React.FC<{
   rule: CategoryRule;
   category: Category | undefined;
-  /** How many rules carry this pattern. Deleting one removes all of them, so the
-   * count is stated rather than implied. */
-  sharing: number;
   busy: boolean;
   onDelete: (rule: CategoryRule) => void;
   /** The list's own cadence, passed in so the stagger lives with the other two
    * lists that use the same pair of constants. */
   style?: React.CSSProperties;
-}> = ({ rule, category, sharing, busy, onDelete, style }) => {
+}> = ({ rule, category, busy, onDelete, style }) => {
   const learned = rule.is_learned;
   const pattern = rule.description_pattern;
   /* A rule with no description pattern matches on its account or merchant
-   * criterion, and `DELETE /rules/{pattern}` addresses rules BY TEXT — so there
-   * is nothing this screen can address. Stated in the row rather than hidden:
-   * a rule the user cannot see is a rule they will not fix, and a button that
-   * cannot do what it says is worse than neither. */
+   * criterion, and there is no text to print — but it is still a rule, it is
+   * still on the screen, and by id the ledger can remove it. So the row says what
+   * it matches on rather than apologising for something it can now do. */
   const unmatchable = pattern === null || pattern.trim() === "";
-  /* A SLASH IS ALSO UNADDRESSABLE, and this one is the server's shape rather
-   * than the column's.
-   *
-   * Verified against the running backend on 2026-10-06: a rule whose pattern is
-   * `bakker/straat` exists, is listed by `GET /rules`, and cannot be deleted by
-   * `DELETE /rules/{pattern}` — encoded, double-encoded, or as a literal path.
-   * The path parameter is one segment, so a slash in it addresses a route that
-   * does not exist and answers 404 for a rule that is plainly on screen.
-   *
-   * This screen therefore does not offer the button, and says why in words. The
-   * alternative — offer it, watch it 404, and report "no rule matching
-   * 'bakker/straat'" — would be a screen telling the user a rule does not exist
-   * while listing it three lines above. That is the specific dishonesty this
-   * product's empty states exist to prevent.
-   *
-   * A backend endpoint that addresses a rule by `id` rather than by text would
-   * close this. It does not exist today, and inventing one here would be worse
-   * than naming the gap. */
-  const unslashable = pattern !== null && pattern.includes("/");
-  const addressable = !unmatchable && !unslashable;
 
   return (
     <li
@@ -128,10 +111,8 @@ export const RuleLine: React.FC<{
             tail is cut off is a pattern the user cannot check against the
             statement it came from.
 
-            ONLY A RULE WITH NO PATTERN AT ALL gets the placeholder. A rule whose
-            pattern merely cannot be DELETED still shows its pattern, because
-            showing it is the screen's whole job and hiding readable text because
-            of a limitation in one control would be its own kind of dishonesty. */}
+            ONLY A RULE WITH NO PATTERN AT ALL gets the placeholder, and every rule
+            above that line is deletable. */}
         <p
           className={cn(
             "mt-1.5 font-mono text-[0.9375rem] leading-snug break-all",
@@ -158,15 +139,12 @@ export const RuleLine: React.FC<{
         </p>
 
         {unmatchable && (
+          /* Stated in the row rather than hidden. A rule that matches on its
+             account or merchant is a real rule the user may want gone, and it
+             looks like any other row apart from this sentence. */
           <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-            This rule matches on its account or merchant, not on text, and the
-            delete endpoint takes a pattern — so this screen cannot remove it.
-          </p>
-        )}
-        {unslashable && (
-          <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-            Its pattern holds a slash, and the delete endpoint takes one path
-            segment — so the ledger cannot address this rule for deletion either.
+            This rule matches on its account or merchant rather than on text, so
+            there is no pattern to read here. It can still be deleted.
           </p>
         )}
       </div>
@@ -179,13 +157,14 @@ export const RuleLine: React.FC<{
         <button
           type="button"
           className="btn btn-quiet px-2.5 py-1.5 text-xs"
-          disabled={busy || !addressable}
+          disabled={busy}
           onClick={() => onDelete(rule)}
-          aria-label={
-            sharing > 1
-              ? `Delete ${sharing} rules matching ${pattern ?? "this rule"}`
-              : `Delete the rule matching ${pattern ?? "this rule"}`
-          }
+          /* The id leads the name because two rules can share one pattern, and
+             "delete the rule matching paypal xyz" twice on one screen is a label
+             that tells a screen-reader user nothing about which row they are on.
+             The endpoint takes this very number, so it is also the one thing a
+             reader can check the delete against. */
+          aria-label={`Delete rule ${rule.id}, matching ${pattern ?? "its account or merchant"}`}
         >
           Delete
         </button>

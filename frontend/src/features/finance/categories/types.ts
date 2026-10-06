@@ -6,7 +6,7 @@
  *   GET    /v1/categories/kinds         → CategoryKind[]
  *   GET    /v1/categories/rules         → CategoryRule[]
  *   POST   /v1/categories/rules         ← CategoryRuleCreateRequest
- *   DELETE /v1/categories/rules/{pattern}
+ *   DELETE /v1/categories/rules/{rule_id}
  *
  * There is no generated client (ARCHITECTURE.md §7), so this file and
  * `backend/finance/api/routes/categories.py` are two halves of one contract.
@@ -17,19 +17,24 @@
  * THREE THINGS THE SCREENS HAVE TO LIVE WITH, recorded here because none of
  * them is visible in the happy path:
  *
- * 1. `CategorySummary` DOES NOT CARRY `parent_id`. The database has the column
- *    and `POST /categories` accepts one, but no read endpoint returns it, so
- *    this build cannot draw the tree the brief describes. The category list is
- *    grouped by `kind` — which the ledger actually reports on and which
- *    decides a balance's sign — and the screen says so rather than inventing a
- *    hierarchy the API will not confirm.
+ * 1. `CategorySummary` CARRIES `parent_id`, AND A CHILD'S KIND MAY DIFFER FROM
+ *    ITS PARENT'S. The server checks that a parent exists and that
+ *    `(parent_id, name)` is unique; it does not check that the two share a
+ *    kind, so a parent in one kind can hold a child in another. `kind` is what
+ *    the ledger reports on and what decides a balance's sign, so it is the RANK
+ *    of the list and `parent_id` is the nesting inside it — never the other way
+ *    round. `buildTree` returns the shape; `page.tsx` decides where it is
+ *    drawn, and the row that cannot sit under its parent says so.
  *
- * 2. `CategoryRuleSummary.description_pattern` is NULLABLE. The column is
- *    nullable because a rule may match on account or merchant alone, and
- *    `DELETE /rules/{pattern}` addresses rules BY TEXT — so a pattern-less rule
- *    cannot be deleted through the API at all. `RulePatternSchema` is therefore
- *    nullable and the screen renders one as unmatchable rather than printing
- *    "null".
+ * 2. `CategoryRuleSummary.description_pattern` is NULLABLE, and the delete is
+ *    BY `id`. The two facts used to be connected: the delete used to take a
+ *    pattern as one path segment, so a rule whose pattern held a slash — or no
+ *    pattern at all — was on screen and not addressable, and the screen said so
+ *    instead of offering a button that could not work. An integer id has one
+ *    representation, so every rule in the list can be addressed and the row
+ *    carries no such apology. The pattern is still nullable, and a rule without
+ *    one is still rendered as such: it is matched on its account or merchant
+ *    criterion, which is a fact about the rule rather than about the screen.
  *
  * 3. `confidence` is a `NUMERIC(3,2)` on a `Decimal` column, which pydantic
  *    serialises as a JSON STRING. It is normalised to a string here and accepts a
@@ -60,12 +65,20 @@ export const CategoryKindListSchema = z.array(CategoryKindSchema);
 
 /** One category. `is_system` marks the seeded rows, which this build can read
  * and file transactions under but not rename or remove — there is no endpoint
- * for either. */
+ * for either.
+ *
+ * `parent_id` is the edge the tree is drawn from, and it is NULLABLE because a
+ * top-level category has no parent. It is defaulted rather than required: the
+ * server sends it on every row, and a payload from before it existed reads as a
+ * flat list — every category top-level, which is what such a payload says —
+ * instead of failing the whole read over a missing field. Refusing it outright
+ * would take the list down for a reason the user cannot do anything about. */
 export const CategorySchema = z.object({
   id: z.number().int(),
   name: z.string(),
   kind: CategoryKindSchema,
   is_system: z.boolean().default(false),
+  parent_id: z.number().int().min(1).nullable().default(null),
 });
 export type Category = z.infer<typeof CategorySchema>;
 
@@ -132,14 +145,15 @@ export const CategoryRuleCreateRequestSchema = z.object({
 });
 export type CategoryRuleCreateRequest = z.infer<typeof CategoryRuleCreateRequestSchema>;
 
-/** What `DELETE /categories/rules/{pattern}` answers.
+/** What `DELETE /categories/rules/{rule_id}` answers.
  *
- * `description_pattern` is echoed back rather than assumed, because the delete
- * removes EVERY rule carrying that text and the screen's confirmation should
- * quote what the server actually removed. */
+ * `id` is echoed back rather than assumed, because the screen removes exactly
+ * the row it asked about and this is the server naming it: the delete takes one
+ * integer and removes ONE rule, so there is no pattern in the answer to quote
+ * and no count to report. */
 export const RuleDeleteResultSchema = z.object({
   status: z.string(),
-  description_pattern: z.string(),
+  id: z.number().int(),
 });
 export type RuleDeleteResult = z.infer<typeof RuleDeleteResultSchema>;
 

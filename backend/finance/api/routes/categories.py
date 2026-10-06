@@ -16,7 +16,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi import status as http_status
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
@@ -49,15 +49,15 @@ UNIQUE_VIOLATION = "23505"
 def _summary_category(row: Category) -> CategorySummary:
     """One `category` row as the frontend already reads it.
 
-    The shape is unchanged from the stub era on purpose: the frontend reads
-    `id`, `name`, `kind` and `is_system`, and a field added here is a
-    contract change nothing checks (ARCHITECTURE.md §7).
+    `parent_id` is included so the UI can draw the tree: a root carries
+    None, a child carries its parent's id.
     """
     return CategorySummary(
         id=row.id,
         name=row.name,
         kind=CategoryKind(row.kind),
         is_system=row.is_system,
+        parent_id=row.parent_id,
     )
 
 
@@ -223,31 +223,26 @@ def create_rule(
     return _summary_rule(row)
 
 
-@router.delete("/rules/{pattern}", summary="Delete a rule")
-def delete_rule(pattern: str, session: SessionDep) -> dict[str, str]:
-    """Remove every rule carrying one description pattern.
+@router.delete("/rules/{rule_id}", summary="Delete a rule")
+def delete_rule(rule_id: int, session: SessionDep) -> dict[str, object]:
+    """Remove one rule by id.
 
-    Learned and hand rows alike: deletion is by text, and the text is what
-    the screen shows. A pattern that matches nothing is a 404, because
-    deleting nothing and reporting success would make a typo look like an
-    edit.
+    Addressed by id rather than by pattern text on purpose: a pattern may
+    contain a slash (e.g. 'bakker/straat'), and a single path segment can
+    never address such a pattern — the slash splits the route and the
+    delete 404s for a rule the list shows. An id has no such ambiguity.
+    A rule id that names no row is a 404, because deleting nothing and
+    reporting success would make a typo look like an edit.
 
     Raises:
-        HTTPException: 404 when no rule has that pattern.
+        HTTPException: 404 when no rule has that id.
     """
     with session.begin():
-        # Selected before deleting, so the 404 names what was there: two
-        # concurrent deletes still agree, because the loser finds nothing
-        # and reports 404 rather than deleting nothing with success.
-        matched = session.scalars(
-            select(CategoryRuleRow.id).where(
-                CategoryRuleRow.description_pattern == pattern
-            )
-        ).all()
-        if not matched:
+        row = session.get(CategoryRuleRow, rule_id)
+        if row is None:
             raise HTTPException(
                 status_code=http_status.HTTP_404_NOT_FOUND,
-                detail=f"No rule matching {pattern!r}",
+                detail=f"No rule {rule_id}",
             )
-        session.execute(delete(CategoryRuleRow).where(CategoryRuleRow.id.in_(matched)))
-    return {"status": "deleted", "description_pattern": pattern}
+        session.delete(row)
+    return {"status": "deleted", "id": rule_id}
