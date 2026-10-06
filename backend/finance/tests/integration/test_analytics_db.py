@@ -404,3 +404,103 @@ class TestCashflow:
         assert bucket["income"] >= 0
         assert bucket["expense"] >= 0
         assert bucket["net"] == bucket["income"] - bucket["expense"]
+
+
+def _set_account_flag(
+    engine: Engine, account_id: int, column: str, value: bool
+) -> None:
+    """Flip `is_hidden`/`is_active` on one account, committed.
+
+    The flag changes AFTER the ledger rows are posted, which is exactly the
+    real-world order: the account was open when the money moved, then hidden
+    or closed. `column` is caller-hardcoded, never user input.
+    """
+    assert column in ("is_hidden", "is_active")
+    with engine.connect() as connection:
+        with connection.begin():
+            connection.execute(
+                text(f"UPDATE finance.account SET {column} = :value WHERE id = :id"),
+                {"value": value, "id": account_id},
+            )
+
+
+def _spend_map(client: TestClient) -> dict[str, int]:
+    response = client.get(
+        "/api/v1/analytics/spend-by-category",
+        params={"from": DAY_ONE.isoformat(), "to": DAY_TWO.isoformat()},
+    )
+    assert response.status_code == 200, response.text
+    return {row["category_name"]: row["amount"] for row in response.json()}
+
+
+def _cashflow_bucket(client: TestClient) -> dict[str, int]:
+    response = client.get(
+        "/api/v1/analytics/cashflow",
+        params={
+            "from": DAY_ONE.isoformat(),
+            "to": DAY_TWO.isoformat(),
+            "period": "month",
+        },
+    )
+    assert response.status_code == 200, response.text
+    (bucket,) = response.json()
+    typed: dict[str, int] = bucket
+    return typed
+
+
+class TestHiddenAndClosedAccountsCount:
+    """LifeOS-uac: analytics totals INCLUDE hidden and inactive/closed accounts.
+
+    `is_hidden` is display-only and `is_active = FALSE` marks a closed account,
+    but neither removes money from any total: the balance was real on the dates
+    the account was open. Each endpoint pins this separately because each query
+    filters differently and one could be "tidied" without the others.
+    """
+
+    def test_hidden_savings_still_counts_in_net_worth(
+        self, client: TestClient, engine: Engine, ledger: dict[str, int]
+    ) -> None:
+        """Hiding the €300 savings top-up target must not move net worth."""
+        _set_account_flag(engine, ledger["savings"], "is_hidden", True)
+        assert _net_worth_at(client, DAY_TWO) == 50_000
+
+    def test_closed_checking_still_counts_in_net_worth(
+        self, client: TestClient, engine: Engine, ledger: dict[str, int]
+    ) -> None:
+        """Closing checking must not rewrite the history it holds."""
+        _set_account_flag(engine, ledger["checking"], "is_active", False)
+        assert _net_worth_at(client, DAY_TWO) == 50_000
+
+    def test_hidden_card_spend_is_still_reported(
+        self, client: TestClient, engine: Engine, ledger: dict[str, int]
+    ) -> None:
+        """The €500 card charge is spending even when the card is hidden."""
+        _set_account_flag(engine, ledger["card"], "is_hidden", True)
+        assert _spend_map(client) == {"Groceries": -50_000}
+
+    def test_closed_card_spend_is_still_reported(
+        self, client: TestClient, engine: Engine, ledger: dict[str, int]
+    ) -> None:
+        """Closing the card must not erase the spending it carried."""
+        _set_account_flag(engine, ledger["card"], "is_active", False)
+        assert _spend_map(client) == {"Groceries": -50_000}
+
+    def test_hidden_checking_cashflow_is_unchanged(
+        self, client: TestClient, engine: Engine, ledger: dict[str, int]
+    ) -> None:
+        """Hiding checking hides the account, not the cash that moved through it."""
+        _set_account_flag(engine, ledger["checking"], "is_hidden", True)
+        bucket = _cashflow_bucket(client)
+        assert bucket["income"] == 100_000
+        assert bucket["expense"] == 20_000
+        assert bucket["net"] == 80_000
+
+    def test_closed_checking_cashflow_is_unchanged(
+        self, client: TestClient, engine: Engine, ledger: dict[str, int]
+    ) -> None:
+        """Closing checking must not drop its movements from cashflow."""
+        _set_account_flag(engine, ledger["checking"], "is_active", False)
+        bucket = _cashflow_bucket(client)
+        assert bucket["income"] == 100_000
+        assert bucket["expense"] == 20_000
+        assert bucket["net"] == 80_000

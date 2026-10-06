@@ -29,10 +29,14 @@ out plausible and wrong, which is worse than an error because nothing flags it:
   second asset leg, while a card payment correctly reads as cash leaving, since
   the card is a liability and is not counted on the other side.
 
-Nothing here filters on `is_active` or `is_hidden`. A closed account still held a
-balance on the day it closed, so dropping it would silently rewrite history, and
-`is_hidden` reads as "do not list this account" rather than "do not count it".
-That is a product question, not a settled one.
+Nothing here filters on `is_active` or `is_hidden`, and that is deliberate
+(LifeOS-uac). Analytics totals INCLUDE both hidden and inactive/closed
+accounts: `is_hidden` is a display-only flag — "do not list this account",
+never "do not count it" — and a closed account still held its balance on the
+dates it was open, so dropping it would silently rewrite history. Omitting
+money from net worth fails invisibly, while an extra visible account looks
+deliberate. Change this only as a deliberate product decision, not as a
+query tidy-up.
 """
 
 from __future__ import annotations
