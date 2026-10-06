@@ -16,6 +16,14 @@
  * `<optgroup>` makes that visible at the moment of choosing rather than leaving
  * it to be discovered later in a spending breakdown.
  *
+ * A NESTED CATEGORY SAYS WHICH BRANCH IT IS IN.
+ * `GET /categories` returns `parent_id`, so a control that cannot nest — a native
+ * `<select>` — has to say it in words. Two categories can share a name in two
+ * branches, and "Coffee" twice with nothing to tell them apart is a choice the
+ * user cannot make on purpose. The path is one level deep rather than a full
+ * breadcrumb: the options are already grouped by kind, and a path three
+ * segments long does not fit the width of a native select on a phone.
+ *
  * SYSTEM CATEGORIES ARE IN THE LIST AND ARE MARKED.
  * They are the ones a transaction can be filed under, so omitting them would
  * make the picker wrong. `is_system` is stated next to the name — in words, not
@@ -29,7 +37,13 @@
  * to the platform's own control on a machine whose fonts this design does not
  * control — the same argument that sends the disclosure triangle to `icons.tsx`. */
 import React from "react";
-import { groupByKind, useCategoriesContext } from "./use-categories";
+import {
+  buildCategoryTree,
+  flattenTree,
+  groupByKind,
+  parentNameOf,
+  useCategoriesContext,
+} from "./use-categories";
 import { KIND_LABEL, KIND_ORDER } from "./types";
 import type { Category } from "./types";
 
@@ -97,12 +111,18 @@ export const CategoryPicker: React.FC<{
       )}
       {groups.map((group) => (
         <optgroup key={group.kind} label={KIND_LABEL[group.kind]}>
-          {group.categories.map((category) => (
-            <option key={category.id} value={category.id}>
-              {showIds ? `${category.name} · ${category.id}` : category.name}
-              {category.is_system ? " · system" : ""}
-            </option>
-          ))}
+          {/* Tree order, flattened: a nested category follows the parent it sits
+              under, which is the order a reader scanning for it expects. */}
+          {flattenTree(buildCategoryTree(group.categories, list)).map((category) => {
+            const branch = parentNameOf(category, list);
+            return (
+              <option key={category.id} value={category.id}>
+                {showIds ? `${category.name} · ${category.id}` : category.name}
+                {branch === null ? "" : ` — under ${branch}`}
+                {category.is_system ? " · system" : ""}
+              </option>
+            );
+          })}
         </optgroup>
       ))}
     </select>

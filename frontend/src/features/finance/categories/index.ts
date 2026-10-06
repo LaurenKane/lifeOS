@@ -11,14 +11,19 @@ export type {
   CategoryRuleCreateRequest,
   RuleDeleteResult,
 } from "./types";
+export { CategorySchema } from "./types";
 export { CategoryKindSchema, KIND_LABEL, KIND_ORDER } from "./types";
 export {
+  buildCategoryTree,
+  countUnder,
+  flattenTree,
   groupByKind,
+  parentNameOf,
   rulesWithPattern,
   useCategories,
   useCategoriesContext,
 } from "./use-categories";
-export type { CategoriesState, DeleteRuleOutcome } from "./use-categories";
+export type { CategoryNode, CategoriesState, DeleteRuleOutcome } from "./use-categories";
 export { CategoriesProvider } from "./provider";
 export { CategoryPicker } from "./category-picker";
 export { categoryName } from "./category-name";

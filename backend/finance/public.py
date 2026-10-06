@@ -157,6 +157,7 @@ class CategorySummary(_ReadOnly):  # type: ignore[explicit-any]
     name: str
     kind: CategoryKind
     is_system: bool = False
+    parent_id: int | None = None
 
 
 class RawRecord(_ReadOnly):  # type: ignore[explicit-any]

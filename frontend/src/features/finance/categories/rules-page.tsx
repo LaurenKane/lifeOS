@@ -25,11 +25,12 @@
  *     shows the whole set. Hand and learned share one list and are told apart by
  *     a word and a fill.
  *
- * THE DELETE IS BY TEXT AND IT IS NOT INVISIBLE.
- * `DELETE /categories/rules/{pattern}` removes every rule carrying that pattern.
- * Deleting one row can therefore remove several, so the confirmation names the
- * count — and a pattern-less rule is offered no button at all, because there is
- * no text to address it by. Neither case is discovered after the fact.
+ * THE DELETE IS BY RULE ID AND IT IS NOT INVISIBLE.
+ * `DELETE /categories/rules/{rule_id}` removes exactly one rule, which is named
+ * by its id in the confirmation rather than by its text — two rules can carry one
+ * pattern, and "this one, not the other" is what the user is being asked. Nothing
+ * is discovered after the fact: the row is still on screen until the server has
+ * answered, and a refused delete says so with the rule left where it was.
  *
  * THE CATEGORY PICKER IS ON THIS SCREEN AND NOT ONLY ON THE DETAIL PAGE.
  * A rule is useless without a category, and the two are edited together, so the
@@ -49,7 +50,14 @@ import {
 } from "@/components/primitives";
 import { describeError } from "@/lib/apiClient";
 import { RuleLine } from "./rule-line";
-import { groupByKind, rulesWithPattern, useCategoriesContext } from "./use-categories";
+import {
+  buildCategoryTree,
+  flattenTree,
+  groupByKind,
+  parentNameOf,
+  rulesWithPattern,
+  useCategoriesContext,
+} from "./use-categories";
 import { KIND_LABEL, KIND_ORDER } from "./types";
 import type { CategoryRule } from "./types";
 
@@ -67,13 +75,11 @@ const stagger = (index: number): React.CSSProperties => ({
 const HAND_PRIORITY = 100;
 const LEARNED_PRIORITY = 500;
 
-/** "1 rule" and "2 rules", in a sentence and in a button label. Spelled out
- * because a button that says "Delete 1 rule(s)" is a form that has given up. */
-const plural = (count: number, noun: string): string =>
-  `${count} ${noun}${count === 1 ? "" : "s"}`;
-
-type Pending = { kind: "created"; pattern: string } | { kind: "deleted"; pattern: string; count: number } | null;
-type Refusal = { status: number; message: string; pattern: string } | null;
+type Pending =
+  | { kind: "created"; pattern: string }
+  | { kind: "deleted"; ruleId: number; pattern: string | null; twins: number }
+  | null;
+type Refusal = { status: number; message: string; pattern: string | null } | null;
 
 export const RulesPage: React.FC = () => {
   const {
@@ -85,7 +91,10 @@ export const RulesPage: React.FC = () => {
     deleteRule,
   } = useCategoriesContext();
 
-  const [busy, setBusy] = React.useState<string | null>(null);
+  /* The id of the rule being deleted, not a pattern: two rules can share one
+   * pattern, and only the id says which of them this is. `null` means no delete
+   * is in flight. */
+  const [busy, setBusy] = React.useState<number | null>(null);
   const [pending, setPending] = React.useState<Pending>(null);
   const [refusal, setRefusal] = React.useState<Refusal>(null);
   const [announcement, setAnnouncement] = React.useState("");
@@ -116,31 +125,35 @@ export const RulesPage: React.FC = () => {
 
   const confirmDelete = async () => {
     const rule = confirming;
-    /* A rule with no text pattern has nothing to address the endpoint with, so
-       there is nothing to send. The button is disabled on the row; this is the
-       same fact stated once more where a click would otherwise land. */
-    if (rule === null || rule.description_pattern === null) {
+    /* No rule, nothing to send. A rule with NO text pattern is still deletable —
+       by id — so unlike the endpoint this replaced, there is no row that cannot
+       reach here. */
+    if (rule === null) {
       setConfirming(null);
       return;
     }
     const pattern = rule.description_pattern;
-    const sharing = rulesWithPattern(rules, pattern).length;
+    /* How many OTHER rules carry the same text. Not a delete count any more: the
+     * endpoint removes this row and no other, and the count is here to say so
+     * where the user is being asked to agree to a delete. */
+    const twins =
+      pattern === null ? 0 : rulesWithPattern(rules, pattern).filter((other) => other.id !== rule.id).length;
     setConfirming(null);
-    setBusy(pattern);
+    setBusy(rule.id);
     setRefusal(null);
-    const outcome = await deleteRule(pattern);
+    const outcome = await deleteRule(rule.id);
     setBusy(null);
     if (outcome.kind === "deleted") {
-      setPending({ kind: "deleted", pattern, count: sharing });
+      setPending({ kind: "deleted", ruleId: rule.id, pattern, twins });
       setAnnouncement(
-        sharing > 1
-          ? `${sharing} rules matching ${pattern} were deleted.`
+        pattern === null
+          ? `Rule ${rule.id} was deleted.`
           : `The rule matching ${pattern} was deleted.`,
       );
     } else {
       setRefusal({ status: outcome.status, message: outcome.message, pattern });
       setAnnouncement(
-        `Nothing was deleted for ${pattern}. ${outcome.message}`,
+        `Nothing was deleted for ${pattern ?? `rule ${rule.id}`}. ${outcome.message}`,
       );
     }
   };
@@ -215,7 +228,8 @@ export const RulesPage: React.FC = () => {
             >
               {refusal.message}
               <div className="mt-2">
-                The rule matching “{refusal.pattern}” is still on the list.
+                {refusal.pattern === null ? "That rule" : <>The rule matching “{refusal.pattern}”</>}{" "}
+                is still on the list.
               </div>
             </Notice>
           )}
@@ -227,10 +241,22 @@ export const RulesPage: React.FC = () => {
                   A rule matching “{pending.pattern}” now runs at priority{" "}
                   <span className="font-mono">{HAND_PRIORITY}</span>.
                 </>
-              ) : pending.count > 1 ? (
+              ) : pending.pattern === null ? (
                 <>
-                  {pending.count} rules carried the text “{pending.pattern}”, and the
-                  delete removes all of them — so all {pending.count} are gone.
+                  Rule <span className="font-mono">{pending.ruleId}</span> is gone. It
+                  matched on its account or merchant, so there was no text to quote.
+                </>
+              ) : pending.twins === 1 ? (
+                <>
+                  Rule <span className="font-mono">{pending.ruleId}</span>, matching “
+                  {pending.pattern}”, is gone. One other rule carries the same text and
+                  is still here.
+                </>
+              ) : pending.twins > 1 ? (
+                <>
+                  Rule <span className="font-mono">{pending.ruleId}</span>, matching “
+                  {pending.pattern}”, is gone. {pending.twins} other rules carry the same
+                  text and are still here.
                 </>
               ) : (
                 <>The rule matching “{pending.pattern}” is gone.</>
@@ -246,27 +272,30 @@ export const RulesPage: React.FC = () => {
               heavier thing than the decision — and it would hide the very rule
               the decision is about. */}
           {confirming !== null && (
-            <Notice
-              tone="warning"
-              label={`Delete ${plural(
-                rulesWithPattern(rules, confirming.description_pattern ?? "").length,
-                "rule",
-              )}?`}
-            >
-              Every rule carrying the text “{confirming.description_pattern}” is
-              removed, not only this row.
+            <Notice tone="warning" label="Delete this rule?">
+              {/* The id is what is quoted, because it is what the delete takes.
+                  The pattern is quoted beside it because it is what the rule
+                  means, and a rule with no pattern at all still gets named by
+                  the number it is stored under. */}
+              {confirming.description_pattern === null ? (
+                <>
+                  Rule <span className="font-mono">{confirming.id}</span>, which matches
+                  on its account or merchant rather than on text, is removed. No other
+                  rule goes with it.
+                </>
+              ) : (
+                <>
+                  Rule <span className="font-mono">{confirming.id}</span>, matching “
+                  {confirming.description_pattern}”, is removed — and only that one, even
+                  where another rule carries the same text.
+                </>
+              )}
               <div className="mt-3 flex flex-wrap gap-2">
                 <button type="button" className="btn btn-primary" onClick={confirmDelete}>
-                  Delete {plural(
-                    rulesWithPattern(rules, confirming.description_pattern ?? "").length,
-                    "rule",
-                  )}
+                  Delete this rule
                 </button>
                 <button type="button" className="btn btn-quiet" onClick={abandonDelete}>
-                  Keep {plural(
-                    rulesWithPattern(rules, confirming.description_pattern ?? "").length,
-                    "rule",
-                  )}
+                  Keep this rule
                 </button>
               </div>
             </Notice>
@@ -300,8 +329,9 @@ export const RulesPage: React.FC = () => {
                       key={rule.id}
                       rule={rule}
                       category={categories.find((candidate) => candidate.id === rule.category_id)}
-                      sharing={rulesWithPattern(rules, rule.description_pattern ?? "").length}
-                      busy={busy !== null && rule.description_pattern === busy}
+                      /* By id, not by pattern: two rules can share a text, and
+                         only the id says which row is mid-delete. */
+                      busy={busy === rule.id}
                       onDelete={askToDelete}
                       style={stagger(index)}
                     />
@@ -460,7 +490,9 @@ const NewRulePanel: React.FC<{
         >
           {/* Grouped, because the kind is what the ledger reports on and what
               decides a balance's sign. A flat list of names hides that a category
-              called "Savings" is an investment and not a transfer. */}
+              called "Savings" is an investment and not a transfer. Ordered by the
+              tree within each group, so a nested category comes after the parent
+              it belongs under, and a duplicate name says which one it is. */}
           <select
             id="rule-category"
             className="field"
@@ -477,11 +509,15 @@ const NewRulePanel: React.FC<{
             </option>
             {groups.map((group) => (
               <optgroup key={group.kind} label={KIND_LABEL[group.kind]}>
-                {group.categories.map((category) => (
-                  <option key={category.id} value={category.id}>
-                    {category.name}
-                  </option>
-                ))}
+                {flattenTree(buildCategoryTree(group.categories, categories)).map(
+                  (category) => (
+                    <option key={category.id} value={category.id}>
+                      {parentNameOf(category, categories) === null
+                        ? category.name
+                        : `${category.name} — under ${parentNameOf(category, categories)}`}
+                    </option>
+                  ),
+                )}
               </optgroup>
             ))}
           </select>

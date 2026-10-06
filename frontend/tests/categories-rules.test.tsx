@@ -11,10 +11,11 @@
  *      fixed, so there is no toggle and no pagination: the test asserts the
  *      learned rule and the hand rule are BOTH present at once.
  *
- *   2. A DELETE IS BY TEXT AND IS CONFIRMED BEFORE IT IS SENT. The endpoint
- *      removes every rule carrying the pattern, so the count is named, and a
- *      refused delete leaves the rule exactly where it was. A screen that drops
- *      a row on a 404 would let a typo look like an edit.
+ *   2. A DELETE IS BY RULE ID, AND IT IS CONFIRMED BEFORE IT IS SENT. The
+ *      endpoint removes exactly one rule, so the row it names in the
+ *      confirmation is the row that goes — even where a twin carries the same
+ *      text — and a refused delete leaves the rule exactly where it was. A
+ *      screen that dropped a row on a 404 would let a typo look like an edit.
  *
  *   3. REMEMBERING IS OFF BY DEFAULT AND REPORTS WHAT CAME BACK. A correction
  *      must not silently teach, and the confirmation reads the server's
@@ -60,8 +61,9 @@ const LEARNED_RULE = {
   confidence: "1.00",
 } as const;
 
-/** Two rules carrying one pattern. The endpoint removes both, so this is what
- * the confirmation has to count. */
+/** A second rule carrying one pattern. The delete is by id and removes exactly
+ * one row, so this is what proves the twin SURVIVES — the case a delete by text
+ * could not tell apart. */
 const TWIN_LEARNED = {
   id: 3,
   description_pattern: "paypal xyz",
@@ -72,8 +74,8 @@ const TWIN_LEARNED = {
 } as const;
 
 /** A rule with no description pattern: the column is nullable for a rule that
- * matches on its account or merchant, and `DELETE /rules/{pattern}` addresses
- * rules by text — so there is nothing this screen can delete it with. */
+ * matches on its account or merchant. There is no text to read, but there is an
+ * id — so the ledger can still remove it and the button is live. */
 const PATTERNLESS = {
   id: 4,
   description_pattern: null,
@@ -242,14 +244,19 @@ describe("categorization rules — reading", () => {
     expect(screen.queryByText(/no rules yet/i)).not.toBeInTheDocument();
   });
 
-  it("offers no delete for a rule with no pattern to delete by", async () => {
+  it("still offers delete for a rule with no text pattern", async () => {
     stubApi(baseHandlers());
     renderAt("/finance/categories/rules");
 
     const row = (await screen.findByText("no text pattern")).closest("li");
     expect(row).not.toBeNull();
-    const button = within(row as HTMLElement).getByRole("button", { name: /delete/i });
-    expect(button).toBeDisabled();
+    /* The delete is by id, so a rule with nothing to read is still addressable.
+       A screen that refused it would be refusing something the ledger does. */
+    expect(
+      within(row as HTMLElement).getByRole("button", { name: /delete rule 4/i }),
+    ).toBeEnabled();
+    /* And it says what it matches on rather than apologising for a limit that
+       no longer exists. */
     expect(within(row as HTMLElement).getByText(/matches on its account or merchant/i)).toBeInTheDocument();
   });
 });
@@ -351,47 +358,49 @@ describe("categorization rules — deleting", () => {
     vi.unstubAllGlobals();
   });
 
-  it("confirms before deleting, and names every rule the delete will remove", async () => {
+  it("confirms before deleting, names the rule by id, and removes only that one", async () => {
     const calls = stubApi(
       baseHandlers({
-        /* The key carries the PERCENT-ENCODED pattern because that is what
-           arrives at `fetch`. `apiClient` hands the URL to `fetch` as-is, so a
-           space in a description pattern is a `%20` in the request line — which
-           is also why the hook encodes it, and why a pattern holding a slash
-           needs `%2F` or it addresses a different endpoint. */
-        "DELETE /categories/rules/paypal%20xyz": () => ({
+        /* Keyed by the RULE ID, which is the whole segment: the endpoint takes
+           an integer, so there is nothing to percent-encode and no way for a
+           pattern's characters to address a different route. */
+        "DELETE /categories/rules/2": () => ({
           status: 200,
-          body: { status: "deleted", description_pattern: "paypal xyz" },
+          body: { status: "deleted", id: 2 },
         }),
       }),
     );
     renderAt("/finance/categories/rules");
 
-    /* Both twins carry the same text, so both buttons carry the same accessible
-       name — which is the point: a screen reader user hears "delete 2 rules"
-       before pressing either one. `getAllBy` because there are two of them by
-       construction, and the first is the one under test. */
+    /* Both twins carry the same text, so a name built from the pattern alone
+       would read identically twice. The id is in the accessible name instead,
+       which is also the number the delete sends. */
     const twins = await screen.findAllByRole("button", {
-      name: /delete 2 rules matching paypal xyz/i,
+      name: /delete rule (2|3), matching paypal xyz/i,
     });
     expect(twins).toHaveLength(2);
     await userEvent.click(twins[0] as HTMLElement);
-    // And the confirmation counts them before anything is sent.
 
-    /* Nothing sent yet. The two twins are still on screen. */
+    /* Nothing sent yet, and both twins are still on screen. */
     expect(callsTo(calls, "DELETE")).toHaveLength(0);
     expect(screen.getAllByText("paypal xyz")).toHaveLength(2);
 
-    await userEvent.click(screen.getByRole("button", { name: /^delete 2 rules$/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^delete this rule$/i }));
 
     await waitFor(() => {
       expect(callsTo(calls, "DELETE")).toHaveLength(1);
     });
-    // BOTH twins leave, because the endpoint removes every rule with the text.
+    // Only the rule that was asked for. This is the assertion the whole change
+    // turns on: a delete by pattern would take both rows.
     await waitFor(() => {
-      expect(screen.queryAllByText("paypal xyz")).toHaveLength(0);
+      expect(screen.queryAllByText("paypal xyz")).toHaveLength(1);
     });
-    expect(screen.getByText(/2 rules carried the text/i)).toBeInTheDocument();
+    expect(callsTo(calls, "DELETE")[0]?.path).toBe("/api/v1/categories/rules/2");
+    /* And the screen says the twin is still there rather than leaving the user
+       to wonder whether the other one went too. */
+    expect(
+      screen.getByText(/one other rule carries the same text and is still here/i),
+    ).toBeInTheDocument();
   });
 
   it("keeps the rules when the delete is cancelled", async () => {
@@ -401,85 +410,55 @@ describe("categorization rules — deleting", () => {
     /* The ROW button, which is named after the pattern it acts on — a screen
        reader user hears which rule they are about to delete before pressing it. */
     await userEvent.click(
-      await screen.findByRole("button", {
-        name: /delete the rule matching albert heijn/i,
-      }),
+      await screen.findByRole("button", { name: /delete rule 9/i }),
     );
-    await userEvent.click(screen.getByRole("button", { name: /^keep 1 rule$/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^keep this rule$/i }));
 
     expect(callsTo(calls, "DELETE")).toHaveLength(0);
     expect(screen.getByText("albert heijn")).toBeInTheDocument();
     /* The confirmation is gone, so the screen is back to exactly what it was. */
     expect(
-      screen.queryByRole("button", { name: /^keep 1 rule$/i }),
+      screen.queryByRole("button", { name: /^keep this rule$/i }),
     ).not.toBeInTheDocument();
   });
 
   it("leaves the rule in place and shows the reason when the delete is refused", async () => {
     stubApi(
       baseHandlers({
-        "DELETE /categories/rules/albert%20heijn": () => ({
+        "DELETE /categories/rules/9": () => ({
           status: 404,
-          body: { detail: "No rule matching 'albert heijn'" },
+          body: { detail: "No rule 9" },
         }),
       }),
     );
     renderAt("/finance/categories/rules");
 
     await userEvent.click(
-      await screen.findByRole("button", {
-        name: /delete the rule matching albert heijn/i,
-      }),
+      await screen.findByRole("button", { name: /delete rule 9/i }),
     );
-    await userEvent.click(screen.getByRole("button", { name: /^delete 1 rule$/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^delete this rule$/i }));
 
-    expect(await screen.findByText("No rule matching 'albert heijn'")).toBeInTheDocument();
+    expect(await screen.findByText("No rule 9")).toBeInTheDocument();
     // A screen that dropped the row on a 404 would let a typo look like an edit.
     expect(screen.getByText("albert heijn")).toBeInTheDocument();
   });
 
-  it("encodes a space in a pattern so it addresses the rule it names", async () => {
+  it("addresses a pattern holding a slash by its rule id", async () => {
+    /* The case the id-based endpoint exists for. Under `DELETE
+       /categories/rules/{pattern}` a pattern of `bakker/straat` was unaddressable
+       however it was encoded — the path parameter is one segment, and `%2F`
+       inside a segment is a character, not a separator. So every encoding 404'd
+       for a rule `GET /categories/rules` plainly listed, and the row had to carry
+       an apology instead of a button. */
     const calls = stubApi(
       baseHandlers({
         "GET /categories/rules": () => ({
           status: 200,
-          body: [{ ...HAND_RULE, description_pattern: "albert heijn 1234" }],
-        }),
-        "DELETE /categories/rules/albert%20heijn%201234": () => ({
-          status: 200,
-          body: { status: "deleted", description_pattern: "albert heijn 1234" },
-        }),
-      }),
-    );
-    renderAt("/finance/categories/rules");
-
-    await userEvent.click(
-      await screen.findByRole("button", { name: /delete the rule matching/i }),
-    );
-    await userEvent.click(screen.getByRole("button", { name: /^delete 1 rule$/i }));
-
-    /* Unencoded, this pattern would address a DIFFERENT path — and a 404 that
-       reads as "no such rule" for a rule that is plainly on screen. Verified
-       against the running backend: `DELETE /rules/albert%20heijn` finds the
-       rule, and an unencoded space does not. */
-    await waitFor(() => {
-      expect(callsTo(calls, "DELETE")[0]?.path).toBe(
-        "/api/v1/categories/rules/albert%20heijn%201234",
-      );
-    });
-  });
-
-  it("offers no delete for a pattern holding a slash, because the API cannot address one", async () => {
-    /* Verified against the running backend on 2026-10-06. `DELETE
-       /categories/rules/bakker%2Fstraat` answers 404 for a rule that
-       `GET /categories/rules` lists, and so does every other encoding — the
-       path parameter is one segment. Offering the button would mean a screen
-       telling the user a rule does not exist while listing it three lines up. */
-    stubApi(
-      baseHandlers({
-        "GET /categories/rules": () => ({
-          status: 200,
           body: [{ ...HAND_RULE, description_pattern: "bakker/straat" }],
+        }),
+        "DELETE /categories/rules/9": () => ({
+          status: 200,
+          body: { status: "deleted", id: 9 },
         }),
       }),
     );
@@ -487,8 +466,21 @@ describe("categorization rules — deleting", () => {
 
     const row = (await screen.findByText("bakker/straat")).closest("li");
     expect(row).not.toBeNull();
-    const button = within(row as HTMLElement).getByRole("button", { name: /delete/i });
-    expect(button).toBeDisabled();
-    expect(within(row as HTMLElement).getByText(/holds a slash/i)).toBeInTheDocument();
+    const button = within(row as HTMLElement).getByRole("button", { name: /delete rule 9/i });
+    expect(button).toBeEnabled();
+    /* And no excuse on the row any more. */
+    expect(within(row as HTMLElement).queryByText(/holds a slash/i)).toBeNull();
+
+    await userEvent.click(button);
+    await userEvent.click(screen.getByRole("button", { name: /^delete this rule$/i }));
+
+    await waitFor(() => {
+      /* The slash is nowhere in the request line. It is the number, and nothing
+         is encoded because there is nothing that could need it. */
+      expect(callsTo(calls, "DELETE")[0]?.path).toBe("/api/v1/categories/rules/9");
+    });
+    await waitFor(() => {
+      expect(screen.queryByText("bakker/straat")).toBeNull();
+    });
   });
 });
