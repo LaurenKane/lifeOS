@@ -59,8 +59,9 @@ its first tenant, not its only one.
 
 Nothing about ADR 0001's topology changes. Same VPS, same Compose services (db, api,
 worker, tailscale), same Tailscale access, same restic plus age backups. The correction is
-scoping, not architecture: future modules arrive as new schemas and new Compose services,
-not as new machines.
+scope, not architecture: future modules arrive as new schemas and routers in the shared API
+by default, not as new machines or separate Compose services. A module gets a separate
+service only when it has an independent runtime need, such as its own long-running worker.
 
 ### 2. Backup retention is pinned, and the restore test is a gate
 
@@ -124,5 +125,6 @@ volume copy) remains unchanged and is not repeated here. Read it there.
 - ADR 0001 (amended by this record; topology, worker, and transfer procedure)
 - ADR 0005 (one schema per module; the event trigger this decision depends on)
 - ADR 0006 §5 (why the trigger is an event trigger and not grants)
+- ADR 0010 (the module boundary contract; modules join the shared API by default)
 - `backend/db_bootstrap.sql` (the trigger itself)
 - `tools/backup_test.sh` (the monthly restore test)

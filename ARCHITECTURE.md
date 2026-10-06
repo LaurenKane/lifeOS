@@ -206,6 +206,8 @@ The app must run with `--network=none`. This is a deliberate design property, no
 - `docs/adr/0005-schema-ownership.md` — one schema per module, no cross-schema FKs
 - `docs/adr/0006-balance-trigger-and-db-invariants.md` — the deferrable balance trigger, and what
   it does *not* stop
+- `docs/adr/0009-multi-module-host-and-backups.md` — one host for every module; pinned backup retention
+- `docs/adr/0010-adding-a-lifeos-module.md` — the module boundary contract; how to add a module
 - `docs/ENABLE-BANKING-SETUP.md` — Enable Banking connection guide
 - `SAFETY.md` — rules for touching this repo
 - `AGENTS.md` — agent context rules
@@ -236,5 +238,25 @@ at them any more, deliberately.
 > it now carries the two PDF paths that have no adapter. Provider enum:
 > `enable_banking · amex_pdf · rabobank_pdf · revolut_pdf · manual`
 > (`docs/adr/0002-import-provider-enum.md`).
+
+### Module status
+
+**Finance V1 (the file-import path) is COMPLETE as of 2026-10-06.** The offline pipeline —
+manual plus Amex/Rabobank/Revolut PDF import, fingerprint dedup, categorization, transfer
+matching — is landed and working. What remains is tracked, not missing.
+
+Deferred items ("deferred" does not mean "missing" — each is a bead with an owner and a
+milestone, not a gap discovered later):
+
+- M5 live ingestion — `LifeOS-10`
+- Seed/demo ledger — `LifeOS-clw`
+- `exchange_rate` — `LifeOS-l3j`
+- Budgets, net-worth over time — `LifeOS-14`, `LifeOS-15`
+- P4 hardening — `LifeOS-2h0`, `LifeOS-35o`
+- Product scope decisions — `LifeOS-2vv`
+- Enable Banking production probe — `LifeOS-17`
+
+The module boundary contract for whatever comes next is `docs/adr/0010-adding-a-lifeos-module.md`:
+one vertical slice, one schema, composition at the app layer.
 
 ---
