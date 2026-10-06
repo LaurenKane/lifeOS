@@ -45,6 +45,12 @@ __all__ = [
     "ImportSummary",
     "ManualTransactionRequest",
     "ManualTransactionUpdate",
+    "MerchantAliasCreateRequest",
+    "MerchantAliasSummary",
+    "MerchantAliasUpdateRequest",
+    "MerchantCreateRequest",
+    "MerchantSummary",
+    "MerchantUpdateRequest",
     "NetWorthPoint",
     "Provider",
     "ProviderInfo",
@@ -463,3 +469,110 @@ class CategoryRuleSummary(BaseModel):  # type: ignore[explicit-any]
     category_id: int
     is_learned: bool
     confidence: Decimal
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Merchants and merchant aliases (LifeOS-8 layers 2-4 curation)
+# ──────────────────────────────────────────────────────────────────────
+#
+# The rows the matcher reads: `load_known_merchants` resolves merchants to a
+# category (layer 3) and `load_aliases` resolves raw strings to a category
+# (layer 2). These schemas are those rows on the wire — never the domain
+# dataclasses, which carry matcher behaviour (`matches()`) that has no
+# business in a request body or a JSON response.
+#
+# Response models are frozen `BaseModel`s, request models inherit `_Write`:
+# the same split the categories section above uses. There is no separate
+# `_ReadOnly` base in this module; frozen-plus-forbid IS the read-only idiom.
+
+
+class MerchantSummary(BaseModel):  # type: ignore[explicit-any]
+    """One canonical merchant, as the curation screen reads it.
+
+    `category_id` is None when the name is known but unfiled: such a row
+    feeds neither layer 3 nor layer 4, which is the honest answer for a name
+    nobody categorised.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: int
+    name: str
+    category_id: int | None
+
+
+class MerchantCreateRequest(_Write):  # type: ignore[explicit-any]
+    """A new canonical merchant, optionally filed to a category already.
+
+    No `id`: the database hands it out, and a client-chosen id would collide
+    the way account ids do (see `AccountCreateRequest`). A blank name fails
+    `min_length` here with a 422 instead of landing as a row the substring
+    match can never meaningfully use.
+    """
+
+    name: str = Field(min_length=1, max_length=500)
+    category_id: int | None = Field(default=None, ge=1)
+
+
+class MerchantUpdateRequest(_Write):  # type: ignore[explicit-any]
+    """What a merchant edit may change.
+
+    Both fields optional and an absent field means "leave alone", so this is
+    a PATCH and not a PUT: an explicit `category_id: null` CLEARS the
+    category (back to known-but-unfiled) while an absent field leaves it —
+    read via `model_fields_set`, never via the default. A blank name is
+    still a 422.
+    """
+
+    name: str | None = Field(default=None, min_length=1, max_length=500)
+    category_id: int | None = Field(default=None, ge=1)
+
+
+class MerchantAliasSummary(BaseModel):  # type: ignore[explicit-any]
+    """One stored alias, as the curation screen reads it.
+
+    `confidence` is the `NUMERIC(3,2)` layer 2 scores with, rendered as a
+    decimal — never a float — for the same reason `CategoryRuleSummary`
+    states: a curated alias is a deliberate mapping, so it defaults to
+    1.00 and clears the `is_auto` bar.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: int
+    raw_string: str
+    merchant_id: int | None
+    category_id: int | None
+    confidence: Decimal
+
+
+class MerchantAliasCreateRequest(_Write):  # type: ignore[explicit-any]
+    """A new raw-string mapping.
+
+    At least one of `category_id` / `merchant_id` is required — enforced in
+    the router, not here, because "at least one of two" is not a shape either
+    field carries alone. `confidence` defaults to 1.00: a curated alias is a
+    deliberate mapping, not a guess, and must clear layer 2's `is_auto` bar
+    of 0.90. A blank `raw_string` fails `min_length` with a 422.
+    """
+
+    raw_string: str = Field(min_length=1, max_length=500)
+    category_id: int | None = Field(default=None, ge=1)
+    merchant_id: int | None = Field(default=None, ge=1)
+    confidence: Decimal = Field(
+        default=Decimal("1.00"), ge=Decimal("0"), le=Decimal("1")
+    )
+
+
+class MerchantAliasUpdateRequest(_Write):  # type: ignore[explicit-any]
+    """What an alias edit may change.
+
+    All fields optional with PATCH semantics: an explicit null clears while
+    an absent field leaves the row alone — read via `model_fields_set`. The
+    raw string itself is immutable: it is the match key, and renaming it is
+    a delete plus a create, not an edit.
+    """
+
+    category_id: int | None = Field(default=None, ge=1)
+    merchant_id: int | None = Field(default=None, ge=1)
+    confidence: Decimal | None = Field(default=None, ge=Decimal("0"), le=Decimal("1"))

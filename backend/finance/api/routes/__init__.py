@@ -15,6 +15,7 @@ from finance.api.routes import (
     analytics,
     categories,
     imports,
+    merchants,
     review,
     transactions,
 )
@@ -26,6 +27,7 @@ ROUTERS = (
     imports.router,
     review.router,
     categories.router,
+    merchants.router,
     analytics.router,
 )
 
