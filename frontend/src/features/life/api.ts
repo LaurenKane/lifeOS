@@ -8,6 +8,7 @@ import { API_PATH, apiDelete, apiGet, apiPatch, apiPost, expectSchema } from "@/
 import {
   ActionSummary,
   CaptureResponse,
+  CatchUpSummary,
   GoalSummary,
   PixelDay,
   ThoughtSummary,
@@ -59,6 +60,18 @@ export const todayBoard = (): Promise<TodayBoard> =>
   );
 
 export const pixels = (): Promise<PixelDay[]> => apiGet<PixelDay[]>(`${P}/pixels`);
+
+/* ── The away strip ──────────────────────────────────────────────────────── */
+
+/* Parsed like the board: the strip is one screen the app opens on, and a
+ * response that is not a CatchUpSummary must say so at the boundary. */
+export const catchUp = (): Promise<CatchUpSummary> =>
+  apiGet<unknown>(`${P}/catchup`).then((value) =>
+    expectSchema(CatchUpSummary, value, "catch-up summary"),
+  );
+
+export const ackCatchUp = (day: string): Promise<{ acked: boolean }> =>
+  apiPost<{ day: string }, { acked: boolean }>(`${P}/catchup/ack`, { day });
 
 /* ── Actions ─────────────────────────────────────────────────────────────── */
 

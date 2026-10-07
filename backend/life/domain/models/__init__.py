@@ -93,6 +93,7 @@ metadata: Final[MetaData] = Base.metadata
 # `transfer_match` pair relies on, and the same reason it is harmless.
 from life.domain.models import (  # noqa: E402
     action,
+    away,
     goal,
     thought,
     upkeep,
@@ -101,6 +102,7 @@ from life.domain.models import (  # noqa: E402
 
 __all__ += [
     "action",
+    "away",
     "goal",
     "thought",
     "upkeep",

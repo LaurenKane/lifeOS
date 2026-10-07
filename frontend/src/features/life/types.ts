@@ -107,6 +107,32 @@ export const TodayBoard = z.object({
 });
 export type TodayBoard = z.infer<typeof TodayBoard>;
 
+/** The away strip's one read (Q8): a fact about attention, never a score.
+ * The Dashboard is the only consumer; this is the hand mirror of
+ * `life.api.schemas.CatchUpSummary`. */
+export const CatchUpThought = z.object({
+  thought_id: z.number(),
+  text: z.string(),
+  created_at: z.string(),
+});
+export type CatchUpThought = z.infer<typeof CatchUpThought>;
+
+export const CatchUpGoal = z.object({
+  goal_id: z.number(),
+  title: z.string(),
+  area: Area.nullable(),
+  current_focus: z.string().nullable(),
+});
+export type CatchUpGoal = z.infer<typeof CatchUpGoal>;
+
+export const CatchUpSummary = z.object({
+  away_days: z.number().int(),
+  acked_today: z.boolean(),
+  goals: z.array(CatchUpGoal),
+  thoughts: z.array(CatchUpThought),
+});
+export type CatchUpSummary = z.infer<typeof CatchUpSummary>;
+
 export const PixelDay = z.object({
   date: z.string(),
   count: z.number(),

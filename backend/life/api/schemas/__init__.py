@@ -33,6 +33,11 @@ __all__ = [
     "Area",
     "CaptureRequest",
     "CaptureResponse",
+    "CatchUpAckRequest",
+    "CatchUpAcked",
+    "CatchUpGoal",
+    "CatchUpSummary",
+    "CatchUpThought",
     "GoalCreateRequest",
     "GoalSummary",
     "GoalUpdateRequest",
@@ -158,6 +163,51 @@ class TodayBoard(_ReadOnly):  # type: ignore[explicit-any]
     upcoming: list[ActionSummary]
     upkeep_opportunities: list[UpkeepSummary]
     inbox: InboxStatus
+
+
+# ── Away / catch-up ──────────────────────────────────────────────────
+# NOTE: these response models live here (like TodayBoard), not in public.py.
+# The Dashboard is their only consumer and reads the HTTP API; no other
+# module could care, and public.py is the cross-module surface only.
+
+
+class CatchUpThought(_ReadOnly):  # type: ignore[explicit-any]
+    """An unresolved Thought shown on the away strip."""
+
+    thought_id: int
+    text: str
+    created_at: datetime
+
+
+class CatchUpGoal(_ReadOnly):  # type: ignore[explicit-any]
+    """An active Goal the strip asks about. Areas word, never dates."""
+
+    goal_id: int
+    title: str
+    area: Area | None = None
+    current_focus: str | None = None
+
+
+class CatchUpSummary(_ReadOnly):  # type: ignore[explicit-any]
+    """The away strip's one read (Q8). `away_days` is whole days of silence
+    (0 when the user has shown up recently) — it grounds, never shames."""
+
+    away_days: int
+    acked_today: bool
+    goals: list[CatchUpGoal]
+    thoughts: list[CatchUpThought]
+
+
+class CatchUpAckRequest(BaseModel):  # type: ignore[explicit-any]
+    """The day the strip was quieted — a LOCAL date, echoed by the client."""
+
+    day: date
+
+
+class CatchUpAcked(_ReadOnly):  # type: ignore[explicit-any]
+    """The ack's whole response: it either landed or didn't happen."""
+
+    acked: bool
 
 
 # ── Requests ─────────────────────────────────────────────────────────

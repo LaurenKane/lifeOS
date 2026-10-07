@@ -17,17 +17,22 @@ import { AppShell } from "@/components/AppShell";
 import { EmptyState, Notice, PageHeader, Panel, Skeleton } from "@/components/primitives";
 import { amountParts, formatMinorUnits } from "@/lib/money";
 import {
+  ackCatchUp,
+  catchUp,
   completeAction,
   listVisionItems,
   mediaUrl,
+  pauseGoal,
   pixels,
   recordReceipt,
+  resolveThought,
   todayBoard,
   updateVisionItem,
 } from "../api";
 import { VisionItemSummary, type ActionSummary } from "../types";
 import { useFetched } from "../use-fetched";
 import { CaptureBox } from "../capture-box";
+import { CatchUpStrip } from "../catchup";
 import { PixelStrip } from "../pixel-strip";
 import { UpkeepAge } from "../upkeep-age";
 import { UpkeepDot } from "../upkeep-dot";
@@ -83,6 +88,10 @@ export const DashboardPage: React.FC = () => {
   const board = useFetched(todayBoard, []);
   const vision = useFetched(listVisionItems, []);
   const grid = useFetched(pixels, []);
+  /* The away strip (Q8): one fact "you were away N days", asked of the
+   * three activity sources in one call. `acked_today` is the server state
+   * that unmounts the strip for the day, so every reload never nags. */
+  const catchup = useFetched(catchUp, []);
   const [financeError, setFinanceError] = React.useState<string | null>(null);
   const [spendCents, setSpendCents] = React.useState<number | null>(null);
   const [netWorthCents, setNetWorthCents] = React.useState<number | null>(null);
@@ -146,6 +155,34 @@ export const DashboardPage: React.FC = () => {
     [vision],
   );
 
+  /* Strip actions. Dismissing a thought and resting a goal change facts, so
+   * the reads they can affect reload; acking only changes the strip's own
+   * day state, so it reloads the catch-up alone. */
+  const onAck = React.useCallback(() => {
+    void ackCatchUp(todayIso()).then(catchup.reload).catch(() => undefined);
+  }, [catchup]);
+
+  const onRestGoal = React.useCallback(
+    (goalId: number) => {
+      void pauseGoal(goalId)
+        .then(() => catchup.reload())
+        .catch(() => undefined);
+    },
+    [catchup],
+  );
+
+  const onDismissThought = React.useCallback(
+    (thoughtId: number) => {
+      void resolveThought(thoughtId, { choice: "dismissed" })
+        .then(() => {
+          catchup.reload();
+          board.reload();
+        })
+        .catch(() => undefined);
+    },
+    [catchup, board],
+  );
+
   const today = todayIso();
 
   return (
@@ -163,6 +200,21 @@ export const DashboardPage: React.FC = () => {
             {board.error}
           </Notice>
         )}
+
+        {/* The away strip (Q8), DOM-first so it reads before the board shows
+         * its day-to-day face: two days of silence, one strip, no shame.
+         * Rows-only render lives inside the strip — the two-line condition
+         * stays here because it is the mount decision. */}
+        {catchup.data !== null &&
+          catchup.data.away_days >= 2 &&
+          !catchup.data.acked_today && (
+            <CatchUpStrip
+              summary={catchup.data}
+              onAck={onAck}
+              onRest={onRestGoal}
+              onDismiss={onDismissThought}
+            />
+          )}
 
         <div className="grid gap-8 md:grid-cols-2">
           <Panel title="Do now" description="Five top-level things. The cut is the system's; the rest wait without you re-deciding them." className="h-fit">
