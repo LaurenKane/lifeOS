@@ -11,8 +11,13 @@ keep handoffs tight, and prefer free models for throwaway work.
 |---|---|---|
 | fixer (implementation) | `opencode-go/glm-5.3-flash` | Yes — verified online 2026-10-07 |
 | oracle / council (hard review, trade-offs) | `opencode-go/minimax-m3` (thinking) | Yes — verified online 2026-10-07 |
+| explorer / librarian / designer (Qwen role) | `opencode-go/qwen3.8-flash` | Yes — verified online 2026-10-07 (substitute) |
 | observer (image reading) | `opencode/mimo-v2.6-flash-free` | Yes |
-| explorer / librarian / designer | `obit/unsloth/Qwen3.8-27B-GGUF` | **No** — local-only model; not registered in the harness |
+| explorer / librarian / designer as configured | `obit/unsloth/Qwen3.8-27B-GGUF` | **No** — local-only model; not registered in the harness |
+
+The Qwen roles substitute `opencode-go/qwen3.8-flash` — the same Qwen family
+the local GGUF wraps — per the owner's confirmed routing (2026-10-07): when
+the file says Qwen, this harness uses that model family via OpenCode Go.
 
 ## Defaults for this repo's sessions
 
@@ -20,9 +25,10 @@ keep handoffs tight, and prefer free models for throwaway work.
    mapping — `opencode-go/glm-5.3-flash`.
 2. **Architectural judgement, trade-off review, hard debugging**: the oracle
    mapping — `opencode-go/minimax-m3`.
-3. **Scouting when a local model is unreachable**: nearest substitutes are the
-   free `opencode/mimo-v2.6-flash-free` or the orchestrator's own model; say
-   which you used in the handoff report.
+3. **Scouting / UI implementation (Qwen roles)**: the explorer/librarian/
+   designer mapping — substitute `opencode-go/qwen3.8-flash` (the local GGUF
+   is not reachable from the harness; the Qwen family through OpenCode Go is
+   the chosen equivalent).
 4. The orchestrator (planning, coordination, final review, commits) stays on
    its own model; it always reviews delegated output before integrating.
 
