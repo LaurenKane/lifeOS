@@ -52,6 +52,15 @@ class LifeOSettings(BaseSettings):  # type: ignore[explicit-any]
     # by URL); unset = the feed answers 404 — off, not locked-and-waiting.
     ICS_TOKEN: str = ""
 
+    # The inbox helper ("help me sort the pile"): ANY OpenAI-compatible
+    # chat-completions endpoint. The key is ENV-ONLY: it arrives through the
+    # deployer's own environment or an UNTRACKED override file — never a
+    # tracked file of this repository (SAFETY.md rule 3). All three empty =
+    # the feature is simply absent, not off-and-waiting.
+    LLM_BASE_URL: str = ""
+    LLM_API_KEY: str = ""
+    LLM_MODEL: str = ""
+
     # API
     API_V1_PREFIX: str = "/api/v1"
     CORS_ORIGINS: str = "http://localhost:3000,http://localhost:8080"

@@ -4,12 +4,13 @@
  * ApiError. Dates come back as ISO strings and are handed to the API the same
  * way; nothing here re-signs amounts or re-derives meanings.
  */
-import { API_PATH, apiDelete, apiGet, apiPatch, apiPost, expectSchema } from "@/lib/apiClient";
+import { API_PATH, apiDelete, apiGet, apiPatch, apiPost, baseUrl, expectSchema } from "@/lib/apiClient";
 import {
   ActionSummary,
   CaptureResponse,
   CatchUpSummary,
   GoalSummary,
+  OrganizeResponse,
   PixelDay,
   ReflectionSummary,
   ThoughtSummary,
@@ -40,14 +41,33 @@ export const resolveThought = (
         create_receipt?: boolean;
         aim_days?: number;
       },
-): Promise<{ thought: ThoughtSummary }> =>
-  apiPost<unknown, { thought: ThoughtSummary }>(
+): Promise<{ thought: ThoughtSummary; created_action?: ActionSummary | null }> =>
+  apiPost<unknown, { thought: ThoughtSummary; created_action?: ActionSummary | null }>(
     `${P}/thoughts/${thoughtId}/resolve`,
     body,
   );
 
 export const listThoughts = (): Promise<ThoughtSummary[]> =>
   apiGet<ThoughtSummary[]>(`${P}/thoughts`);
+
+/* The helper's availability rides the thoughts read as a response HEADER,
+ * not a body field: the list shape is pinned by every consumer and backend
+ * test, so `X-Helper-Available` is how the flag travels additively. Empty
+ * by default — the helper is absent, not off-and-waiting, and the inbox
+ * renders no button when this is false. */
+export const helperAvailable = (): Promise<boolean> =>
+  fetch(`${baseUrl}${P}/thoughts`)
+    .then((res) => res.headers.get("X-Helper-Available"))
+    .then((value) => value === "true");
+
+/* The organizer's ONE call per tap. Suggestions ONLY — nothing is applied
+ * server-side; each row is approved or rejected one by one. Parsed like the
+ * board: a response that is not an OrganizeResponse says so at the boundary
+ * instead of surfacing as `undefined.suggestions` in a render. */
+export const organize = (): Promise<OrganizeResponse> =>
+  apiPost<undefined, unknown>(`${P}/thoughts/organize`, undefined).then(
+    (value) => expectSchema(OrganizeResponse, value, "organize suggestions"),
+  );
 
 /* ── The board ───────────────────────────────────────────────────────────── */
 

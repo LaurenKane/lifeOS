@@ -60,6 +60,8 @@ __all__ = [
     "WishlistItemUpdateRequest",
     "ParsedCaptureInfo",
     "InboxStatus",
+    "OrganizeResponse",
+    "OrganizeSuggestion",
 ]
 
 
@@ -153,6 +155,36 @@ class InboxStatus(_ReadOnly):  # type: ignore[explicit-any]
 
     count: int
     stale: int
+
+
+# ── The inbox helper ("help me sort the pile") ────────────────────────
+# NOTE: these live here (like TodayBoard and the reflection models), not in
+# public.py — the Thoughts Inbox page is their only consumer. The organizer
+# is SUGGESTIONS ONLY: nothing is applied server-side, and the user approves
+# or rejects each row one by one (echo-then-tap, never silent).
+
+
+class OrganizeSuggestion(_ReadOnly):  # type: ignore[explicit-any]
+    """One suggestion for one Thought. `choice` is the user's pile
+    vocabulary ("action" | "upkeep" | "keep" | "dismiss"); `due_date` is the
+    ISO date STRING the frontend passes straight into an action edit
+    (date only, no wire re-derivation); `why` is a short factual reason the
+    helper supplied — shown as the quiet subtitle, capped at 120 characters
+    at the parse boundary."""
+
+    thought_id: int
+    choice: str
+    due_date: str | None = None
+    urgent: bool = False
+    why: str = ""
+
+
+class OrganizeResponse(_ReadOnly):  # type: ignore[explicit-any]
+    """The organizer's whole answer. Entries dropped at the boundary (bad
+    ids, off-vocabulary choices) simply do not appear; a Thought that got no
+    suggestion is simply not listed. An empty list is a normal 200."""
+
+    suggestions: list[OrganizeSuggestion]
 
 
 class TodayBoard(_ReadOnly):  # type: ignore[explicit-any]

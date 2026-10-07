@@ -184,6 +184,27 @@ export const CaptureResponse = z.object({
 });
 export type CaptureResponse = z.infer<typeof CaptureResponse>;
 
+/** The helper's one suggestion (echo-then-tap). `choice` is the pile's own
+ * vocabulary; `due_date` is the ISO date STRING passed straight into an
+ * action edit; `why` is a short factual reason, shown as the quiet
+ * subtitle. The hand mirror of `life.api.schemas.OrganizeSuggestion`. */
+export const Suggestion = z.object({
+  thought_id: z.number().int(),
+  choice: z.enum(["action", "upkeep", "keep", "dismiss"]),
+  due_date: z.string().nullable(),
+  urgent: z.boolean(),
+  why: z.string(),
+});
+export type Suggestion = z.infer<typeof Suggestion>;
+
+/** The organizer's whole answer. Entries never applied server-side: each
+ * row is approved or rejected one by one. Mirror of
+ * `life.api.schemas.OrganizeResponse`. */
+export const OrganizeResponse = z.object({
+  suggestions: z.array(Suggestion),
+});
+export type OrganizeResponse = z.infer<typeof OrganizeResponse>;
+
 /** Finance figures the Dashboard composes (ADR 0012), read live from the
  * finance module's own endpoints — parsed with the same honesty. */
 export const NetWorthPoint = z.object({
