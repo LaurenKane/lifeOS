@@ -43,6 +43,9 @@ __all__ = [
     "GoalUpdateRequest",
     "PixelDay",
     "ReceiptCreateRequest",
+    "ReflectionGoal",
+    "ReflectionSummary",
+    "ReflectionUpkeep",
     "ThoughtResolveRequest",
     "ThoughtResolveResponse",
     "ThoughtSummary",
@@ -168,7 +171,8 @@ class TodayBoard(_ReadOnly):  # type: ignore[explicit-any]
 # ── Away / catch-up ──────────────────────────────────────────────────
 # NOTE: these response models live here (like TodayBoard), not in public.py.
 # The Dashboard is their only consumer and reads the HTTP API; no other
-# module could care, and public.py is the cross-module surface only.
+# module could care, and public.py is the cross-module surface only. The
+# reflection read below is the same story — Dashboard-only, module-internal.
 
 
 class CatchUpThought(_ReadOnly):  # type: ignore[explicit-any]
@@ -208,6 +212,41 @@ class CatchUpAcked(_ReadOnly):  # type: ignore[explicit-any]
     """The ack's whole response: it either landed or didn't happen."""
 
     acked: bool
+
+
+# ── Reflection ───────────────────────────────────────────────────────
+
+
+class ReflectionGoal(_ReadOnly):  # type: ignore[explicit-any]
+    """One active Goal's last 30 days, in facts: how many Actions were done
+    under it and up to three example texts, newest first. The texts are quiet
+    provenance for the count, not a primary list — the Dashboard references
+    them without making dates or numbers the point."""
+
+    goal_id: int
+    title: str
+    area: Area | None = None
+    count: int
+    done_texts: list[str]
+
+
+class ReflectionUpkeep(_ReadOnly):  # type: ignore[explicit-any]
+    """One active Upkeep's last 30 days: how many receipts it took."""
+
+    upkeep_id: int
+    title: str
+    count: int
+
+
+class ReflectionSummary(_ReadOnly):  # type: ignore[explicit-any]
+    """The Dashboard's "Looking back" read: the rolling last 30 days in what
+    actually happened. Entries with a count of zero are absent (and an empty
+    response is a normal 200 the Dashboard answers with silence); no score,
+    no ranked comparison — vocabulary law."""
+
+    window_days: int
+    goals: list[ReflectionGoal]
+    upkeeps: list[ReflectionUpkeep]
 
 
 # ── Requests ─────────────────────────────────────────────────────────

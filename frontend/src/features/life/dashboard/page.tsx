@@ -25,11 +25,12 @@ import {
   pauseGoal,
   pixels,
   recordReceipt,
+  reflection,
   resolveThought,
   todayBoard,
   updateVisionItem,
 } from "../api";
-import { VisionItemSummary, type ActionSummary } from "../types";
+import { VisionItemSummary, type ActionSummary, type ReflectionSummary } from "../types";
 import { useFetched } from "../use-fetched";
 import { CaptureBox } from "../capture-box";
 import { CatchUpStrip } from "../catchup";
@@ -92,6 +93,10 @@ export const DashboardPage: React.FC = () => {
    * three activity sources in one call. `acked_today` is the server state
    * that unmounts the strip for the day, so every reload never nags. */
   const catchup = useFetched(catchUp, []);
+  /* The "Looking back" read: one fact-shaped month behind today's board.
+   * Rendered only when something happened — both lists empty renders
+   * nothing at all for it (silence is the design, not an empty state). */
+  const back = useFetched(reflection, []);
   const [financeError, setFinanceError] = React.useState<string | null>(null);
   const [spendCents, setSpendCents] = React.useState<number | null>(null);
   const [netWorthCents, setNetWorthCents] = React.useState<number | null>(null);
@@ -343,6 +348,20 @@ export const DashboardPage: React.FC = () => {
           </Panel>
         </div>
 
+        {/* "Looking back" (the year's quiet reflection): rendered ONLY when
+         * something happened — both lists empty means the panel does not
+         * mount at all. Silence is the design; there is no empty state box
+         * and no 'nothing here' message for it. */}
+        {back.data !== null &&
+          back.data.goals.length + back.data.upkeeps.length > 0 && (
+            <Panel
+              title="Looking back"
+              description="The last 30 days, in what actually happened — not in points, not in a percent."
+            >
+              <LookingBack summary={back.data} />
+            </Panel>
+          )}
+
         <Panel title="Days you did something" description="Fills on a day you completed anything or filed a receipt. Empty days are just days.">
           {grid.data === null ? <Skeleton label="loading the grid" rows={2} /> : <PixelStrip data={grid.data} />}
         </Panel>
@@ -370,6 +389,46 @@ export const DashboardPage: React.FC = () => {
     </AppShell>
   );
 };
+
+/** The "Looking back" panel's body. Each goal speaks the deterministic line
+ * ({N} small steps on {title}) with its done texts as quiet quotes —
+ * provenance for the count, never dated headlines and never a judgment.
+ * The upkeep line is the same grammar: kept going N times, a fact. */
+const LookingBack: React.FC<{ summary: ReflectionSummary }> = ({ summary }) => (
+  <div className="grid gap-x-8 gap-y-5 px-6 pb-6 md:grid-cols-2">
+    {summary.goals.length > 0 && (
+      <ul className="flex flex-col">
+        {summary.goals.map((goal) => (
+          <li key={goal.goal_id} className="py-2">
+            <p className="text-[0.9375rem] leading-snug">
+              {goal.count === 1 ? "1 small step" : `${goal.count} small steps`}
+              {" on "}
+              {goal.title}
+            </p>
+            {goal.done_texts.length > 0 && (
+              <p className="mt-1 max-w-[68ch] text-[0.8125rem] leading-relaxed text-ink-quiet">
+                {goal.done_texts.map((text) => `“${text}”`).join("  ·  ")}
+              </p>
+            )}
+          </li>
+        ))}
+      </ul>
+    )}
+    {summary.upkeeps.length > 0 && (
+      <ul className="flex flex-col">
+        {summary.upkeeps.map((upkeep) => (
+          <li
+            key={upkeep.upkeep_id}
+            className="py-2 text-[0.9375rem] leading-snug"
+          >
+            {upkeep.title} — kept going{" "}
+            {upkeep.count === 1 ? "1 time" : `${upkeep.count} times`}
+          </li>
+        ))}
+      </ul>
+    )}
+  </div>
+);
 
 const VisionStrip: React.FC<{
   items: VisionItemSummary[];

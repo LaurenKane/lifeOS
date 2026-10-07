@@ -11,6 +11,7 @@ import {
   CatchUpSummary,
   GoalSummary,
   PixelDay,
+  ReflectionSummary,
   ThoughtSummary,
   TodayBoard,
   UpkeepSummary,
@@ -72,6 +73,17 @@ export const catchUp = (): Promise<CatchUpSummary> =>
 
 export const ackCatchUp = (day: string): Promise<{ acked: boolean }> =>
   apiPost<{ day: string }, { acked: boolean }>(`${P}/catchup/ack`, { day });
+
+/* ── Looking back (reflection) ─────────────────────────────────────────── */
+
+/* Parsed like the board: a response that is not a ReflectionSummary must say
+ * so at the boundary, not surface as `undefined.goals` in a render. An empty
+ * summary (both lists empty) is a normal answer the Dashboard renders as
+ * silence — not an empty state. */
+export const reflection = (): Promise<ReflectionSummary> =>
+  apiGet<unknown>(`${P}/reflection`).then((value) =>
+    expectSchema(ReflectionSummary, value, "reflection summary"),
+  );
 
 /* ── Actions ─────────────────────────────────────────────────────────────── */
 

@@ -17,6 +17,7 @@ from life.api.routes import (
     catchup,
     goals,
     pixels,
+    reflection,
     thoughts,
     today,
     upkeeps,
@@ -32,6 +33,7 @@ ROUTERS = (
     upkeeps.router,
     vision.router,
     pixels.router,
+    reflection.router,
     today.router,
     catchup.router,
 )

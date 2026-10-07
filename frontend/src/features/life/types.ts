@@ -139,6 +139,32 @@ export const PixelDay = z.object({
 });
 export type PixelDay = z.infer<typeof PixelDay>;
 
+/** The "Looking back" read: the rolling last 30 days as signed facts. The
+ * hand mirror of `life.api.schemas.ReflectionSummary`; `done_texts` are
+ * quiet example quotes, never dated headlines. */
+export const ReflectionGoal = z.object({
+  goal_id: z.number(),
+  title: z.string(),
+  area: Area.nullable(),
+  count: z.number().int(),
+  done_texts: z.array(z.string()),
+});
+export type ReflectionGoal = z.infer<typeof ReflectionGoal>;
+
+export const ReflectionUpkeep = z.object({
+  upkeep_id: z.number(),
+  title: z.string(),
+  count: z.number().int(),
+});
+export type ReflectionUpkeep = z.infer<typeof ReflectionUpkeep>;
+
+export const ReflectionSummary = z.object({
+  window_days: z.number().int(),
+  goals: z.array(ReflectionGoal),
+  upkeeps: z.array(ReflectionUpkeep),
+});
+export type ReflectionSummary = z.infer<typeof ReflectionSummary>;
+
 /** A parsed capture (Q22's echo payload). */
 export const ParsedCaptureInfo = z.object({
   due_date: z.string().nullable(),
