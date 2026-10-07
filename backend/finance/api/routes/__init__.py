@@ -13,6 +13,7 @@ from __future__ import annotations
 from finance.api.routes import (
     accounts,
     analytics,
+    budgets,
     categories,
     imports,
     merchants,
@@ -29,6 +30,7 @@ ROUTERS = (
     categories.router,
     merchants.router,
     analytics.router,
+    budgets.router,
 )
 
 __all__ = ["ROUTERS"]

@@ -35,8 +35,15 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # --no-editable: a runtime image wants a real installed copy, not a .pth file
 # pointing back at a source directory that nothing else is going to edit.
 COPY backend/ ./backend/
+# `uv cache clean lifeos` BEFORE the sync. Why: the wheel cache is keyed on the
+# project's name+version metadata, NOT on the source tree — so a backend code
+# change without a version bump lets this cache-mount rebuild serve a STALE
+# wheel (observed 2026-10-07: a freshly rebuilt image whose runtime served
+# `/api/v1/budgets` as 404 while `/app/backend` contained the working code).
+# Cleaning just the project's artefacts leaves every dependency cached.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-editable
+    uv cache clean lifeos \
+ && uv sync --frozen --no-dev --no-editable
 
 # ---------------------------------------------------------------------------
 # runtime — no compilers, no dev dependencies, no network tools

@@ -8,7 +8,6 @@ import datetime as dt
 from dataclasses import FrozenInstanceError
 
 import pytest
-from pydantic import ValidationError
 
 from life.domain.services.parse import ParsedCapture, parse_capture
 

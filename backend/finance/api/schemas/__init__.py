@@ -34,6 +34,9 @@ __all__ = [
     "AccountNature",
     "AccountSummary",
     "AccountType",
+    "BudgetCreateRequest",
+    "BudgetSummary",
+    "BudgetUpdateRequest",
     "CashflowBucket",
     "CategoryCreateRequest",
     "CategoryKind",
@@ -607,3 +610,91 @@ class MerchantAliasUpdateRequest(_Write):  # type: ignore[explicit-any]
     category_id: int | None = Field(default=None, ge=1)
     merchant_id: int | None = Field(default=None, ge=1)
     confidence: Decimal | None = Field(default=None, ge=Decimal("0"), le=Decimal("1"))
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Budgets
+# ──────────────────────────────────────────────────────────────────────
+#
+# The wire shapes behind `GET /api/v1/budgets`, which the frontend budgets
+# page already reads (`frontend/src/features/finance/budgets/types.ts`).
+# Money is an INTEGER count of minor units like every other amount in this
+# module — a budget compared on floats drifts a cent per transaction and
+# never looks wrong until the totals disagree (ARCHITECTURE.md §6).
+
+
+class BudgetSummary(BaseModel):  # type: ignore[explicit-any]
+    """One stored budget, as the budgets screen reads it.
+
+    Read-only and frozen like every other response model here.
+
+    `name` is the budgeted CATEGORY's name, not a column: a budget is a limit
+    on one category, so the category's own name is the label — reading it
+    through the join means renaming the category updates every screen with no
+    second copy to drift. `category_id` rides along for the same reason
+    `MerchantSummary` carries it: two branches of the tree are each entitled
+    to their own category of the same name, so `name` alone cannot address
+    the row.
+
+    `amount_minor` rides as `amountMinor` on the wire (a serialization alias),
+    because that is the name the frontend's `BudgetSchema` parses — the same
+    rule `ImportBatchSummary` states for `sourceFilename`.
+
+    `period` stays a plain string rather than an enum: the CHECK in migration
+    0007 owns the closed set, and a stored value this build has not heard of
+    must not turn a read-only list into a 500.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: int
+    name: str
+    category_id: int
+    amount_minor: int = Field(serialization_alias="amountMinor")
+    currency: str
+    period: str
+
+
+class BudgetCreateRequest(_Write):  # type: ignore[explicit-any]
+    """A new budget: one category, one limit, one period.
+
+    No `id` (the database hands it out) and no `name` (see `BudgetSummary`).
+    `category_id` must name an existing category — the router checks it and
+    answers 404, because a request pointing at nothing is a client mistake
+    and the foreign key's own message says less about it.
+
+    `amount_minor` is deliberately NOT bounded here. The `amount > 0` CHECK in
+    migration 0007 is the authority, and the router translates its refusal to
+    422 — the same rule `routes/categories.py` applies to duplicates: the
+    constraint decides, not a pre-check that could grow a second opinion and
+    leave the CHECK's own path dead.
+
+    `period` is the closed set the page renders, so an unknown period fails
+    at the edge with a 422, before any write — same treatment as a category's
+    `kind`.
+    """
+
+    category_id: int = Field(ge=1)
+    amount_minor: int
+    currency: str = Field(default="EUR", pattern=r"^[A-Z]{3}$")
+    period: Literal["monthly", "quarterly", "yearly"]
+
+
+class BudgetUpdateRequest(_Write):  # type: ignore[explicit-any]
+    """What a budget edit may change.
+
+    PATCH semantics via `model_fields_set`: absent means "leave alone".
+    Nothing here is clearable — a budget with no limit, no currency or no
+    period is not a budget — so an explicit `null` is a 422 from the router
+    rather than a clear, and these fields read `int | None` only so that the
+    wire can express the mistake at all.
+
+    `category_id` is absent on purpose: the category is what the budget is
+    ABOUT, so retargeting it is a different budget — create it and delete the
+    old one — the same rule `MerchantAliasUpdateRequest` applies to its
+    immutable `raw_string`.
+    """
+
+    amount_minor: int | None = None
+    currency: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")
+    period: Literal["monthly", "quarterly", "yearly"] | None = None

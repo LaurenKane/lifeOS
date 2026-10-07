@@ -162,6 +162,7 @@ metadata: Final[MetaData] = Base.metadata
 # and neither module needs a `TYPE_CHECKING` import it does not otherwise use.
 from finance.domain.models import (  # noqa: E402
     accounts,
+    budgets,
     importer,
     ledger,
     recurring,
@@ -172,6 +173,7 @@ from finance.domain.models import (  # noqa: E402
 
 __all__ += [
     "accounts",
+    "budgets",
     "importer",
     "ledger",
     "recurring",

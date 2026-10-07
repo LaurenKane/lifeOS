@@ -1,12 +1,10 @@
-/* Budgets hook — stub.
+/* Budgets hook — GET /api/v1/budgets.
  *
- * There is no budgets endpoint on the backend at all — budgets is a concept
- * from a later milestone. This hook therefore always ends in `error`, and the
- * page says so. The old `.catch(() => setData([]))` made an absent endpoint
- * look like an empty one, which is how a missing feature hides for months.
- *
- * The path keeps the same shape as the rest of the app so that when the
- * endpoint does appear, only the base changes. */
+ * The backend stores budgets now (finance.budget), so this is a plain read:
+ * `data` is the list, `error` is set only when the read fails. There is no
+ * `.catch(() => setData([]))` fallback, because that would make a dead
+ * backend look like an empty one — which is how a missing feature hides for
+ * months. The path keeps the same shape as the rest of the app. */
 import React from "react";
 import { API_PATH, apiGet, describeError } from "@/lib/apiClient";
 import type { Budget } from "./types";
