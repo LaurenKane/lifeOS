@@ -105,8 +105,9 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 # backend/tests is cross-module only; a module's own tests live beside it in
 # backend/finance/tests/. `tests/` holds repo-level tests (zero-egress).
-testpaths = ["backend/tests", "backend/finance/tests", "tests"]
-# backend/ is the import root, so `core` and `finance` are top-level packages.
+testpaths = ["backend/tests", "backend/finance/tests", "backend/life/tests", "tests"]
+# backend/ is the import root, so `core`, `finance` and `life` are top-level
+# packages.
 pythonpath = ["backend"]
 # DB-backed tests are OPT-IN, and `make test` stays Docker-free.
 #

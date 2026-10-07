@@ -33,13 +33,16 @@ life-os/
 │   ├── config.py               # pydantic-settings
 │   ├── core/                   # shared primitives ONLY: datetime, money, blob, recurrence, preference
 │   │   └── alembic/
-│   ├── finance/                # the module
-│   │   ├── alembic/            # migrations for the finance schema
-│   │   ├── domain/             # PRIVATE
-│   │   │   ├── models/         # SQLAlchemy ORM
-│   │   │   ├── value_objects/  # Money, Currency, DateRange
-│   │   │   └── services/       # pure logic: transfer_match, categorize, budget
-│   │   ├── ingestion/          # THE COMPLEXITY LIVES HERE
+│   ├── finance/                # the finance module (complete)
+│   ├── life/                   # the second module (ADR 0011): Thought/Goal/Action/Upkeep
+│   │   ├── alembic/            # migrations for the life schema
+│   │   ├── domain/             # PRIVATE: models + services (parse, upkeep_state, today)
+│   │   ├── api/routes/         # capture, thoughts, actions, goals, upkeeps, vision, pixels, today
+│   │   ├── api/schemas/        # Pydantic = the public contract
+│   │   ├── local.py            # LOCAL_TIMEZONE "today" helpers (user-local day)
+│   │   ├── public.py           # exports ONLY protocols + read-only schemas
+│   │   └── tests/{unit,integration}/
+│   │   │   ├── ingestion/      # THE COMPLEXITY LIVES HERE
 │   │   │   ├── adapters/       # enable_banking.py, amex_pdf.py, manual.py
 │   │   │   │                   # + rabobank_pdf.py, revolut_pdf.py (all v1
 │   │   │   │                   #   providers, docs/adr/0002-import-provider-enum.md).

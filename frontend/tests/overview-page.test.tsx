@@ -145,7 +145,7 @@ describe("overview — an empty ledger", () => {
   });
 
   it("shows no figure at all, and says what is missing", async () => {
-    renderAt("/");
+    renderAt("/finance/overview");
     expect(await screen.findByText(/nothing to add up yet/i)).toBeInTheDocument();
     // 0.00 would be a claim. It must not be on the page.
     expect(screen.queryByText(/^0\.00/)).not.toBeInTheDocument();
@@ -153,7 +153,7 @@ describe("overview — an empty ledger", () => {
   });
 
   it("points at the account that has to exist first", async () => {
-    renderAt("/");
+    renderAt("/finance/overview");
     expect(
       await screen.findByRole("link", { name: /register an account/i }),
     ).toHaveAttribute("href", "/finance/accounts");
@@ -161,7 +161,7 @@ describe("overview — an empty ledger", () => {
 
   it("never reaches for the demo on its own", async () => {
     const fetchMock = stubApi(EMPTY_HANDLERS());
-    renderAt("/");
+    renderAt("/finance/overview");
     await screen.findByText(/nothing to add up yet/i);
 
     // Nothing invented is on screen, and the analytics endpoints really were
@@ -174,7 +174,7 @@ describe("overview — an empty ledger", () => {
   });
 
   it("leaves a month with no postings as a gap rather than a zero bar", async () => {
-    renderAt("/");
+    renderAt("/finance/overview");
     expect(
       await screen.findByText(/a month with no postings is a gap, not a zero/i),
     ).toBeInTheDocument();
@@ -186,7 +186,7 @@ it("marks an empty month at the floor with the word, and not as a short bar", as
        and was not one), and this. The floor marker says where zero is and the
        word says the finding, and it sits on the same baseline as the five real
        bars — which is the part the dashed stub got wrong. */
-    renderAt("/?demo=1");
+    renderAt("/finance/overview?demo=1");
     await screen.findByText(/every figure below is invented/i);
 
     const list = document.querySelector(
@@ -223,7 +223,7 @@ it("marks an empty month at the floor with the word, and not as a short bar", as
   });
 
 it("puts every bar on one baseline, empty month included", async () => {
-    renderAt("/?demo=1");
+    renderAt("/finance/overview?demo=1");
     await screen.findByText(/every figure below is invented/i);
 
     /* The defect this guards: the "none" caption made the empty month's column
@@ -250,7 +250,7 @@ describe("overview — the demo is explicit or it does not happen", () => {
 
   it("shows invented figures when the URL asks for them, labelled once and loudly", async () => {
     stubApi(EMPTY_HANDLERS());
-    renderAt("/?demo=1");
+    renderAt("/finance/overview?demo=1");
 
     /* ONE marker, not four. An earlier draft said it in a banner, a chip, a
        paragraph and a badge inside the amount box, which is four chances to miss
@@ -266,14 +266,14 @@ describe("overview — the demo is explicit or it does not happen", () => {
 
   it("never asks the API for the demo's numbers", async () => {
     const fetchMock = stubApi(EMPTY_HANDLERS());
-    renderAt("/?demo=1");
+    renderAt("/finance/overview?demo=1");
     await screen.findByText(/every figure below is invented/i);
     expect(fetchMock.mock.calls.some((c) => String(c[0]).includes("/analytics/"))).toBe(false);
   });
 
   it("goes back to the real figures when the banner's action is used, and drops the parameter", async () => {
     stubApi(EMPTY_HANDLERS());
-    renderAt("/?demo=1");
+    renderAt("/finance/overview?demo=1");
     await screen.findByText(/every figure below is invented/i);
 
     await userEvent.click(screen.getByRole("button", { name: /show my ledger/i }));
@@ -285,7 +285,7 @@ describe("overview — the demo is explicit or it does not happen", () => {
 
   it("can be put back into demo from the page, off the empty state", async () => {
     stubApi(EMPTY_HANDLERS());
-    renderAt("/");
+    renderAt("/finance/overview");
     await screen.findByText(/nothing to add up yet/i);
     // OFF, the control is a plain quiet button that says what it does.
     await userEvent.click(screen.getByRole("switch", { name: /show demo data/i }));
@@ -309,7 +309,7 @@ describe("overview — a failed read is loud", () => {
   });
 
   it("shows the server's own words, and not an empty state", async () => {
-    renderAt("/");
+    renderAt("/finance/overview");
     /* Every panel that depends on the aggregates reports the failure, so the
        message appears once per panel rather than once per page. That is correct —
        a reader looking at the spend panel should not have to infer from the
@@ -321,13 +321,13 @@ describe("overview — a failed read is loud", () => {
   });
 
   it("does not fall back to the demo to fill the gap", async () => {
-    renderAt("/");
+    renderAt("/finance/overview");
     await screen.findAllByText(/connection to server at lifeos-db failed/i);
     expect(screen.queryByText(/invented/i)).not.toBeInTheDocument();
   });
 
   it("does not claim the review queue is clear when nobody read it", async () => {
-    renderAt("/");
+    renderAt("/finance/overview");
     await screen.findAllByText(/connection to server at lifeos-db failed/i);
     // The queue is a different endpoint and it failed too, so the stub has to say
     // "unknown" rather than "0, nothing waiting".
@@ -341,7 +341,7 @@ describe("overview — a failed read is loud", () => {
       ...EMPTY_HANDLERS(),
       "GET /analytics/net-worth": () => ({ status: 500, body: { detail: "boom" } }),
     });
-    renderAt("/");
+    renderAt("/finance/overview");
     await screen.findAllByRole("button", { name: /try again/i });
     const before = fetchMock.mock.calls.length;
     await userEvent.click(screen.getAllByRole("button", { name: /try again/i })[0]!);
@@ -378,7 +378,7 @@ describe("overview — figures", () => {
   });
 
   it("shows the net worth in integer minor units, never as a float", async () => {
-    renderAt("/");
+    renderAt("/finance/overview");
     /* 4_250_000 minor units is forty-two thousand five hundred euros, printed as
        42,500.00. The raw integer count has to be absent from the page as well as
        present in it: a figure that reached the screen as 4250000 would mean a
@@ -391,7 +391,7 @@ describe("overview — figures", () => {
   });
 
   it("prints a delta against 30 days, not a remembered one", async () => {
-    renderAt("/");
+    renderAt("/finance/overview");
     /* 4_250_000 less the last point at or before 5 September — which is the 1st,
        because the 20th is after the cutoff — is 250_000 minor units, printed
        2,500.00. The point chosen is the one at or before the cutoff, not the
@@ -402,7 +402,7 @@ describe("overview — figures", () => {
   });
 
   it("carries the direction in words and in a sign, not only in colour", async () => {
-    renderAt("/");
+    renderAt("/finance/overview");
     expect(await screen.findByText(/\+2,500\.00/)).toBeInTheDocument();
     expect(screen.getByText(/more than 30 days ago/i)).toBeInTheDocument();
     // The authored arrow is a shape, and it is an SVG rather than a Unicode glyph
@@ -413,7 +413,7 @@ describe("overview — figures", () => {
   });
 
   it("gives every amount the monospace and the prose one face", async () => {
-    renderAt("/");
+    renderAt("/finance/overview");
     await waitFor(async () => {
       expect(await figureText()).toContain("42,500.00");
     });
@@ -438,7 +438,7 @@ describe("overview — figures", () => {
   });
 
   it("keeps the one-transaction category rather than dropping it as an outlier", async () => {
-    renderAt("/");
+    renderAt("/finance/overview");
     /* −1,237 minor units is twelve thirty-seven, and it gets a row of its own with
      * its own figure rather than being merged into the leading category or hidden
      * as an outlier. The list stopping without saying so would look like a complete
@@ -456,7 +456,7 @@ describe("overview — figures", () => {
   });
 
   it("states the unit once per panel and never on a figure", async () => {
-    renderAt("/");
+    renderAt("/finance/overview");
     await waitFor(async () => {
       expect(await figureText()).toContain("42,500.00");
     });
@@ -474,7 +474,7 @@ describe("overview — figures", () => {
   });
 
   it("shows category magnitudes unsigned, and keeps the delta's sign", async () => {
-    renderAt("/");
+    renderAt("/finance/overview");
     await waitFor(async () => {
       expect(await figureText()).toContain("42,500.00");
     });
@@ -507,7 +507,7 @@ describe("overview — what leads, and why", () => {
      holdings it is an M10 idea with less to say, and leading with it put M10 in the
      loudest position on a V1 page. These tests hold that ordering. */
   it("puts spending before net worth in the reading order", async () => {
-    renderAt("/");
+    renderAt("/finance/overview");
     await screen.findByText(/net worth · EUR/i);
 
     const sections = [...document.querySelectorAll("main section")];
@@ -532,7 +532,7 @@ describe("overview — what leads, and why", () => {
        which the "one loud region" rule is actually load-bearing, and a rule only
        tested in the state where nothing competes is a rule that has not been
        tested. */
-    renderAt("/?demo=1");
+    renderAt("/finance/overview?demo=1");
     await screen.findByText(/every figure below is invented/i);
 
     /* The first display-size figure on the page is the one spent. Not the most
@@ -568,7 +568,7 @@ describe("overview — what leads, and why", () => {
   });
 
   it("gives the leading panel the four things it is allowed", async () => {
-    renderAt("/?demo=1");
+    renderAt("/finance/overview?demo=1");
     await screen.findByText(/every figure below is invented/i);
 
     const lead = document.querySelector("section[aria-labelledby='spend-heading']");
@@ -595,7 +595,7 @@ describe("overview — what leads, and why", () => {
   });
 
   it("keeps the bar chart beside the lead rather than inside it", async () => {
-    renderAt("/?demo=1");
+    renderAt("/finance/overview?demo=1");
     await screen.findByText(/every figure below is invented/i);
 
     /* Six columns, one panel, and it is not the lime one. */
@@ -624,7 +624,7 @@ describe("overview — the series axis says what it is doing", () => {
      not anchored at zero and cannot be, so it says so in words, under the numbers,
      where a reader who did not notice the scale will still meet the fact. */
   it("states that the axis does not start at zero", async () => {
-    renderAt("/");
+    renderAt("/finance/overview");
     await waitFor(async () => {
       expect(await figureText()).toContain("42,500.00");
     });
@@ -634,7 +634,7 @@ describe("overview — the series axis says what it is doing", () => {
   });
 
   it("prints the axis bounds rather than the data's own extremes", async () => {
-    renderAt("/");
+    renderAt("/finance/overview");
     await waitFor(async () => {
       expect(await figureText()).toContain("42,500.00");
     });
@@ -653,7 +653,7 @@ describe("overview — the series axis says what it is doing", () => {
   });
 
   it("draws no fill under the line, so no part of it reads as an empty rectangle", async () => {
-    renderAt("/?demo=1");
+    renderAt("/finance/overview?demo=1");
     await screen.findByText(/every figure below is invented/i);
 
     /* The area was tried twice and removed. With the axis at the data's own range it
@@ -680,7 +680,7 @@ describe("overview — the series axis says what it is doing", () => {
   });
 
 it("keeps the axis reasoning out of the reading path but keeps all of it", async () => {
-    renderAt("/?demo=1");
+    renderAt("/finance/overview?demo=1");
     await screen.findByText(/every figure below is invented/i);
 
     /* Five lines of methodology printed flat under a chart is the one thing a page
@@ -712,7 +712,7 @@ it("keeps the axis reasoning out of the reading path but keeps all of it", async
   });
 
 it("gives the month bars the same treatment", async () => {
-    renderAt("/?demo=1");
+    renderAt("/finance/overview?demo=1");
     await screen.findByText(/every figure below is invented/i);
 
     const details = document.querySelector(
@@ -728,7 +728,7 @@ it("gives the month bars the same treatment", async () => {
   });
 
 it("dashes a stretch where nothing posted, rather than claiming it held still", async () => {
-    renderAt("/?demo=1");
+    renderAt("/finance/overview?demo=1");
     await screen.findByText(/every figure below is invented/i);
 
     /* `role="img"` is the chart and only the chart — the section also holds a
@@ -774,14 +774,14 @@ describe("overview — the prose face is decided, not offered", () => {
      open, and an unused font shipped in the bundle is weight nobody benefits
      from. */
   it("ships no control for choosing a prose face", async () => {
-    renderAt("/");
+    renderAt("/finance/overview");
     await screen.findByText(/nothing to add up yet/i);
     expect(screen.queryByRole("radiogroup", { name: /prose face/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("radio")).not.toBeInTheDocument();
   });
 
   it("never names the face that was rejected", async () => {
-    renderAt("/");
+    renderAt("/finance/overview");
     await screen.findByText(/nothing to add up yet/i);
     expect(document.body.textContent ?? "").not.toMatch(/inter/i);
   });
@@ -791,7 +791,7 @@ describe("overview — the prose face is decided, not offered", () => {
        `[data-prose]` override in the stylesheet. With one face there is nothing to
        override, so the attribute is not written at all — an attribute that always
        holds the same value is a second place to go wrong. */
-    renderAt("/");
+    renderAt("/finance/overview");
     await screen.findByText(/nothing to add up yet/i);
     expect(document.documentElement.dataset.prose).toBeUndefined();
   });
@@ -814,7 +814,7 @@ describe("overview — the review stub is a state, not a decoration", () => {
         body: [TRANSACTION(), TRANSACTION({ id: 2, category_id: 3 })],
       }),
     });
-    const { unmount } = renderAt("/");
+    const { unmount } = renderAt("/finance/overview");
     /* Re-queried rather than held onto a reference: the stub's `key` includes its
        state, so React REPLACES the element when the state changes. A captured
        reference would be a detached node that still reads cyan — which is exactly
@@ -832,7 +832,7 @@ describe("overview — the review stub is a state, not a decoration", () => {
     unmount();
 
     stubApi(EMPTY_HANDLERS());
-    renderAt("/");
+    renderAt("/finance/overview");
     /* Waiting on `bg-cyan` alone would pass in the UNKNOWN state too — cyan is
        what the panel shows both when the queue is clear and when nobody has read
        it. The word is what distinguishes them, so the word is what is waited on.
@@ -852,14 +852,14 @@ describe("overview — the review stub is a state, not a decoration", () => {
     // is asserted in the browser audit (tools/audit.mjs) because a computed mask
     // is not observable from jsdom — here it is at least pinned in the class.
     stubApi(POPULATED());
-    renderAt("/");
+    renderAt("/finance/overview");
     const stub = await screen.findByRole("region", { name: /review queue/i });
     expect(stub.className).toContain("stub-edge");
   });
 
   it("says the import is not scheduled rather than inventing a date", async () => {
     stubApi(EMPTY_HANDLERS());
-    renderAt("/");
+    renderAt("/finance/overview");
     const stub = await screen.findByRole("region", { name: /review queue/i });
     await waitFor(() =>
       expect(within(stub).getByText(/is not scheduled/i)).toBeInTheDocument(),
@@ -877,7 +877,7 @@ describe("overview — the page's shape", () => {
   });
 
   it("has no kicker or eyebrow above any heading", async () => {
-    renderAt("/");
+    renderAt("/finance/overview");
     await waitFor(async () => {
       expect(await figureText()).toContain("42,500.00");
     });
@@ -890,7 +890,7 @@ describe("overview — the page's shape", () => {
   });
 
   it("puts every small-caps label BESIDE a label, not above a heading", async () => {
-    renderAt("/");
+    renderAt("/finance/overview");
     await waitFor(async () => {
       expect(await figureText()).toContain("42,500.00");
     });
@@ -906,7 +906,7 @@ describe("overview — the page's shape", () => {
   });
 
   it("opens on a figure rather than on an introduction", async () => {
-    renderAt("/");
+    renderAt("/finance/overview");
     await waitFor(async () => {
       expect(await figureText()).toContain("42,500.00");
     });
@@ -916,7 +916,7 @@ describe("overview — the page's shape", () => {
   });
 
   it("keeps one h1 on the page", async () => {
-    renderAt("/");
+    renderAt("/finance/overview");
     await waitFor(async () => {
       expect(await figureText()).toContain("42,500.00");
     });
@@ -924,7 +924,7 @@ describe("overview — the page's shape", () => {
   });
 
   it("uses no shadow and no border on any panel", async () => {
-    renderAt("/");
+    renderAt("/finance/overview");
     await waitFor(async () => {
       expect(await figureText()).toContain("42,500.00");
     });

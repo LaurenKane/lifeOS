@@ -1,15 +1,28 @@
 /* Routes — wires up the feature routes.
  *
  * Flat, as it was: no layout route, no nesting. Every page renders its own
- * <AppShell>, so the navigation lives in one component instead of in the shape
- * of the route tree.
+ * `<AppShell>`, so the navigation lives in one component instead of in the
+ * shape of the route tree.
  *
- * `/` is the Overview: the page that opens on the net-worth figure rather than
- * on a greeting. The catch-all still resolves to it, because a URL that matches
- * nothing should land somewhere that says what this application is — and the
- * Overview now does that better than the stub landing page did.
+ * `/` IS THE LIFE DASHBOARD, and the catch-all resolves to it too — docs/adr/
+ * 0012-dashboard-app-root.md. A URL that matches nothing lands on the screen
+ * that says what this application is, and since discovery concluded the app
+ * opens on a phone on a bad-brain day, that screen is Today: the do-now list,
+ * the pile, upkeep, vision, and the money figures read live from finance. The
+ * finance overview it displaced moved one door to the right, to
+ * `/finance/overview`, and every other `/finance/*` address is unchanged.
+ *
+ * The `/life/*` pages are the module's own detail views (ADR 0010's prefix
+ * rule), declared as static segments beside the finance block: they are one
+ * word each, they never overlap, and there is no dynamic segment anywhere in
+ * this table for them to outrank.
  */
 import type { RouteObject } from "react-router-dom";
+import { DashboardPage } from "@/features/life/dashboard/page";
+import { InboxPage } from "@/features/life/inbox/page";
+import { GoalsPage } from "@/features/life/goals/page";
+import { UpkeepPage } from "@/features/life/upkeep/page";
+import { VisionPage } from "@/features/life/vision/page";
 import { AccountsPage } from "@/features/finance/accounts/page";
 import { TransactionsPage } from "@/features/finance/transactions/page";
 import { TransactionDetailPage } from "@/features/finance/transactions/detail";
@@ -23,7 +36,33 @@ import { OverviewPage } from "@/features/finance/overview/page";
 
 export const Routes: RouteObject[] = [
   {
+    // The app root is the life Dashboard (ADR 0012), not the finance overview.
     path: "/",
+    element: <DashboardPage />,
+  },
+  {
+    // The life module's own screens, one address each. The pile, the Goals,
+    // the recurring things, and the why — the four views the Dashboard links
+    // into rather than trying to be on its own.
+    path: "/life/inbox",
+    element: <InboxPage />,
+  },
+  {
+    path: "/life/goals",
+    element: <GoalsPage />,
+  },
+  {
+    path: "/life/upkeep",
+    element: <UpkeepPage />,
+  },
+  {
+    path: "/life/vision",
+    element: <VisionPage />,
+  },
+  {
+    // Where `/` used to be. Nothing else in finance moved: this is one address
+    // changing hands, not a reorganisation of the module.
+    path: "/finance/overview",
     element: <OverviewPage />,
   },
   {
@@ -74,9 +113,10 @@ export const Routes: RouteObject[] = [
     path: "/finance/budgets",
     element: <BudgetsPage />,
   },
-  // Catch-all 404
+  // Catch-all 404 — the Dashboard, because an address that matches nothing
+  // should still open on what this application is (ADR 0012).
   {
     path: "*",
-    element: <OverviewPage />,
+    element: <DashboardPage />,
   },
 ];

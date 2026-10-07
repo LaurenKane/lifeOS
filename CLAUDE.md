@@ -75,3 +75,21 @@ _Add a brief overview of your project architecture_
 ## Conventions & Patterns
 
 _Add your project-specific conventions here_
+
+## Agent skills
+
+### Issue tracker
+
+Specs and tickets for the engineering skills (`to-spec`, `to-tickets`, `triage`, `wayfinder`)
+live as GitHub issues in `LaurenKane/lifeOS`, via the `gh` CLI. The app's day-to-day backlog
+stays in Beads (`bd`); these are two different surfaces, not duplicates.
+See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical triage labels, unchanged (`needs-triage`, `needs-info`, `ready-for-agent`,
+`ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.

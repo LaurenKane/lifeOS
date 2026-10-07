@@ -31,6 +31,14 @@ class LifeOSettings(BaseSettings):  # type: ignore[explicit-any]
     APP_ID: str | None = None
     ENABLE_BANKING_CLIENT_ID: str | None = None
 
+    # The life module (second module). "Today" and "last done N days ago" are
+    # the user's local day, not the server's UTC clock: Europe/Amsterdam is
+    # where the operator lives; zoneinfo resolves it, no DST bookkeeping.
+    LOCAL_TIMEZONE: str = "Europe/Amsterdam"
+    # Vision-board media files ("links to local media, not copies in the
+    # database"). A mounted volume in compose; never inside the repo.
+    MEDIA_DIR: str = "/data/media"
+
     # API
     API_V1_PREFIX: str = "/api/v1"
     CORS_ORIGINS: str = "http://localhost:3000,http://localhost:8080"

@@ -20,10 +20,10 @@
 -- this project pins: `gin_trgm_ops` has to stay reachable by name.
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
--- One database, one schema per module. These two are containers for a module's
--- tables; nothing here decides what goes inside them — M1 (bead LifeOS-6) owns
--- the tables, the deferrable balance trigger and the raw_data_immutable
--- trigger.
+-- One database, one schema per module. These three are containers for a
+-- module's tables; nothing here decides what goes inside them — M1 (bead
+-- LifeOS-6) owns finance's tables, and the life module (bead LifeOS-b78)
+-- owns its own; see docs/adr/0011-second-module-is-life.md.
 --
 -- Created HERE rather than by an Alembic migration, for one concrete reason:
 -- Alembic cannot create its own bookkeeping table inside a schema that does not
@@ -35,6 +35,7 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 -- IF NOT EXISTS throughout, so this is safe to re-run.
 CREATE SCHEMA IF NOT EXISTS core;
 CREATE SCHEMA IF NOT EXISTS finance;
+CREATE SCHEMA IF NOT EXISTS life;
 
 -- The application role owns its schemas, so M1's migrations can create tables in
 -- them. These grants are convenience, NOT the enforcement of
@@ -46,6 +47,7 @@ CREATE SCHEMA IF NOT EXISTS finance;
 -- docker-compose.yml. Overriding POSTGRES_USER means overriding it here too.
 GRANT ALL ON SCHEMA core TO lifeos;
 GRANT ALL ON SCHEMA finance TO lifeos;
+GRANT ALL ON SCHEMA life TO lifeos;
 
 -- `no_cross_schema_fk`: no foreign key may reference a table in another
 -- Postgres schema (ARCHITECTURE.md §4, ADR 0005). WHY AN EVENT TRIGGER:

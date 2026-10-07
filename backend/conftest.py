@@ -60,13 +60,20 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from config import get_settings, pg_connect_args
-from finance.domain.models import SCHEMA
+from finance.domain.models import SCHEMA as FINANCE_SCHEMA
+from life.domain.models import SCHEMA as LIFE_SCHEMA
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.pool import NullPool
 
 __all__ = ["admin_database_url", "engine", "test_database_url"]
+
+#: Both module schemas whose tables the db tests truncate. `finance` keeps its
+#: penultimate place so an unqualified name resolves to finance first — the
+#: finance tests' spelling is unchanged; `life` resolves its own names too,
+#: which is all the life tests need. `public` is appended by pg_connect_args.
+MODULE_SCHEMAS: Final[tuple[str, ...]] = (FINANCE_SCHEMA, LIFE_SCHEMA)
 
 #: `backend/` is this file's directory. Alembic's `script_location` in the
 #: committed .ini files is RELATIVE ("finance/alembic"), so it resolves against
@@ -95,10 +102,11 @@ TEST_URL_ENV_VAR: Final[str] = "LIFEOS_TEST_DATABASE_URL"
 #: whatever the ambient environment points at.
 APP_URL_ENV_VAR: Final[str] = "LIFEOS_DATABASE_URL"
 
-#: Both schemas, both revision histories. `core` has no revisions of its own yet
+#: All schemas, all revision histories. `core` has no revisions of its own yet
 #: - only its bookkeeping table - and it is upgraded anyway so that adding the
-#: first core migration needs no change here.
-ALEMBIC_SCHEMAS: Final[tuple[str, ...]] = ("core", "finance")
+#: first core migration needs no change here. `life` is the second module
+#: (docs/adr/0011): its Alembic env joins on the same terms.
+ALEMBIC_SCHEMAS: Final[tuple[str, ...]] = ("core", "finance", "life")
 
 #: Alembic's own bookkeeping table. It is not a domain table, it is not in
 #: `Base.metadata`, and truncating it would leave the migrated database
@@ -279,7 +287,7 @@ def engine(test_database_url: str) -> Iterator[Engine]:
     """
     test_engine = create_engine(
         test_database_url,
-        connect_args=pg_connect_args(SCHEMA),
+        connect_args=pg_connect_args(*MODULE_SCHEMAS),
         poolclass=NullPool,
     )
     try:
@@ -301,43 +309,43 @@ def _engine_of(request: pytest.FixtureRequest) -> Engine:
     return engine
 
 
-def _truncate_finance(engine: Engine) -> None:
-    """Empty every table in `finance`, and restart every identity.
+def _truncate_modules(engine: Engine) -> None:
+    """Empty every table in every MODULE schema, and restart every identity.
 
     Driven by `information_schema` rather than a hard-coded list, so a table
     added by a later migration is covered without editing this file - which is
     the difference between a cleanup that stays correct and one that silently
     stops clearing the newest table.
 
-    `RESTART IDENTITY` so ids start at 1 in every test: an assertion about "the
-    line the trigger named" is unreadable if the number depends on how many
-    rolled-back inserts the session has been through.
-
-    Fails rather than passes if it finds nothing to truncate: `TRUNCATE` of an
-    empty list is a no-op, and a no-op cleanup leaves every test reading every
-    other test's rows.
+    Fails rather than passes if it finds nothing to truncate in EITHER module
+    schema: `TRUNCATE` of an empty list is a no-op, and a no-op cleanup leaves
+    every test reading every other test's rows. One `lifeos_test` run exercises
+    both schemas' suites (finance and life), so both are cleared together.
     """
     with engine.connect() as connection:
-        tables: list[str] = list(
-            connection.execute(
-                text(
-                    "SELECT quote_ident(table_name) FROM information_schema.tables"
-                    " WHERE table_schema = :schema"
-                    "   AND table_type = 'BASE TABLE'"
-                    "   AND table_name <> :version_table"
-                    " ORDER BY table_name"
-                ),
-                {"schema": SCHEMA, "version_table": ALEMBIC_VERSION_TABLE},
+        tables: list[str] = []
+        for schema in MODULE_SCHEMAS:
+            schema_tables: list[str] = list(
+                connection.execute(
+                    text(
+                        "SELECT quote_ident(table_name) FROM information_schema.tables"
+                        " WHERE table_schema = :schema"
+                        "   AND table_type = 'BASE TABLE'"
+                        "   AND table_name <> :version_table"
+                        " ORDER BY table_name"
+                    ),
+                    {"schema": schema, "version_table": ALEMBIC_VERSION_TABLE},
+                )
+                .scalars()
+                .all()
             )
-            .scalars()
-            .all()
-        )
-        if not tables:
-            pytest.fail(
-                f"Schema {SCHEMA!r} has no tables to truncate, so the database is "
-                "not the migrated one this suite expects. The migration step "
-                "either did not run or ran against another database."
-            )
+            if not schema_tables:
+                pytest.fail(
+                    f"Schema {schema!r} has no tables to truncate, so the database "
+                    "is not the migrated one this suite expects. The migration "
+                    "step either did not run or ran against another database."
+                )
+            tables.extend(f"{schema}.{name}" for name in schema_tables)
         connection.execute(
             text(f"TRUNCATE TABLE {', '.join(tables)} RESTART IDENTITY CASCADE")
         )
@@ -346,7 +354,8 @@ def _truncate_finance(engine: Engine) -> None:
 
 @pytest.fixture(autouse=True)
 def _isolated_database(request: pytest.FixtureRequest) -> Iterator[None]:
-    """Truncate `finance` before each test marked `db`, and only those.
+    """Truncate both module schemas before each test marked `db`, and only
+    those.
 
     Autouse because forgetting to ask for cleanup is how a test silently reads
     another test's rows and passes for the wrong reason. Marker-guarded because
@@ -356,5 +365,5 @@ def _isolated_database(request: pytest.FixtureRequest) -> Iterator[None]:
     if request.node.get_closest_marker("db") is None:
         yield
         return
-    _truncate_finance(_engine_of(request))
+    _truncate_modules(_engine_of(request))
     yield

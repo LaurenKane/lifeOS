@@ -125,7 +125,7 @@ shell: ## Open a shell in the api container
 # defaults to public and every table lives in finance.
 .PHONY: db-shell
 db-shell: ## Open a psql shell with the application's search_path
-	$(COMPOSE) exec -e PGOPTIONS='-csearch_path=finance,public' db psql -U $${POSTGRES_USER:-lifeos} -d $${POSTGRES_DB:-lifeos}
+	$(COMPOSE) exec -e PGOPTIONS='-csearch_path=finance,life,public' db psql -U $${POSTGRES_USER:-lifeos} -d $${POSTGRES_DB:-lifeos}
 
 # The only target that removes data, and it is named for that. `down -v` drops
 # the Postgres volume; there is no way to reach it by accident, because `down`
@@ -265,10 +265,12 @@ egress-test-ci: ## The egress gate exactly as CI runs it: a skip becomes a failu
 	LIFEOS_REQUIRE_EGRESS=1 $(UV_RUN) pytest tests/egress -v -s
 
 .PHONY: migrate
-migrate: ## Apply Alembic migrations for core and finance, inside the api container
+migrate: ## Apply Alembic migrations for core, finance and life, inside the api container
 	@echo "Runs in the container so the database host is the compose service name 'db'."
 	$(COMPOSE) run --rm -T --workdir /app/backend api /bin/sh -c 'set -eu; \
-	  for schema in core finance; do \
+	  python -c "import os,psycopg; c=psycopg.connect(os.environ[\"LIFEOS_DATABASE_URL\"], autocommit=True); c.execute(\"CREATE SCHEMA IF NOT EXISTS life\"); c.execute(\"GRANT ALL ON SCHEMA life TO lifeos\"); c.close()" && \
+	  echo "==> life schema ensured (bootstrap runs once per volume, so an already-initialised database misses it — ADR 0010 step 2)"; \
+	  for schema in core finance life; do \
 	    echo "==> migrating schema: $$schema"; \
 	    alembic -c "$$schema/alembic.ini" upgrade head; \
 	  done'
@@ -293,9 +295,9 @@ migrate: ## Apply Alembic migrations for core and finance, inside the api contai
 # get_settings() in online mode, so the substituted value is ignored. It still
 # runs correctly; it is simply no longer the place the URL comes from.
 .PHONY: migrate-status
-migrate-status: ## Show current Alembic revision for both schemas
+migrate-status: ## Show current Alembic revision for each module schema
 	$(COMPOSE) run --rm -T --workdir /app/backend api /bin/sh -c 'set -eu; \
-	  for schema in core finance; do \
+	  for schema in core finance life; do \
 	    ini=$$(mktemp); \
 	    sed "s|^sqlalchemy.url[[:space:]]*=.*|sqlalchemy.url = $$LIFEOS_DATABASE_URL|" \
 	      "$$schema/alembic.ini" > "$$ini"; \

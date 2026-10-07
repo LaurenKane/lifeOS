@@ -10,6 +10,7 @@ from __future__ import annotations
 from config import get_settings
 from fastapi import FastAPI
 from finance.api.routes import ROUTERS
+from life.api.routes import ROUTERS as LIFE_ROUTERS
 
 settings = get_settings()
 
@@ -52,6 +53,9 @@ def create_app() -> FastAPI:
         }
 
     for router in ROUTERS:
+        app.include_router(router, prefix=settings.API_V1_PREFIX)
+
+    for router in LIFE_ROUTERS:
         app.include_router(router, prefix=settings.API_V1_PREFIX)
 
     return app

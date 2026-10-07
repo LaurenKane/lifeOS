@@ -93,6 +93,11 @@ services:
       LIFEOS_CORS_ORIGINS: ${LIFEOS_CORS_ORIGINS:-http://localhost:8080,http://127.0.0.1:8080}
       LIFEOS_APP_ID: ${LIFEOS_APP_ID:-}
       LIFEOS_ENABLE_BANKING_CLIENT_ID: ${LIFEOS_ENABLE_BANKING_CLIENT_ID:-}
+      # Vision-board uploads. The api container is read-only everywhere else,
+      # so this is the one path it writes to, and it is a named volume for the
+      # reason db-data is: `docker compose -p lifeos down` must not take the
+      # images with it.
+      LIFEOS_MEDIA_DIR: /data/media
     ports:
       # Loopback only. docs/adr/0001-deployment-topology.md puts this stack
       # behind Tailscale; it is not meant to be reachable from the LAN.
@@ -118,9 +123,14 @@ services:
       retries: 5
       start_period: 10s
     # The app writes nothing to disk, so the root filesystem can be read-only.
+    # The one exception is the media directory above: an uploaded Vision image
+    # has to land somewhere, and the volume makes that somewhere survive a
+    # rebuild of the image.
     read_only: true
     tmpfs:
       - /tmp
+    volumes:
+      - media:/data/media
     cap_drop:
       - ALL
     security_opt:
@@ -172,3 +182,6 @@ volumes:
   # `lifeos_db-data`; only `down -v` removes it, and the Makefile's `clean`
   # target is the only thing that does that.
   db-data:
+  # Vision-board images, for the same reason and under the same rule:
+  # `lifeos_media`, removed only by `down -v`.
+  media:

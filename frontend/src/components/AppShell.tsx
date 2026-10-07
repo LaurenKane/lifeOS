@@ -22,7 +22,15 @@
 import React from "react";
 import { NavLink } from "react-router-dom";
 
-/* ONE ENTRY FOR TWO SCREENS, AND THE `end` PROP IS WHAT MAKES IT ONE.
+/* TODAY IS FIRST, AND IT IS THE ONLY ENTRY THAT ISN'T A MODULE SCREEN.
+ *
+ * `/` is the life Dashboard (ADR 0012): the do-now list, the pile, upkeep,
+ * vision and the money figures on one screen, so the masthead's first choice
+ * is "where am I in my day", not "which module do I want". The four `/life/*`
+ * views follow it as one group, and Overview — which used to own `/` — keeps
+ * its name at its new address, `/finance/overview`. Nothing else moved.
+ *
+ * ONE ENTRY FOR TWO SCREENS, AND THE `end` PROP IS WHAT MAKES IT ONE.
  *
  * `/finance/categories` and `/finance/categories/rules` are two addresses for
  * one subject, and a masthead that lists both would be a navigation offering
@@ -34,7 +42,12 @@ import { NavLink } from "react-router-dom";
  * is open. Without it React Router would mark both active, which on a masthead
  * means two lit items and no indication of which page you are on. */
 const NAV: ReadonlyArray<{ to: string; label: string }> = [
-  { to: "/", label: "Overview" },
+  { to: "/", label: "Today" },
+  { to: "/life/inbox", label: "Inbox" },
+  { to: "/life/goals", label: "Goals" },
+  { to: "/life/upkeep", label: "Upkeep" },
+  { to: "/life/vision", label: "Vision" },
+  { to: "/finance/overview", label: "Overview" },
   { to: "/finance/accounts", label: "Accounts" },
   { to: "/finance/transactions", label: "Transactions" },
   { to: "/finance/review", label: "Review" },
@@ -77,8 +90,8 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
           </NavLink>
         </h1>
         {/* No negative margin on this row. Optical overhang is a nicety and an
-            element wider than its parent is a layout bug, and at 390px with six
-            sections the bug wins. The gap is the gap. */}
+            element wider than its parent is a layout bug, and at 390px with a
+            dozen entries the bug wins. The gap is the gap. */}
         <nav aria-label="Sections" className="flex flex-wrap items-center gap-x-1 gap-y-1">
           {NAV.map((item) => (
             <NavLink
