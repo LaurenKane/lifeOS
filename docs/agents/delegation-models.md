@@ -5,7 +5,7 @@ How the orchestrator session delegates to specialists via the omc-slim suite
 user's OpenCode Go plan is ~$10/month: treat inference spends as real money,
 keep handoffs tight, and prefer free models for throwaway work.
 
-## The mapping (as configured), for OpenCode subagent dispatches
+## The mapping (as configured), for subagent dispatches
 
 | Agent role | Model | Usable from the agent harness? |
 |---|---|---|
