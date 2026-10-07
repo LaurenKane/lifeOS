@@ -1,15 +1,18 @@
 """cli.py — the LifeOS command line.
 
-Two subcommands: `replay`, which rebuilds a batch's journal side from the
-file the batch stored (`finance.api.replay`), and `sweep`, which links
-unmatched transfer legs (`finance.api.sweep`). Each opens its own session
-from the same session factory the API uses (`finance.db.get_sessionmaker` —
-the accessor `finance.api.deps.get_session` is built on), runs inside one
-transaction, prints a one-line report, and exits 0. A refused replay exits
-1; anything else — a broken command line, an unknown failure — exits 2.
+Three subcommands: `replay`, which rebuilds a batch's journal side from the
+file the batch stored (`finance.api.replay`); `sweep`, which links unmatched
+transfer legs (`finance.api.sweep`); and `digest`, which gathers the life
+module's day (`life.api.digest`) and pushes it to ntfy (`life.api.ntfy`).
+The first two open their own session from the same session factory the API
+uses (`finance.db.get_sessionmaker` — the accessor `finance.api.deps.
+get_session` is built on), run inside one transaction, print a one-line
+report, and exit 0. A refused replay exits 1; anything else — a broken
+command line, an unknown failure — exits 2.
 
 There is no worker container (PHASE2-PLAN §3c): the sweep is run by host
-cron, e.g. `0 3 * * * lifeos-cli sweep`.
+cron, e.g. `0 3 * * * lifeos-cli sweep`, and the digest by morning cron,
+e.g. `0 7 * * * lifeos-cli digest`.
 """
 
 from __future__ import annotations
@@ -18,9 +21,12 @@ import argparse
 import datetime as dt
 import sys
 
+import httpx
 from finance.api.replay import ReplayError, replay_batch
 from finance.api.sweep import sweep_unmatched
 from finance.db import get_sessionmaker
+from life.api.digest import compose_today_digest, send_digest
+from life.api.ntfy import NtfyConfig, NtfyError
 
 __all__ = ["main"]
 
@@ -52,6 +58,14 @@ def _build_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help="last entry date in scope (YYYY-MM-DD), default today",
+    )
+    digest = subcommands.add_parser(
+        "digest", help="push the day's board to ntfy (--dry-run prints instead)"
+    )
+    digest.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print the title and body without sending, needs no configuration",
     )
     return parser
 
@@ -122,6 +136,47 @@ def _sweep(*, from_: str | None, to: str | None) -> int:
     return 0
 
 
+def _digest(*, dry_run: bool) -> int:
+    """Compose and send one daily digest. 0 on success, 1 when refused, else 2.
+
+    A real send needs configuration (`LIFEOS_NTFY_SERVER_URL` and
+    `LIFEOS_NTFY_TOPIC`, token env-only per SAFETY.md); a `--dry-run` needs
+    none of it — it prints the very title and body a configured send would
+    push, straight from the database.
+    """
+    config = NtfyConfig.from_settings()
+    if not dry_run and not config.is_configured:
+        print(
+            "digest not configured: set LIFEOS_NTFY_SERVER_URL and "
+            "LIFEOS_NTFY_TOPIC (token via LIFEOS_NTFY_TOKEN, env only)",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        factory = get_sessionmaker()
+    except Exception as exc:
+        print(f"cannot open a session: {exc}", file=sys.stderr)
+        return 2
+    try:
+        with httpx.Client(timeout=10.0) as http:
+            message = (
+                compose_today_digest(factory)
+                if dry_run
+                else send_digest(config, factory, http=http)
+            )
+    except NtfyError as exc:
+        print(f"digest of today refused: {exc}", file=sys.stderr)
+        return 1
+    except Exception as exc:
+        print(f"digest failed: {exc}", file=sys.stderr)
+        return 2
+    if dry_run:
+        print(f"== title ==\n{message.title}\n{message.body}")
+    else:
+        print(f"digest sent: {message.title}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the CLI.
 
@@ -130,9 +185,10 @@ def main(argv: list[str] | None = None) -> int:
             `sys.argv`, which is what the console script passes.
 
     Returns:
-        0 on success, 1 on a refused replay, 2 on a broken command line or an
-        unknown failure. (`argparse` errors exit 2 themselves, via `SystemExit`
-        rather than a return, which is the same code by the same convention.)
+        0 on success, 1 on a refused replay or an unconfigured/unsending
+        digest, 2 on a broken command line or an unknown failure.
+        (`argparse` errors exit 2 themselves, via `SystemExit` rather than a
+        return, which is the same code by the same convention.)
     """
     args = vars(_build_parser().parse_args(argv))
     command = str(args["command"])
@@ -140,6 +196,8 @@ def main(argv: list[str] | None = None) -> int:
         return _replay(batch_id=int(args["batch_id"]))
     if command == "sweep":
         return _sweep(from_=args["from_"], to=args["to"])
+    if command == "digest":
+        return _digest(dry_run=bool(args["dry_run"]))
     print(f"unknown command {command!r}", file=sys.stderr)
     return 2
 

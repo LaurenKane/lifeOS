@@ -39,6 +39,13 @@ class LifeOSettings(BaseSettings):  # type: ignore[explicit-any]
     # database"). A mounted volume in compose; never inside the repo.
     MEDIA_DIR: str = "/data/media"
 
+    # ntfy push gateway (the daily digest). Token is ENV-ONLY: it arrives
+    # through the deployer's own environment or an UNTRACKED override file —
+    # never a tracked file of this repository (SAFETY.md rule 3).
+    NTFY_SERVER_URL: str = ""
+    NTFY_TOPIC: str = ""
+    NTFY_TOKEN: str = ""
+
     # API
     API_V1_PREFIX: str = "/api/v1"
     CORS_ORIGINS: str = "http://localhost:3000,http://localhost:8080"
