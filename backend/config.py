@@ -46,6 +46,12 @@ class LifeOSettings(BaseSettings):  # type: ignore[explicit-any]
     NTFY_TOPIC: str = ""
     NTFY_TOKEN: str = ""
 
+    # The calendar feed's URL token (ADR 0013). Same house rules as the ntfy
+    # token: ENV-ONLY, never a tracked file of this repository (SAFETY.md
+    # rule 3). Rotating = changing the value (calendar clients re-subscribe
+    # by URL); unset = the feed answers 404 — off, not locked-and-waiting.
+    ICS_TOKEN: str = ""
+
     # API
     API_V1_PREFIX: str = "/api/v1"
     CORS_ORIGINS: str = "http://localhost:3000,http://localhost:8080"

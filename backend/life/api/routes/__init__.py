@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from life.api.routes import (
     actions,
+    calendar,
     capture,
     catchup,
     goals,
@@ -34,6 +35,7 @@ ROUTERS = (
     vision.router,
     pixels.router,
     reflection.router,
+    calendar.router,
     today.router,
     catchup.router,
 )
